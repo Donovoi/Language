@@ -1,0 +1,6 @@
+[workspace]
+members = [
+  "crates/audio_core",
+  "crates/focus_engine",
+]
+resolver = "2"
