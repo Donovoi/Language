@@ -2,14 +2,50 @@ syntax = "proto3";
 
 package language.session.v1;
 
-message SessionState {
-  string session_id = 1;
-  repeated SpeakerState speakers = 2;
+enum SessionMode {
+  SESSION_MODE_UNSPECIFIED = 0;
+  FOCUS = 1;
+  CROWD = 2;
+  LOCKED = 3;
+}
+
+message ClientConfig {
+  SessionMode mode = 1;
+  uint32 top_speaker_limit = 2;
+  bool prefer_local_scoring = 3;
+}
+
+message PriorityUpdate {
+  string speaker_id = 1;
+  float priority = 2;
+  bool active = 3;
+  bool is_locked = 4;
+  uint64 last_updated_unix_ms = 5;
+}
+
+message SpeakerEvent {
+  string speaker_id = 1;
+  string display_name = 2;
+  string language_code = 3;
+  bool active = 4;
+  bool is_locked = 5;
+  float priority_delta = 6;
+  uint64 observed_unix_ms = 7;
 }
 
 message SpeakerState {
   string speaker_id = 1;
-  string language_code = 2;
-  float priority = 3;
-  bool active = 4;
+  string display_name = 2;
+  string language_code = 3;
+  float priority = 4;
+  bool active = 5;
+  bool is_locked = 6;
+  uint64 last_updated_unix_ms = 7;
+}
+
+message SessionState {
+  string session_id = 1;
+  SessionMode mode = 2;
+  repeated SpeakerState speakers = 3;
+  ClientConfig client_config = 4;
 }
