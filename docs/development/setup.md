@@ -24,4 +24,4 @@ make check
 
 ## Notes
 
-This repository starts with mock data flows so the UI and shared core can be developed before wiring in live audio and provider integrations.
+The repository keeps a mock-first developer path. The Flutter app source is tracked in-repo, while local platform runners are regenerated with `flutter create .` during bootstrap and run commands.
