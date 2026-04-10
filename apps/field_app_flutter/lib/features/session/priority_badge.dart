@@ -10,7 +10,7 @@ class PriorityBadge extends StatelessWidget {
   Widget build(BuildContext context) {
     final Color backgroundColor = highlighted
         ? Theme.of(context).colorScheme.primary
-        : Theme.of(context).colorScheme.surfaceContainerHighest;
+        : Theme.of(context).colorScheme.surfaceVariant;
     final Color foregroundColor = highlighted
         ? Theme.of(context).colorScheme.onPrimary
         : Theme.of(context).colorScheme.onSurface;

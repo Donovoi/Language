@@ -17,7 +17,7 @@ class SpeakerLane extends StatelessWidget {
   Widget build(BuildContext context) {
     final Color borderColor = isTopSpeaker
         ? Theme.of(context).colorScheme.primary
-        : Theme.of(context).colorScheme.outlineVariant;
+        : Theme.of(context).colorScheme.outline;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
@@ -86,7 +86,7 @@ class _MetaChip extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHigh,
+        color: Theme.of(context).colorScheme.surfaceVariant,
         borderRadius: BorderRadius.circular(999),
       ),
       child: Text(

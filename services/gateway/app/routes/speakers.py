@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends
 
 from app.models import SessionResponse, SpeakersRequest, SpeakersResponse
 from app.routes.sessions import get_store
