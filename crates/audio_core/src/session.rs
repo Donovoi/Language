@@ -72,7 +72,12 @@ mod tests {
             vec![speaker("a", 0.2, true), speaker("b", 0.9, true)],
         );
 
-        assert_eq!(session.top_speaker().map(|speaker| speaker.speaker_id().as_str()), Some("b"));
+        assert_eq!(
+            session
+                .top_speaker()
+                .map(|speaker| speaker.speaker_id().as_str()),
+            Some("b")
+        );
     }
 
     #[test]

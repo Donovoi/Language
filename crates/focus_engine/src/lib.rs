@@ -56,7 +56,10 @@ impl FocusPolicy {
             total = (total - self.inactive_penalty).max(0.0);
         }
 
-        if inputs.user_locked.unwrap_or_else(|| inputs.speaker.is_locked()) {
+        if inputs
+            .user_locked
+            .unwrap_or_else(|| inputs.speaker.is_locked())
+        {
             total += self.locked_bonus;
         }
 
@@ -89,12 +92,7 @@ where
             .score
             .value()
             .total_cmp(&left.score.value())
-            .then_with(|| {
-                right
-                    .speaker
-                    .active()
-                    .cmp(&left.speaker.active())
-            })
+            .then_with(|| right.speaker.active().cmp(&left.speaker.active()))
             .then_with(|| {
                 left.speaker
                     .speaker_id()
@@ -106,7 +104,11 @@ where
     ranked
 }
 
-pub fn top_n_active_speakers<I>(policy: &FocusPolicy, speakers: I, limit: usize) -> Vec<RankedSpeaker>
+pub fn top_n_active_speakers<I>(
+    policy: &FocusPolicy,
+    speakers: I,
+    limit: usize,
+) -> Vec<RankedSpeaker>
 where
     I: IntoIterator<Item = FocusInputs>,
 {

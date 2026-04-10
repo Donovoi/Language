@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Request
 
-from app.models import SessionMode, SessionResponse
+from app.models import SessionResponse
 from app.services.mock_events import SessionStore
 
 router = APIRouter(prefix="/v1/session", tags=["session"])

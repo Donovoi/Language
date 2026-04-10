@@ -16,9 +16,10 @@ class FieldApp extends StatelessWidget {
       title: 'Language Field App',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
+        useMaterial3: true,
         colorScheme: colorScheme,
         scaffoldBackgroundColor: const Color(0xFF101418),
-        cardTheme: CardThemeData(
+        cardTheme: CardTheme(
           color: const Color(0xFF171D23),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
