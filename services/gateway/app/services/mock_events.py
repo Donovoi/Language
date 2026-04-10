@@ -187,7 +187,11 @@ class SessionStore:
         self._mode = mode
         self._source = "mock"
         self._speakers = self._prioritizer.rank(self._scene(mode), mode)
-        return MockSceneResponse(scene_id=f"{mode.value.lower()}-scene", source=self._source, session=self.get_session())
+        return MockSceneResponse(
+            scene_id=f"{mode.value.lower()}-scene",
+            source=self._source,
+            session=self.get_session(),
+        )
 
     def _scene(self, mode: SessionMode) -> list[SpeakerInput]:
         return deepcopy(_MOCK_SCENES[mode])
