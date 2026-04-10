@@ -1,0 +1,15 @@
+syntax = "proto3";
+
+package language.session.v1;
+
+message SessionState {
+  string session_id = 1;
+  repeated SpeakerState speakers = 2;
+}
+
+message SpeakerState {
+  string speaker_id = 1;
+  string language_code = 2;
+  float priority = 3;
+  bool active = 4;
+}
