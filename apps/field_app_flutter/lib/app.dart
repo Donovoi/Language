@@ -19,7 +19,7 @@ class FieldApp extends StatelessWidget {
         useMaterial3: true,
         colorScheme: colorScheme,
         scaffoldBackgroundColor: const Color(0xFF101418),
-        cardTheme: CardTheme(
+        cardTheme: CardThemeData(
           color: const Color(0xFF171D23),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         ),
