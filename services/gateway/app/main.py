@@ -1,26 +1,15 @@
 from fastapi import FastAPI
-from pydantic import BaseModel
 
-app = FastAPI(title="Language Gateway", version="0.1.0")
-
-
-class SpeakerEvent(BaseModel):
-    speaker_id: str
-    language_code: str
-    priority: float
-    active: bool
+from app.routes import health_router, mock_router, sessions_router, speakers_router
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def create_app() -> FastAPI:
+    app = FastAPI(title="Language Gateway", version="0.1.0")
+    app.include_router(health_router)
+    app.include_router(sessions_router)
+    app.include_router(speakers_router)
+    app.include_router(mock_router)
+    return app
 
 
-@app.post("/v1/speakers")
-def speakers(events: list[SpeakerEvent]) -> dict[str, object]:
-    ordered = sorted(events, key=lambda item: item.priority, reverse=True)
-    return {
-        "count": len(ordered),
-        "top_speaker": ordered[0].speaker_id if ordered else None,
-        "speakers": [event.model_dump() for event in ordered],
-    }
+app = create_app()
