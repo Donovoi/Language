@@ -34,3 +34,5 @@ Thumbs.db
 # Generated
 /gen/
 /dist/
+
+*.egg-info/
