@@ -1,7 +1,0 @@
-pyproject.toml
-app/main.py
-language_gateway.egg-info/PKG-INFO
-language_gateway.egg-info/SOURCES.txt
-language_gateway.egg-info/dependency_links.txt
-language_gateway.egg-info/requires.txt
-language_gateway.egg-info/top_level.txt
