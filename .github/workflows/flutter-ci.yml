@@ -1,0 +1,25 @@
+name: Flutter CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'copilot/**'
+  pull_request:
+
+jobs:
+  flutter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+      - name: Generate platform runners
+        run: cd apps/field_app_flutter && flutter create . --platforms=android,ios,macos,windows
+      - name: Install Flutter dependencies
+        run: cd apps/field_app_flutter && flutter pub get
+      - name: Analyze Flutter app
+        run: cd apps/field_app_flutter && flutter analyze
+      - name: Run Flutter tests
+        run: cd apps/field_app_flutter && flutter test
