@@ -1,41 +1,54 @@
-from app.models import SessionMode, SpeakerInput, SpeakerState
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from app.models import SessionMode, SpeakerState
 
 
-class SpeakerPrioritizer:
-    """Applies deterministic mode-aware speaker ranking."""
+@dataclass(frozen=True)
+class PriorityWeights:
+    active_bonus: float
+    inactive_penalty: float
+    lock_bonus: float
+    front_facing_bonus: float
+    persistence_multiplier: float
 
-    def rank(self, speakers: list[SpeakerInput], mode: SessionMode) -> list[SpeakerState]:
-        ranked = [self._to_state(speaker, mode) for speaker in speakers]
-        ranked.sort(
-            key=lambda speaker: (
-                -speaker.priority,
-                not speaker.active,
-                not speaker.is_locked,
-                speaker.speaker_id,
-            )
-        )
-        return ranked
 
-    def _to_state(self, speaker: SpeakerInput, mode: SessionMode) -> SpeakerState:
-        score = speaker.priority
+WEIGHTS_BY_MODE: dict[SessionMode, PriorityWeights] = {
+    SessionMode.UNSPECIFIED: PriorityWeights(0.25, 1.0, 0.3, 0.1, 0.5),
+    SessionMode.FOCUS: PriorityWeights(0.4, 1.1, 0.45, 0.2, 1.0),
+    SessionMode.CROWD: PriorityWeights(0.2, 0.8, 0.2, 0.1, 0.6),
+    SessionMode.LOCKED: PriorityWeights(0.3, 1.0, 0.9, 0.15, 0.8),
+}
 
-        if speaker.active:
-            score += 0.35 if mode is SessionMode.FOCUS else 0.2
-        else:
-            score = max(0.0, score - (0.25 if mode is SessionMode.FOCUS else 0.1))
 
-        if speaker.is_locked:
-            score += 0.8 if mode is SessionMode.LOCKED else 0.35
+def score_speaker(speaker: SpeakerState, mode: SessionMode) -> float:
+    weights = WEIGHTS_BY_MODE[mode]
+    score = speaker.priority + (speaker.persistence_bonus * weights.persistence_multiplier)
+    score += weights.active_bonus if speaker.active else -weights.inactive_penalty
+    if speaker.is_locked:
+        score += weights.lock_bonus
+    if speaker.front_facing:
+        score += weights.front_facing_bonus
+    return score
 
-        if mode is SessionMode.CROWD:
-            score += 0.1
 
-        return SpeakerState(
-            speaker_id=speaker.speaker_id,
-            display_name=speaker.display_name,
-            language_code=speaker.language_code.lower(),
-            priority=round(score, 3),
-            active=speaker.active,
-            is_locked=speaker.is_locked,
-            last_updated_unix_ms=speaker.last_updated_unix_ms,
-        )
+def sort_speakers(speakers: list[SpeakerState], mode: SessionMode) -> list[SpeakerState]:
+    return sorted(
+        speakers,
+        key=lambda speaker: (
+            -score_speaker(speaker, mode),
+            speaker.display_name,
+            speaker.speaker_id,
+        ),
+    )
+
+
+def build_session(session_id: str, mode: SessionMode, speakers: list[SpeakerState]) -> dict[str, object]:
+    ordered = sort_speakers(speakers, mode)
+    return {
+        "session_id": session_id,
+        "mode": mode,
+        "speakers": ordered,
+        "top_speaker_id": ordered[0].speaker_id if ordered else None,
+    }

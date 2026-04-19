@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - copilot/**
+      - 'copilot/**'
   pull_request:
 
 permissions:
@@ -14,19 +14,12 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
+      - uses: actions/checkout@v6.0.2
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: cargo fmt --check
-        run: cargo fmt --all --check
-
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
-
-      - name: cargo test
-        run: cargo test --workspace
+        run: rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+      - name: Run cargo fmt
+        run: cargo +stable fmt --all --check
+      - name: Run cargo clippy
+        run: cargo +stable clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Run cargo test
+        run: cargo +stable test --workspace

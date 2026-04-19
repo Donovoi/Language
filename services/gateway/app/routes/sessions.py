@@ -1,20 +1,32 @@
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Query
 
-from app.models import SessionResponse
-from app.services.mock_events import SessionStore
+from app.models import SessionMode, SessionResetResponse, SessionResponse
+from app.services.session_store import SessionStore, get_session_store
 
 router = APIRouter(prefix="/v1/session", tags=["session"])
 
 
-def get_store(request: Request) -> SessionStore:
-    return request.app.state.session_store
-
-
 @router.get("", response_model=SessionResponse)
-def get_session(store: SessionStore = Depends(get_store)) -> SessionResponse:
-    return store.get_session()
+def get_session(
+    mode: SessionMode | None = Query(default=None),
+    store: SessionStore = Depends(get_session_store),
+) -> SessionResponse:
+    if mode is not None:
+        return store.preview(mode)
+    return store.current()
 
 
-@router.post("/reset", response_model=SessionResponse)
-def reset_session(store: SessionStore = Depends(get_store)) -> SessionResponse:
-    return store.reset()
+@router.put("/mode", response_model=SessionResponse)
+def set_session_mode(
+    mode: SessionMode = Query(default=SessionMode.FOCUS),
+    store: SessionStore = Depends(get_session_store),
+) -> SessionResponse:
+    return store.set_mode(mode)
+
+
+@router.post("/reset", response_model=SessionResetResponse)
+def reset_session(
+    mode: SessionMode = Query(default=SessionMode.FOCUS),
+    store: SessionStore = Depends(get_session_store),
+) -> SessionResetResponse:
+    return SessionResetResponse(reset=True, session=store.reset(mode))

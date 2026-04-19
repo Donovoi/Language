@@ -1,19 +1,20 @@
-# Gateway service
+# Gateway Service
 
-## What it owns
+## Ownership
 
-This service owns the local FastAPI gateway for session state, mock speaker scenes, and mode-aware prioritization at the API boundary.
+This service owns the local FastAPI API, in-memory session state, and deterministic mock scenes for the Language MVP.
+It exposes the client-facing HTTP contract while keeping prioritization logic small and testable.
 
-## How to run and test it
+## Run and validate
 
 ```bash
-cd services/gateway
-python -m pip install -r requirements-dev.txt
+python -m pip install -e '.[dev]'
+python -m ruff check .
+python -m pytest
 uvicorn app.main:app --reload
-ruff check .
-pytest
 ```
 
-## What it deliberately does not own
+## Deliberately out of scope
 
-The gateway does not yet own live audio ingestion, streaming transport, persistence, authentication, or provider-specific translation and TTS integrations.
+This service does not own realtime audio capture, diarization, translation provider execution, or TTS.
+Those integrations stay deferred until the mock-first API contract is stable.

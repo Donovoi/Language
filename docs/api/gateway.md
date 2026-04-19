@@ -1,24 +1,43 @@
 # Gateway API
 
 ## Why this exists
+The gateway provides the local contract between the Flutter field client and the mock-first service layer.
+It exposes deterministic session and speaker data while the rest of the system is still under construction.
 
-The gateway gives the Flutter client and future tools a stable local API for session state and mock speaker scenes. It exists to make product flows testable before any live translation backend is introduced.
+## Boundary it owns
+Base URL: `http://127.0.0.1:8000`
 
-## Boundary owned by the gateway
+### `GET /health`
+Returns a simple readiness payload:
 
-Base endpoints:
-- `GET /health` returns service liveness.
-- `GET /v1/session` returns the current in-memory session.
-- `POST /v1/session/reset` restores the default mock-backed session state.
-- `GET /v1/speakers` returns the current ranked speaker list.
-- `POST /v1/speakers` accepts speaker inputs, re-ranks them, and updates session state.
-- `GET /v1/mock/scene` returns a deterministic mock scene for a requested session mode.
+```json
+{"status": "ok"}
+```
 
-The gateway owns JSON models, in-memory session state, and service-layer prioritization. It deliberately does not own live transport, authentication, persistence, or provider SDK orchestration yet.
+### `GET /v1/session`
+Returns the in-memory session snapshot.
+Optional query parameter: `mode=FOCUS|CROWD|LOCKED|UNSPECIFIED` previews an alternate mode
+without mutating the stored session.
 
-## Intentionally deferred
+### `PUT /v1/session/mode`
+Updates the in-memory session mode.
+Optional query parameter: `mode=FOCUS|CROWD|LOCKED|UNSPECIFIED`.
 
-- websocket or gRPC streaming
-- real diarization events
-- translation or TTS adapters
-- persistent session storage
+### `POST /v1/session/reset`
+Resets the in-memory session to the selected mode.
+Default mode is `FOCUS`, passed as a query parameter.
+
+### `GET /v1/speakers`
+Returns the currently ranked speaker list for the active session.
+
+### `POST /v1/speakers`
+Replaces the current speaker list with the supplied states and returns a ranked session response.
+Optional query parameter: `mode=FOCUS|CROWD|LOCKED|UNSPECIFIED`.
+
+### `GET /v1/mock/scene`
+Builds a deterministic mock scene for `FOCUS`, `CROWD`, or `LOCKED` mode.
+The response includes the ranked session plus the supported modes list.
+
+## What is intentionally deferred
+The gateway currently keeps all session state in memory.
+Streaming transport, auth, persistence, and provider adapters are deferred until the mock-first workflow is stable.

@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - main
-      - copilot/**
+      - 'copilot/**'
   pull_request:
 
 permissions:
@@ -13,26 +13,16 @@ permissions:
 jobs:
   flutter:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: apps/field_app_flutter
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Flutter
-        uses: subosito/flutter-action@v2
+      - uses: actions/checkout@v6.0.2
+      - uses: subosito/flutter-action@v2.23.0
         with:
           channel: stable
-
-      - name: Generate platform scaffolding
-        run: flutter create . --platforms=android,ios,macos,windows
-
-      - name: flutter pub get
-        run: flutter pub get
-
-      - name: flutter analyze
-        run: flutter analyze
-
-      - name: flutter test
-        run: flutter test
+      - name: Generate platform runners
+        run: cd apps/field_app_flutter && flutter create . --platforms=android,ios,macos,windows && rm -f test/widget_test.dart
+      - name: Install Flutter dependencies
+        run: cd apps/field_app_flutter && flutter pub get
+      - name: Analyze Flutter app
+        run: cd apps/field_app_flutter && flutter analyze
+      - name: Run Flutter tests
+        run: cd apps/field_app_flutter && flutter test

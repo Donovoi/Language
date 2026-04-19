@@ -1,12 +1,20 @@
-use crate::{validate_non_empty, ValidationError, ValidationResult};
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ValidationError {
+    EmptyField(&'static str),
+    InvalidLanguageCode(String),
+    NonFinitePriority,
+    NegativePersistenceBonus,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SessionId(String);
 
 impl SessionId {
-    pub fn new(value: impl Into<String>) -> ValidationResult<Self> {
+    pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
-        validate_non_empty("session_id", &value)?;
+        if value.trim().is_empty() {
+            return Err(ValidationError::EmptyField("session_id"));
+        }
         Ok(Self(value))
     }
 
@@ -15,13 +23,15 @@ impl SessionId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SpeakerId(String);
 
 impl SpeakerId {
-    pub fn new(value: impl Into<String>) -> ValidationResult<Self> {
+    pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
-        validate_non_empty("speaker_id", &value)?;
+        if value.trim().is_empty() {
+            return Err(ValidationError::EmptyField("speaker_id"));
+        }
         Ok(Self(value))
     }
 
@@ -34,29 +44,30 @@ impl SpeakerId {
 pub struct LanguageCode(String);
 
 impl LanguageCode {
-    pub fn new(value: impl Into<String>) -> ValidationResult<Self> {
-        let value = value.into();
-        validate_non_empty("language_code", &value)?;
-
-        let is_valid = value
-            .chars()
-            .all(|character| character.is_ascii_alphabetic() || character == '-');
+    pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
+        let normalized = value.into().trim().to_ascii_lowercase();
+        let mut segments = normalized.split('-');
+        let primary = segments.next().unwrap_or_default();
+        let region = segments.next();
+        let is_valid = !normalized.is_empty()
+            && segments.next().is_none()
+            && primary.len() >= 2
+            && primary.len() <= 3
+            && primary
+                .chars()
+                .all(|character| character.is_ascii_alphabetic())
+            && region.is_none_or(|segment| {
+                (2..=4).contains(&segment.len())
+                    && segment
+                        .chars()
+                        .all(|character| character.is_ascii_alphabetic())
+            });
 
         if !is_valid {
-            return Err(ValidationError::new(
-                "language_code",
-                "must contain only ASCII letters or hyphens",
-            ));
+            return Err(ValidationError::InvalidLanguageCode(normalized));
         }
 
-        if value.len() < 2 || value.len() > 15 {
-            return Err(ValidationError::new(
-                "language_code",
-                "must be between 2 and 15 characters",
-            ));
-        }
-
-        Ok(Self(value.to_ascii_lowercase()))
+        Ok(Self(normalized))
     }
 
     pub fn as_str(&self) -> &str {
@@ -66,23 +77,37 @@ impl LanguageCode {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::{LanguageCode, SessionId, SpeakerId, ValidationError};
 
     #[test]
-    fn rejects_empty_session_ids() {
-        let error = SessionId::new(" ").expect_err("session id should fail");
-        assert_eq!(error.field(), "session_id");
+    fn rejects_blank_ids() {
+        assert_eq!(
+            SessionId::new(" "),
+            Err(ValidationError::EmptyField("session_id"))
+        );
+        assert_eq!(
+            SpeakerId::new(""),
+            Err(ValidationError::EmptyField("speaker_id"))
+        );
     }
 
     #[test]
     fn normalizes_language_codes() {
-        let code = LanguageCode::new("EN-US").expect("language code should be valid");
+        let code = LanguageCode::new("EN-us").expect("language code should be valid");
         assert_eq!(code.as_str(), "en-us");
     }
 
     #[test]
-    fn rejects_invalid_language_code_characters() {
-        let error = LanguageCode::new("en_US").expect_err("language code should fail");
-        assert_eq!(error.field(), "language_code");
+    fn rejects_invalid_language_codes() {
+        assert_eq!(
+            LanguageCode::new("english"),
+            Err(ValidationError::InvalidLanguageCode(String::from(
+                "english"
+            ))),
+        );
+        assert_eq!(
+            LanguageCode::new("en_au"),
+            Err(ValidationError::InvalidLanguageCode(String::from("en_au"))),
+        );
     }
 }

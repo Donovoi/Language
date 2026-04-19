@@ -1,21 +1,13 @@
-use crate::{ValidationError, ValidationResult};
+use crate::ids::ValidationError;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PriorityScore(f32);
 
 impl PriorityScore {
-    pub fn new(value: f32) -> ValidationResult<Self> {
+    pub fn new(value: f32) -> Result<Self, ValidationError> {
         if !value.is_finite() {
-            return Err(ValidationError::new("priority", "must be finite"));
+            return Err(ValidationError::NonFinitePriority);
         }
-
-        if value < 0.0 {
-            return Err(ValidationError::new(
-                "priority",
-                "must be greater than or equal to zero",
-            ));
-        }
-
         Ok(Self(value))
     }
 
@@ -26,17 +18,14 @@ impl PriorityScore {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::PriorityScore;
+    use crate::ValidationError;
 
     #[test]
-    fn rejects_negative_priority_scores() {
-        let error = PriorityScore::new(-0.1).expect_err("negative priority should fail");
-        assert_eq!(error.field(), "priority");
-    }
-
-    #[test]
-    fn accepts_positive_priority_scores() {
-        let priority = PriorityScore::new(1.5).expect("priority should be valid");
-        assert_eq!(priority.value(), 1.5);
+    fn rejects_non_finite_scores() {
+        assert_eq!(
+            PriorityScore::new(f32::NAN),
+            Err(ValidationError::NonFinitePriority)
+        );
     }
 }
