@@ -36,7 +36,11 @@ def score_speaker(speaker: SpeakerState, mode: SessionMode) -> float:
 def sort_speakers(speakers: list[SpeakerState], mode: SessionMode) -> list[SpeakerState]:
     return sorted(
         speakers,
-        key=lambda speaker: (-score_speaker(speaker, mode), speaker.display_name, speaker.speaker_id),
+        key=lambda speaker: (
+            -score_speaker(speaker, mode),
+            speaker.display_name,
+            speaker.speaker_id,
+        ),
     )
 
 
