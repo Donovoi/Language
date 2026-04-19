@@ -1,16 +1,18 @@
 # audio_core
 
-## What it owns
+## Ownership
 
-This crate owns typed session, speaker, identifier, and priority primitives for the Language starter template.
+This crate owns typed session, speaker, language, and priority primitives for the Language MVP.
+It keeps realtime-facing domain data explicit and easy to validate.
 
-## How to run and test it
+## Run and validate
 
 ```bash
+cargo fmt --all --check
 cargo test -p audio_core
-cargo clippy -p audio_core --all-targets --all-features -- -D warnings
 ```
 
-## What it deliberately does not own
+## Deliberately out of scope
 
-This crate does not own DSP, async runtime concerns, or policy-specific ranking logic.
+This crate does not own prioritization policy, networking, protobuf code generation, or any audio DSP.
+Those concerns stay in sibling crates or future integration layers.

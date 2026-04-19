@@ -1,16 +1,16 @@
-# ADR 0001: Keep a single product monorepo
+# ADR 0001: Keep a single monorepo for the MVP
 
 ## Status
 Accepted
 
 ## Why this exists
+The MVP spans a shared client, a reusable realtime core, and a service gateway that must evolve together.
+A monorepo keeps the contract, docs, and validation steps visible in one place.
 
-The MVP spans a shared client, a realtime core, a gateway, and protobuf contracts that need to evolve together. A single monorepo keeps those boundaries visible, makes cross-layer refactors easier, and gives CI one place to validate the starter template.
+## Boundary it owns
+This decision defines the repository shape and keeps Flutter, Rust, Python, and protobuf code in a single source tree.
+It also justifies shared CI and root-level developer commands.
 
-## Boundary owned by this decision
-
-This repository owns the top-level layout for apps, crates, services, docs, and shared contracts. It also owns the expectation that foundational changes land with matching docs, tests, and workflow updates in the same pull request.
-
-## Intentionally deferred
-
-This ADR does not define release tooling, package publishing, or a future split into separately versioned repositories. If the product later needs independent release cadences, that can be revisited with usage data.
+## What is intentionally deferred
+This ADR does not decide deployment topology or future service extraction.
+If the product later needs independent release trains, that can be revisited with stronger operational data.

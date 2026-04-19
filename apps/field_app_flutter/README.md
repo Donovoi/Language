@@ -1,20 +1,22 @@
-# Flutter field app
+# Field App Flutter
 
-## What it owns
+## Ownership
 
-This app owns the shared mobile and desktop operator UI for viewing session mode, ranked speakers, and mock scene changes.
+This Flutter app owns the cross-platform operator and field UI for the Language MVP.
+It renders session mode, speaker lanes, and mock-or-gateway state for Android, iOS, macOS, and Windows.
 
-## How to run and test it
+## Run and validate
 
 ```bash
-cd apps/field_app_flutter
 flutter create . --platforms=android,ios,macos,windows
+rm -f test/widget_test.dart
 flutter pub get
 flutter analyze
 flutter test
 flutter run
 ```
 
-## What it deliberately does not own
+## Deliberately out of scope
 
-The Flutter layer does not yet own translation providers, audio capture pipelines, or the final Rust FFI integration. It consumes session state and presents it to operators.
+This app does not own realtime translation, diarization, TTS, or priority policy logic.
+Those boundaries stay in the Python gateway and Rust crates.

@@ -1,197 +1,95 @@
-from collections.abc import Iterable
-from copy import deepcopy
+from __future__ import annotations
 
-from app.models import (
-    MockSceneResponse,
-    SessionMode,
-    SessionResponse,
-    SpeakerInput,
-    SpeakersResponse,
-)
-from app.services.prioritizer import SpeakerPrioritizer
+from app.models import MockSceneResponse, SessionMode, SessionResponse, SpeakerState
+from app.services.prioritizer import build_session
 
-_DEFAULT_SESSION_ID = "session-local-demo"
-
-_MOCK_SCENES: dict[SessionMode, list[SpeakerInput]] = {
-    SessionMode.FOCUS: [
-        SpeakerInput(
-            speaker_id="speaker-01",
-            display_name="Alex",
-            language_code="en-US",
-            priority=0.92,
-            active=True,
-            is_locked=False,
-            last_updated_unix_ms=1712745001000,
-        ),
-        SpeakerInput(
-            speaker_id="speaker-02",
-            display_name="Mina",
-            language_code="ko-KR",
-            priority=0.63,
-            active=True,
-            is_locked=False,
-            last_updated_unix_ms=1712745001200,
-        ),
-        SpeakerInput(
-            speaker_id="speaker-03",
-            display_name="Luis",
-            language_code="es-ES",
-            priority=0.48,
-            active=False,
-            is_locked=False,
-            last_updated_unix_ms=1712744999000,
-        ),
-        SpeakerInput(
-            speaker_id="speaker-04",
-            display_name="Nora",
-            language_code="fr-FR",
-            priority=0.41,
-            active=False,
-            is_locked=False,
-            last_updated_unix_ms=1712744997000,
-        ),
-    ],
-    SessionMode.CROWD: [
-        SpeakerInput(
-            speaker_id="speaker-01",
-            display_name="Alex",
-            language_code="en-US",
-            priority=0.72,
-            active=True,
-            is_locked=False,
-            last_updated_unix_ms=1712745001000,
-        ),
-        SpeakerInput(
-            speaker_id="speaker-02",
-            display_name="Mina",
-            language_code="ko-KR",
-            priority=0.68,
-            active=True,
-            is_locked=False,
-            last_updated_unix_ms=1712745001200,
-        ),
-        SpeakerInput(
-            speaker_id="speaker-03",
-            display_name="Luis",
-            language_code="es-ES",
-            priority=0.61,
-            active=True,
-            is_locked=False,
-            last_updated_unix_ms=1712745001400,
-        ),
-        SpeakerInput(
-            speaker_id="speaker-04",
-            display_name="Nora",
-            language_code="fr-FR",
-            priority=0.54,
-            active=False,
-            is_locked=False,
-            last_updated_unix_ms=1712744997000,
-        ),
-        SpeakerInput(
-            speaker_id="speaker-05",
-            display_name="Jae",
-            language_code="ja-JP",
-            priority=0.47,
-            active=True,
-            is_locked=False,
-            last_updated_unix_ms=1712745001600,
-        ),
-    ],
-    SessionMode.LOCKED: [
-        SpeakerInput(
-            speaker_id="speaker-02",
-            display_name="Mina",
-            language_code="ko-KR",
-            priority=0.58,
-            active=True,
-            is_locked=True,
-            last_updated_unix_ms=1712745001200,
-        ),
-        SpeakerInput(
-            speaker_id="speaker-01",
-            display_name="Alex",
-            language_code="en-US",
-            priority=0.74,
-            active=True,
-            is_locked=False,
-            last_updated_unix_ms=1712745001000,
-        ),
-        SpeakerInput(
-            speaker_id="speaker-03",
-            display_name="Luis",
-            language_code="es-ES",
-            priority=0.49,
-            active=False,
-            is_locked=False,
-            last_updated_unix_ms=1712744999000,
-        ),
-        SpeakerInput(
-            speaker_id="speaker-04",
-            display_name="Nora",
-            language_code="fr-FR",
-            priority=0.44,
-            active=False,
-            is_locked=False,
-            last_updated_unix_ms=1712744997000,
-        ),
-    ],
-}
+_BASE_SCENE = [
+    {
+        "speaker_id": "speaker-alice",
+        "display_name": "Alice",
+        "language_code": "en",
+        "priority": 0.82,
+        "active": True,
+        "is_locked": False,
+        "front_facing": True,
+        "persistence_bonus": 0.18,
+        "last_updated_unix_ms": 1_710_000_000_000,
+    },
+    {
+        "speaker_id": "speaker-bruno",
+        "display_name": "Bruno",
+        "language_code": "pt-BR",
+        "priority": 0.76,
+        "active": True,
+        "is_locked": False,
+        "front_facing": False,
+        "persistence_bonus": 0.12,
+        "last_updated_unix_ms": 1_710_000_000_200,
+    },
+    {
+        "speaker_id": "speaker-carmen",
+        "display_name": "Carmen",
+        "language_code": "es",
+        "priority": 0.64,
+        "active": False,
+        "is_locked": False,
+        "front_facing": False,
+        "persistence_bonus": 0.05,
+        "last_updated_unix_ms": 1_710_000_000_400,
+    },
+    {
+        "speaker_id": "speaker-devi",
+        "display_name": "Devi",
+        "language_code": "hi",
+        "priority": 0.71,
+        "active": True,
+        "is_locked": False,
+        "front_facing": True,
+        "persistence_bonus": 0.08,
+        "last_updated_unix_ms": 1_710_000_000_600,
+    },
+    {
+        "speaker_id": "speaker-ella",
+        "display_name": "Ella",
+        "language_code": "fr",
+        "priority": 0.58,
+        "active": True,
+        "is_locked": False,
+        "front_facing": False,
+        "persistence_bonus": 0.02,
+        "last_updated_unix_ms": 1_710_000_000_800,
+    },
+]
 
 
-class SessionStore:
-    def __init__(self, prioritizer: SpeakerPrioritizer | None = None) -> None:
-        self._prioritizer = prioritizer or SpeakerPrioritizer()
-        self._mode = SessionMode.FOCUS
-        self._session_id = _DEFAULT_SESSION_ID
-        self._source = "mock"
-        self._speakers = self._prioritizer.rank(self._scene(self._mode), self._mode)
+def _scene_for_mode(mode: SessionMode) -> list[SpeakerState]:
+    speakers = [SpeakerState(**speaker) for speaker in _BASE_SCENE]
+    if mode == SessionMode.FOCUS:
+        speakers[0].priority = 0.95
+        speakers[0].persistence_bonus = 0.25
+        speakers[2].active = False
+    elif mode == SessionMode.CROWD:
+        speakers[1].priority = 0.74
+        speakers[2].active = True
+        speakers[2].priority = 0.69
+        speakers[4].priority = 0.66
+    elif mode == SessionMode.LOCKED:
+        speakers[1].is_locked = True
+        speakers[1].front_facing = True
+        speakers[1].priority = 0.7
+        speakers[0].priority = 0.8
+    return speakers
 
-    def get_session(self) -> SessionResponse:
-        top_speaker_id = self._speakers[0].speaker_id if self._speakers else None
-        return SessionResponse(
-            session_id=self._session_id,
-            mode=self._mode,
-            top_speaker_id=top_speaker_id,
-            speaker_count=len(self._speakers),
-            speakers=self._speakers,
+
+def build_mock_scene(mode: SessionMode = SessionMode.FOCUS) -> MockSceneResponse:
+    session = SessionResponse.model_validate(
+        build_session(
+            session_id="demo-session",
+            mode=mode,
+            speakers=_scene_for_mode(mode),
         )
-
-    def get_speakers(self) -> SpeakersResponse:
-        session = self.get_session()
-        return SpeakersResponse(
-            count=session.speaker_count,
-            top_speaker_id=session.top_speaker_id,
-            speakers=session.speakers,
-        )
-
-    def reset(self) -> SessionResponse:
-        self._mode = SessionMode.FOCUS
-        self._source = "mock"
-        self._speakers = self._prioritizer.rank(self._scene(self._mode), self._mode)
-        return self.get_session()
-
-    def apply_speakers(
-        self,
-        speakers: Iterable[SpeakerInput],
-        mode: SessionMode | None = None,
-    ) -> SessionResponse:
-        if mode is not None:
-            self._mode = mode
-
-        self._source = "custom"
-        self._speakers = self._prioritizer.rank(list(speakers), self._mode)
-        return self.get_session()
-
-    def load_mock_scene(self, mode: SessionMode) -> MockSceneResponse:
-        self._mode = mode
-        self._source = "mock"
-        self._speakers = self._prioritizer.rank(self._scene(mode), mode)
-        return MockSceneResponse(
-            scene_id=f"{mode.value.lower()}-scene",
-            source=self._source,
-            session=self.get_session(),
-        )
-
-    def _scene(self, mode: SessionMode) -> list[SpeakerInput]:
-        return deepcopy(_MOCK_SCENES[mode])
+    )
+    return MockSceneResponse(
+        session=session,
+        supported_modes=[SessionMode.FOCUS, SessionMode.CROWD, SessionMode.LOCKED],
+    )

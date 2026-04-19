@@ -1,26 +1,39 @@
 import 'speaker.dart';
 
-enum SessionMode { focus, crowd, locked }
+enum SessionMode { unspecified, focus, crowd, locked }
 
-extension SessionModeLabel on SessionMode {
-  String get apiValue => switch (this) {
-        SessionMode.focus => 'FOCUS',
-        SessionMode.crowd => 'CROWD',
-        SessionMode.locked => 'LOCKED',
-      };
+extension SessionModePresentation on SessionMode {
+  String get apiValue {
+    switch (this) {
+      case SessionMode.unspecified:
+        return 'UNSPECIFIED';
+      case SessionMode.focus:
+        return 'FOCUS';
+      case SessionMode.crowd:
+        return 'CROWD';
+      case SessionMode.locked:
+        return 'LOCKED';
+    }
+  }
 
-  String get label => switch (this) {
-        SessionMode.focus => 'Focus',
-        SessionMode.crowd => 'Crowd',
-        SessionMode.locked => 'Locked',
-      };
+  String get label {
+    switch (this) {
+      case SessionMode.unspecified:
+        return 'Unspecified';
+      case SessionMode.focus:
+        return 'Focus';
+      case SessionMode.crowd:
+        return 'Crowd';
+      case SessionMode.locked:
+        return 'Locked';
+    }
+  }
 
-  static SessionMode fromApi(String value) {
-    return switch (value) {
-      'CROWD' => SessionMode.crowd,
-      'LOCKED' => SessionMode.locked,
-      _ => SessionMode.focus,
-    };
+  static SessionMode fromApiValue(String value) {
+    return SessionMode.values.firstWhere(
+      (mode) => mode.apiValue == value,
+      orElse: () => SessionMode.unspecified,
+    );
   }
 }
 
@@ -28,36 +41,141 @@ class SessionStateModel {
   const SessionStateModel({
     required this.sessionId,
     required this.mode,
-    required this.topSpeakerId,
-    required this.speakerCount,
     required this.speakers,
+    required this.topSpeakerId,
   });
 
   final String sessionId;
   final SessionMode mode;
-  final String? topSpeakerId;
-  final int speakerCount;
   final List<Speaker> speakers;
+  final String? topSpeakerId;
 
   factory SessionStateModel.fromJson(Map<String, dynamic> json) {
     return SessionStateModel(
       sessionId: json['session_id'] as String,
-      mode: SessionModeLabel.fromApi(json['mode'] as String),
-      topSpeakerId: json['top_speaker_id'] as String?,
-      speakerCount: (json['speaker_count'] as num).toInt(),
+      mode: SessionModePresentation.fromApiValue(json['mode'] as String),
       speakers: (json['speakers'] as List<dynamic>)
-          .map((dynamic item) => Speaker.fromJson(item as Map<String, dynamic>))
+          .map((item) => Speaker.fromJson(item as Map<String, dynamic>))
           .toList(growable: false),
+      topSpeakerId: json['top_speaker_id'] as String?,
     );
   }
 
-  static SessionStateModel empty() {
-    return const SessionStateModel(
-      sessionId: 'local-preview',
-      mode: SessionMode.focus,
-      topSpeakerId: null,
-      speakerCount: 0,
-      speakers: <Speaker>[],
+  factory SessionStateModel.fallback({SessionMode mode = SessionMode.focus}) {
+    final speakers = switch (mode) {
+      SessionMode.focus => const <Speaker>[
+          Speaker(
+            speakerId: 'speaker-alice',
+            displayName: 'Alice',
+            languageCode: 'en',
+            priority: 0.95,
+            active: true,
+            isLocked: false,
+            frontFacing: true,
+            persistenceBonus: 0.25,
+            lastUpdatedUnixMs: 1710000000000,
+          ),
+          Speaker(
+            speakerId: 'speaker-bruno',
+            displayName: 'Bruno',
+            languageCode: 'pt-BR',
+            priority: 0.76,
+            active: true,
+            isLocked: false,
+            frontFacing: false,
+            persistenceBonus: 0.12,
+            lastUpdatedUnixMs: 1710000000200,
+          ),
+          Speaker(
+            speakerId: 'speaker-devi',
+            displayName: 'Devi',
+            languageCode: 'hi',
+            priority: 0.71,
+            active: true,
+            isLocked: false,
+            frontFacing: true,
+            persistenceBonus: 0.08,
+            lastUpdatedUnixMs: 1710000000600,
+          ),
+        ],
+      SessionMode.crowd => const <Speaker>[
+          Speaker(
+            speakerId: 'speaker-alice',
+            displayName: 'Alice',
+            languageCode: 'en',
+            priority: 0.82,
+            active: true,
+            isLocked: false,
+            frontFacing: true,
+            persistenceBonus: 0.18,
+            lastUpdatedUnixMs: 1710000000000,
+          ),
+          Speaker(
+            speakerId: 'speaker-bruno',
+            displayName: 'Bruno',
+            languageCode: 'pt-BR',
+            priority: 0.74,
+            active: true,
+            isLocked: false,
+            frontFacing: false,
+            persistenceBonus: 0.12,
+            lastUpdatedUnixMs: 1710000000200,
+          ),
+          Speaker(
+            speakerId: 'speaker-carmen',
+            displayName: 'Carmen',
+            languageCode: 'es',
+            priority: 0.69,
+            active: true,
+            isLocked: false,
+            frontFacing: false,
+            persistenceBonus: 0.05,
+            lastUpdatedUnixMs: 1710000000400,
+          ),
+        ],
+      SessionMode.locked => const <Speaker>[
+          Speaker(
+            speakerId: 'speaker-bruno',
+            displayName: 'Bruno',
+            languageCode: 'pt-BR',
+            priority: 0.70,
+            active: true,
+            isLocked: true,
+            frontFacing: true,
+            persistenceBonus: 0.12,
+            lastUpdatedUnixMs: 1710000000200,
+          ),
+          Speaker(
+            speakerId: 'speaker-alice',
+            displayName: 'Alice',
+            languageCode: 'en',
+            priority: 0.80,
+            active: true,
+            isLocked: false,
+            frontFacing: true,
+            persistenceBonus: 0.18,
+            lastUpdatedUnixMs: 1710000000000,
+          ),
+          Speaker(
+            speakerId: 'speaker-devi',
+            displayName: 'Devi',
+            languageCode: 'hi',
+            priority: 0.71,
+            active: true,
+            isLocked: false,
+            frontFacing: true,
+            persistenceBonus: 0.08,
+            lastUpdatedUnixMs: 1710000000600,
+          ),
+        ],
+      SessionMode.unspecified => const <Speaker>[],
+    };
+
+    return SessionStateModel(
+      sessionId: 'demo-session',
+      mode: mode,
+      speakers: speakers,
+      topSpeakerId: speakers.isEmpty ? null : speakers.first.speakerId,
     );
   }
 }

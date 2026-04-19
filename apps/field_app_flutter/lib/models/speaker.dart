@@ -6,6 +6,8 @@ class Speaker {
     required this.priority,
     required this.active,
     required this.isLocked,
+    required this.frontFacing,
+    required this.persistenceBonus,
     required this.lastUpdatedUnixMs,
   });
 
@@ -15,6 +17,8 @@ class Speaker {
   final double priority;
   final bool active;
   final bool isLocked;
+  final bool frontFacing;
+  final double persistenceBonus;
   final int lastUpdatedUnixMs;
 
   factory Speaker.fromJson(Map<String, dynamic> json) {
@@ -25,7 +29,23 @@ class Speaker {
       priority: (json['priority'] as num).toDouble(),
       active: json['active'] as bool,
       isLocked: json['is_locked'] as bool? ?? false,
-      lastUpdatedUnixMs: (json['last_updated_unix_ms'] as num).toInt(),
+      frontFacing: json['front_facing'] as bool? ?? false,
+      persistenceBonus: (json['persistence_bonus'] as num?)?.toDouble() ?? 0,
+      lastUpdatedUnixMs: (json['last_updated_unix_ms'] as num?)?.toInt() ?? 0,
     );
+  }
+
+  Map<String, dynamic> toJson() {
+    return <String, dynamic>{
+      'speaker_id': speakerId,
+      'display_name': displayName,
+      'language_code': languageCode,
+      'priority': priority,
+      'active': active,
+      'is_locked': isLocked,
+      'front_facing': frontFacing,
+      'persistence_bonus': persistenceBonus,
+      'last_updated_unix_ms': lastUpdatedUnixMs,
+    };
   }
 }

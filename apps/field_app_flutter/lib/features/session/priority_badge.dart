@@ -1,32 +1,28 @@
 import 'package:flutter/material.dart';
 
 class PriorityBadge extends StatelessWidget {
-  const PriorityBadge({super.key, required this.priority, required this.highlighted});
+  const PriorityBadge({super.key, required this.priority, required this.isTopSpeaker});
 
   final double priority;
-  final bool highlighted;
+  final bool isTopSpeaker;
 
   @override
   Widget build(BuildContext context) {
-    final Color backgroundColor = highlighted
-        ? Theme.of(context).colorScheme.primary
-        : Theme.of(context).colorScheme.surfaceContainerHighest;
-    final Color foregroundColor = highlighted
-        ? Theme.of(context).colorScheme.onPrimary
-        : Theme.of(context).colorScheme.onSurface;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+    final colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
       decoration: BoxDecoration(
-        color: backgroundColor,
+        color: isTopSpeaker ? colorScheme.primary : colorScheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(999),
       ),
-      child: Text(
-        priority.toStringAsFixed(2),
-        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-              color: foregroundColor,
-              fontWeight: FontWeight.w700,
-            ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Text(
+          priority.toStringAsFixed(2),
+          style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                color: isTopSpeaker ? colorScheme.onPrimary : colorScheme.onSurface,
+                fontWeight: FontWeight.w700,
+              ),
+        ),
       ),
     );
   }

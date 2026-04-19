@@ -1,16 +1,18 @@
 # focus_engine
 
-## What it owns
+## Ownership
 
-This crate owns deterministic speaker ranking policy logic built on top of `audio_core` domain types.
+This crate owns speaker ranking policy and active-speaker selection for the Language MVP.
+It converts typed speaker state into deterministic ordering decisions.
 
-## How to run and test it
+## Run and validate
 
 ```bash
+cargo fmt --all --check
 cargo test -p focus_engine
-cargo clippy -p focus_engine --all-targets --all-features -- -D warnings
 ```
 
-## What it deliberately does not own
+## Deliberately out of scope
 
-This crate does not own audio processing, transport, or session persistence. It scores and selects speakers only.
+This crate does not own speaker identity models, transport, UI concerns, or actual audio mixing.
+It remains a small policy layer on top of `audio_core`.

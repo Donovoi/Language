@@ -1,1 +1,1 @@
-"""Service layer for the Language gateway."""
+"""Gateway service helpers."""

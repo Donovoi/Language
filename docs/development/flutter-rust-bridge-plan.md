@@ -1,13 +1,13 @@
-# Flutter and Rust bridge plan
+# Flutter/Rust Bridge Plan
 
 ## Why this exists
+The current MVP keeps the Flutter app and Rust core loosely coupled so the product loop can move quickly.
+A bridge plan makes the future integration path explicit without forcing premature FFI work into this pass.
 
-The current starter template keeps prioritization logic split between the Rust core and the Python mock gateway. This note records how the client can later move deterministic scoring closer to the shared Rust layer without forcing FFI into the first pass.
+## Boundary it owns
+The intended future path is to expose Rust prioritization and session types through `flutter_rust_bridge` or an equivalent maintained bridge.
+The Flutter layer should consume typed session snapshots from Rust while Python continues to orchestrate network-facing behavior.
 
-## Boundary owned by this plan
-
-A future bridge should expose typed Rust functions for session updates, speaker scoring, and mode-aware ranking to the Flutter client through `flutter_rust_bridge` or an equivalent generated FFI layer. Flutter should continue to own UI state and rendering, while Rust should own reusable policy and validation logic.
-
-## Intentionally deferred
-
-This plan does not add generated bindings, native packaging, or shared build automation yet. It also does not choose the exact transport between the gateway and the client once live streaming replaces the mock endpoints.
+## What is intentionally deferred
+This document does not add generated bindings, build scripts, or platform-specific native glue.
+Those steps should start only after the proto contract and prioritization policy settle enough to avoid expensive churn.

@@ -1,16 +1,40 @@
 # Testing Strategy
 
 ## Why this exists
+The repository spans multiple runtimes, so the testing plan must stay simple and repeatable.
+This document records the quality gates that keep the starter template deterministic.
 
-The repository spans Rust, Python, Flutter, and protobuf contracts. A clear testing strategy keeps the starter template predictable as those layers evolve together.
+## Boundary it owns
+- Rust validates typed domain logic with formatting, linting, and unit tests.
+- Python validates route behavior and ranking shape with Ruff and pytest.
+- Flutter validates widget structure and analyzer health after generating local platform runners.
 
-## Boundary owned by this strategy
+## Current validation commands
 
-- Rust crates must cover constructor invariants and prioritization behavior with unit tests.
-- The Python gateway must cover endpoint behavior and service-level sorting with pytest.
-- The Flutter app must cover core rendering and mode-driven UI changes with widget tests.
-- CI must fail fast on formatting, lint, and test regressions in each stack.
+### Rust
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+```
 
-## Intentionally deferred
+### Python
+```bash
+cd services/gateway
+python -m pip install -e '.[dev]'
+python -m ruff check .
+python -m pytest
+```
 
-This strategy does not yet include end-to-end device tests, contract generation checks, load tests, or audio pipeline benchmarks. Those should be added after the mock-first foundation is stable.
+### Flutter
+```bash
+cd apps/field_app_flutter
+flutter create . --platforms=android,ios,macos,windows
+flutter pub get
+flutter analyze
+flutter test
+```
+
+## What is intentionally deferred
+There are no integration, performance, or device-farm tests yet.
+Those should land after the proto bindings and live event pipeline exist.
