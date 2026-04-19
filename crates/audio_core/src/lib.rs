@@ -1,18 +1,11 @@
 //! Shared low-latency domain primitives for the Language project.
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct SpeakerFrame {
-    pub speaker_id: String,
-    pub priority: f32,
-    pub active: bool,
-}
+mod ids;
+mod priority;
+mod session;
+mod speaker;
 
-impl SpeakerFrame {
-    pub fn new(speaker_id: impl Into<String>, priority: f32, active: bool) -> Self {
-        Self {
-            speaker_id: speaker_id.into(),
-            priority,
-            active,
-        }
-    }
-}
+pub use ids::{LanguageCode, SessionId, SpeakerId, ValidationError};
+pub use priority::PriorityScore;
+pub use session::{SessionMode, SessionState};
+pub use speaker::SpeakerState;

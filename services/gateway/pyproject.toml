@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=69.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "language-gateway"
 version = "0.1.0"
@@ -5,9 +9,17 @@ description = "Gateway service for session orchestration"
 requires-python = ">=3.11"
 dependencies = [
   "fastapi>=0.115.0",
-  "uvicorn>=0.30.0",
   "pydantic>=2.8.0",
+  "uvicorn>=0.30.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "httpx==0.28.1",
+  "pytest==9.0.3",
+  "ruff==0.15.11",
 ]
 
 [tool.ruff]
 line-length = 100
+src = ["app", "tests"]
