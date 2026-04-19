@@ -16,11 +16,16 @@ Returns a simple readiness payload:
 
 ### `GET /v1/session`
 Returns the in-memory session snapshot.
+Optional query parameter: `mode=FOCUS|CROWD|LOCKED|UNSPECIFIED` previews an alternate mode
+without mutating the stored session.
+
+### `PUT /v1/session/mode`
+Updates the in-memory session mode.
 Optional query parameter: `mode=FOCUS|CROWD|LOCKED|UNSPECIFIED`.
 
 ### `POST /v1/session/reset`
 Resets the in-memory session to the selected mode.
-Default mode is `FOCUS`.
+Default mode is `FOCUS`, passed as a query parameter.
 
 ### `GET /v1/speakers`
 Returns the currently ranked speaker list for the active session.

@@ -1,18 +1,22 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
 
-client = TestClient(create_app())
+
+@pytest.fixture
+def client() -> TestClient:
+    return TestClient(create_app())
 
 
-def test_health_endpoint_returns_ok() -> None:
+def test_health_endpoint_returns_ok(client: TestClient) -> None:
     response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
 
-def test_post_speakers_returns_priority_order() -> None:
+def test_post_speakers_returns_priority_order(client: TestClient) -> None:
     response = client.post(
         "/v1/speakers?mode=LOCKED",
         json=[
@@ -62,7 +66,27 @@ def test_post_speakers_returns_priority_order() -> None:
     ]
 
 
-def test_reset_restores_focus_mock_scene() -> None:
+def test_get_session_mode_preview_does_not_mutate_store(client: TestClient) -> None:
+    preview_response = client.get("/v1/session?mode=CROWD")
+
+    assert preview_response.status_code == 200
+    assert preview_response.json()["mode"] == "CROWD"
+
+    persisted_response = client.get("/v1/session")
+
+    assert persisted_response.status_code == 200
+    assert persisted_response.json()["mode"] == "FOCUS"
+
+
+def test_put_session_mode_updates_store(client: TestClient) -> None:
+    response = client.put("/v1/session/mode?mode=LOCKED")
+
+    assert response.status_code == 200
+    assert response.json()["mode"] == "LOCKED"
+    assert client.get("/v1/session").json()["mode"] == "LOCKED"
+
+
+def test_reset_restores_focus_mock_scene(client: TestClient) -> None:
     client.post(
         "/v1/speakers",
         json=[
@@ -80,7 +104,7 @@ def test_reset_restores_focus_mock_scene() -> None:
         ],
     )
 
-    response = client.post("/v1/session/reset")
+    response = client.post("/v1/session/reset?mode=FOCUS")
 
     assert response.status_code == 200
     payload = response.json()
@@ -90,7 +114,7 @@ def test_reset_restores_focus_mock_scene() -> None:
     assert len(payload["session"]["speakers"]) == 5
 
 
-def test_mock_scene_shape_changes_with_mode() -> None:
+def test_mock_scene_shape_changes_with_mode(client: TestClient) -> None:
     response = client.get("/v1/mock/scene?mode=CROWD")
 
     assert response.status_code == 200
