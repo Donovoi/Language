@@ -1,15 +1,25 @@
-.PHONY: bootstrap check fmt lint test
+.PHONY: bootstrap check rust-check python-check flutter-check gateway-run flutter-run
 
 bootstrap:
-	@echo "Bootstrap placeholders: install Flutter, Rust, and Python tooling"
+	cargo fetch
+	cd services/gateway && python -m pip install -e '.[dev]'
+	cd apps/field_app_flutter && flutter create . --platforms=android,ios,macos,windows && rm -f test/widget_test.dart && flutter pub get
 
-check: fmt lint test
+check: rust-check python-check flutter-check
 
-fmt:
-	@echo "Run formatter placeholders for Dart, Rust, and Python"
+rust-check:
+	cargo fmt --all --check
+	cargo clippy --workspace --all-targets --all-features -- -D warnings
+	cargo test --workspace
 
-lint:
-	@echo "Run lint placeholders for Dart, Rust, and Python"
+python-check:
+	cd services/gateway && python -m pip install -e '.[dev]' && python -m ruff check . && python -m pytest
 
-test:
-	@echo "Run placeholder tests for shared crates and services"
+flutter-check:
+	cd apps/field_app_flutter && flutter create . --platforms=android,ios,macos,windows && rm -f test/widget_test.dart && flutter pub get && flutter analyze && flutter test
+
+gateway-run:
+	cd services/gateway && python -m pip install -e . && uvicorn app.main:app --reload
+
+flutter-run:
+	cd apps/field_app_flutter && flutter create . --platforms=android,ios,macos,windows && rm -f test/widget_test.dart && flutter pub get && flutter run
