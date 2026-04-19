@@ -19,7 +19,7 @@ jobs:
         with:
           channel: stable
       - name: Generate platform runners
-        run: cd apps/field_app_flutter && flutter create . --platforms=android,ios,macos,windows
+        run: cd apps/field_app_flutter && flutter create . --platforms=android,ios,macos,windows && rm -f test/widget_test.dart
       - name: Install Flutter dependencies
         run: cd apps/field_app_flutter && flutter pub get
       - name: Analyze Flutter app
