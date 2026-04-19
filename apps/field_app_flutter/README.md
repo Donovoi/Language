@@ -9,6 +9,7 @@ It renders session mode, speaker lanes, and mock-or-gateway state for Android, i
 
 ```bash
 flutter create . --platforms=android,ios,macos,windows
+rm -f test/widget_test.dart
 flutter pub get
 flutter analyze
 flutter test
