@@ -3,6 +3,11 @@ name = "audio_core"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
+description = "Shared typed audio session primitives for the Language project"
+readme = "README.md"
+repository = "https://github.com/Donovoi/Language"
+keywords = ["audio", "language", "session", "speaker"]
+categories = ["data-structures", "multimedia::audio"]
 
 [lib]
 path = "src/lib.rs"

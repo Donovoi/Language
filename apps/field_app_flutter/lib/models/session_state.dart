@@ -50,6 +50,14 @@ class SessionStateModel {
   final List<Speaker> speakers;
   final String? topSpeakerId;
 
+  String? get effectiveTopSpeakerId {
+    if (topSpeakerId != null &&
+        speakers.any((speaker) => speaker.speakerId == topSpeakerId)) {
+      return topSpeakerId;
+    }
+    return speakers.isEmpty ? null : speakers.first.speakerId;
+  }
+
   factory SessionStateModel.fromJson(Map<String, dynamic> json) {
     return SessionStateModel(
       sessionId: json['session_id'] as String,
