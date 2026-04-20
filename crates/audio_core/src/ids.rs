@@ -3,7 +3,9 @@
 pub enum ValidationError {
     /// A required string field was empty or contained only whitespace.
     EmptyField(&'static str),
-    /// A language code did not match the crate's normalized `xx` or `xx-yy` form.
+    /// A language code did not match the crate's normalized lowercase form:
+    /// a 2-3 letter primary subtag with an optional hyphenated 2-4 letter
+    /// secondary subtag.
     InvalidLanguageCode(String),
     /// A floating-point priority score was NaN or infinite.
     NonFinitePriority,
