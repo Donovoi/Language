@@ -58,9 +58,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 
 def _configure_logging(log_level: str) -> None:
+    logging_level = logging.getLevelNamesMapping()[log_level]
     if not logging.getLogger().handlers:
-        logging.basicConfig(level=getattr(logging, log_level, logging.INFO))
-    logger.setLevel(getattr(logging, log_level, logging.INFO))
+        logging.basicConfig(level=logging_level)
+    logger.setLevel(logging_level)
 
 
 app = create_app()

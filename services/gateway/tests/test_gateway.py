@@ -109,6 +109,8 @@ def test_post_speakers_rejects_invalid_payload(client: TestClient) -> None:
     )
 
     assert response.status_code == 422
+    detail = response.json()["detail"]
+    assert any(error["loc"][-1] == "display_name" for error in detail)
 
 
 def test_get_session_mode_preview_does_not_mutate_store(client: TestClient) -> None:
