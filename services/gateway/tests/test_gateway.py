@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config import Settings
 from app.main import create_app
 
 
@@ -14,6 +15,29 @@ def test_health_endpoint_returns_ok(client: TestClient) -> None:
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_cors_preflight_returns_allowed_origin() -> None:
+    app = create_app(
+        Settings(
+            title="Language Gateway",
+            version="0.1.0",
+            log_level="INFO",
+            allow_origins=("http://localhost:3000",),
+        )
+    )
+
+    with TestClient(app) as cors_client:
+        response = cors_client.options(
+            "/v1/session",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
 
 
 def test_post_speakers_returns_priority_order(client: TestClient) -> None:
@@ -64,6 +88,27 @@ def test_post_speakers_returns_priority_order(client: TestClient) -> None:
         "speaker-a",
         "speaker-c",
     ]
+
+
+def test_post_speakers_rejects_invalid_payload(client: TestClient) -> None:
+    response = client.post(
+        "/v1/speakers",
+        json=[
+            {
+                "speaker_id": "speaker-a",
+                "display_name": "",
+                "language_code": "en",
+                "priority": 0.7,
+                "active": True,
+                "is_locked": False,
+                "front_facing": False,
+                "persistence_bonus": 0.0,
+                "last_updated_unix_ms": 1,
+            }
+        ],
+    )
+
+    assert response.status_code == 422
 
 
 def test_get_session_mode_preview_does_not_mutate_store(client: TestClient) -> None:

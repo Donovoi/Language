@@ -45,6 +45,7 @@ uvicorn app.main:app --reload
 ```bash
 cd apps/field_app_flutter
 flutter create . --platforms=android,ios,macos,windows
+rm -f test/widget_test.dart
 flutter pub get
 flutter analyze
 flutter test
@@ -84,6 +85,7 @@ Still intentionally deferred:
 3. connect Flutter mode switching to live gateway state updates
 4. add transport for streaming speaker events
 5. add translation and synthesis provider adapters behind the gateway
+6. harden local-first release paths with configurable clients, logs, and smoke coverage
 
 ## Contribution expectations
 

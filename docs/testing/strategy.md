@@ -30,6 +30,7 @@ python -m pytest
 ```bash
 cd apps/field_app_flutter
 flutter create . --platforms=android,ios,macos,windows
+rm -f test/widget_test.dart
 flutter pub get
 flutter analyze
 flutter test
