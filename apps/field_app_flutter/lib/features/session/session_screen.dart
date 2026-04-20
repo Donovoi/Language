@@ -35,12 +35,14 @@ class _SessionScreenState extends State<SessionScreen> {
       animation: widget.repository,
       builder: (context, _) {
         final session = widget.repository.session;
+        final topSpeakerId = session.effectiveTopSpeakerId;
         return Scaffold(
           appBar: AppBar(
             title: const Text('Language Field Console'),
             actions: <Widget>[
               IconButton(
-                onPressed: widget.repository.isLoading ? null : widget.repository.refresh,
+                onPressed:
+                    widget.repository.isLoading ? null : widget.repository.refresh,
                 icon: const Icon(Icons.refresh),
                 tooltip: 'Refresh session',
               ),
@@ -59,7 +61,9 @@ class _SessionScreenState extends State<SessionScreen> {
                   const SizedBox(height: 8),
                   Text(
                     '${session.mode.label} mode',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w700),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
                   ),
                   const SizedBox(height: 16),
                   Wrap(
@@ -93,7 +97,9 @@ class _SessionScreenState extends State<SessionScreen> {
                     children: <Widget>[
                       Text(
                         'Speaker lanes',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
+                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
                       ),
                       const SizedBox(width: 12),
                       if (widget.repository.isLoading)
@@ -106,17 +112,55 @@ class _SessionScreenState extends State<SessionScreen> {
                   ),
                   const SizedBox(height: 12),
                   Expanded(
-                    child: ListView.separated(
-                      itemBuilder: (context, index) {
-                        final speaker = session.speakers[index];
-                        return SpeakerLane(
-                          speaker: speaker,
-                          isTopSpeaker: speaker.speakerId == session.topSpeakerId,
-                        );
-                      },
-                      separatorBuilder: (_, __) => const SizedBox(height: 12),
-                      itemCount: session.speakers.length,
-                    ),
+                    child: session.speakers.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: <Widget>[
+                                Icon(
+                                  Icons.hearing_disabled_outlined,
+                                  size: 36,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onSurfaceVariant,
+                                ),
+                                const SizedBox(height: 12),
+                                Text(
+                                  'No speaker lanes available yet.',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleMedium
+                                      ?.copyWith(fontWeight: FontWeight.w700),
+                                  textAlign: TextAlign.center,
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Refresh the session or switch modes to load a scene.',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .bodyMedium
+                                      ?.copyWith(
+                                        color: Theme.of(context)
+                                            .colorScheme
+                                            .onSurfaceVariant,
+                                      ),
+                                  textAlign: TextAlign.center,
+                                ),
+                              ],
+                            ),
+                          )
+                        : ListView.separated(
+                            itemBuilder: (context, index) {
+                              final speaker = session.speakers[index];
+                              return SpeakerLane(
+                                speaker: speaker,
+                                isTopSpeaker: speaker.speakerId == topSpeakerId,
+                              );
+                            },
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 12),
+                            itemCount: session.speakers.length,
+                          ),
                   ),
                 ],
               ),

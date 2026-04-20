@@ -18,6 +18,7 @@ This pass delivers a production-style starter template that lets contributors va
 - `services/gateway` FastAPI mock gateway and session API
 - `proto` shared protobuf contracts
 - `docs` architecture, API, testing, and development notes
+- `CHANGELOG.md` release notes for shipped versions
 - `python/research` reserved space for future evaluation and experiment code
 
 ## Quickstart
@@ -85,7 +86,6 @@ Still intentionally deferred:
 3. connect Flutter mode switching to live gateway state updates
 4. add transport for streaming speaker events
 5. add translation and synthesis provider adapters behind the gateway
-6. harden local-first release paths with configurable clients, logs, and smoke coverage
 
 ## Contribution expectations
 
@@ -94,4 +94,4 @@ Still intentionally deferred:
 - add tests whenever behavior could silently drift
 - prefer mock-safe, deterministic defaults over clever abstractions
 
-See `CONTRIBUTING.md` and the docs tree for details.
+See `CONTRIBUTING.md`, `CHANGELOG.md`, `docs/development/release-checklist.md`, and `docs/development/versioning.md` for contribution and release details.
