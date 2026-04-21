@@ -1,11 +1,22 @@
+//! Deterministic speaker-ranking policy built on top of `audio_core`.
+//!
+//! This crate keeps focus-selection logic small and reusable by accepting typed
+//! speaker snapshots and returning stable ranking decisions.
+
 use audio_core::{PriorityScore, SpeakerState};
 
+/// Normalized speaker inputs consumed by the ranking policy.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FocusInputs {
+    /// Base score supplied by upstream state.
     pub base_score: PriorityScore,
+    /// Whether the speaker is currently active.
     pub active: bool,
+    /// Whether the user explicitly locked the speaker.
     pub user_locked: bool,
+    /// Whether the speaker appears front-facing in the scene.
     pub front_facing: bool,
+    /// Carry-over score from recent speaker history.
     pub persistence_bonus: f32,
 }
 
@@ -21,11 +32,16 @@ impl From<&SpeakerState> for FocusInputs {
     }
 }
 
+/// Weighting knobs for deterministic focus selection.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FocusPolicy {
+    /// Score added when a speaker is actively talking.
     pub active_bonus: f32,
+    /// Score subtracted when a speaker is inactive.
     pub inactive_penalty: f32,
+    /// Score added when the user locks a speaker.
     pub user_lock_bonus: f32,
+    /// Score added when the speaker is front-facing.
     pub front_facing_bonus: f32,
 }
 
@@ -41,6 +57,7 @@ impl Default for FocusPolicy {
 }
 
 impl FocusPolicy {
+    /// Scores a single speaker input using the current policy weights.
     pub fn score(&self, inputs: FocusInputs) -> f32 {
         let mut score = inputs.base_score.value() + inputs.persistence_bonus;
         score += if inputs.active {
@@ -58,6 +75,48 @@ impl FocusPolicy {
     }
 }
 
+/// Returns speakers sorted from highest to lowest policy score.
+///
+/// Ties are broken by `speaker_id` to keep ordering deterministic.
+///
+/// # Examples
+///
+/// ```
+/// use audio_core::{LanguageCode, PriorityScore, SpeakerId, SpeakerState};
+/// use focus_engine::{rank_speakers, FocusPolicy};
+///
+/// let ranked = rank_speakers(
+///     &[
+///         SpeakerState::new(
+///             SpeakerId::new("speaker-a").unwrap(),
+///             "Alice",
+///             LanguageCode::new("en").unwrap(),
+///             PriorityScore::new(0.6).unwrap(),
+///             true,
+///             false,
+///             false,
+///             0.0,
+///             0,
+///         )
+///         .unwrap(),
+///         SpeakerState::new(
+///             SpeakerId::new("speaker-b").unwrap(),
+///             "Bao",
+///             LanguageCode::new("en").unwrap(),
+///             PriorityScore::new(0.4).unwrap(),
+///             true,
+///             true,
+///             false,
+///             0.0,
+///             0,
+///         )
+///         .unwrap(),
+///     ],
+///     &FocusPolicy::default(),
+/// );
+///
+/// assert_eq!(ranked[0].speaker_id.as_str(), "speaker-b");
+/// ```
 pub fn rank_speakers(speakers: &[SpeakerState], policy: &FocusPolicy) -> Vec<SpeakerState> {
     let mut ranked = speakers.to_vec();
     ranked.sort_by(|left, right| {
@@ -71,6 +130,7 @@ pub fn rank_speakers(speakers: &[SpeakerState], policy: &FocusPolicy) -> Vec<Spe
     ranked
 }
 
+/// Returns up to `limit` active speakers after applying ranking policy.
 pub fn top_n_active_speakers(
     speakers: &[SpeakerState],
     policy: &FocusPolicy,
