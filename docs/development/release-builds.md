@@ -14,11 +14,11 @@ Signed store-ready mobile or desktop packages are intentionally out of scope for
 
 Before building artifacts, keep these versions aligned:
 
-- `/home/runner/work/Language/Language/CHANGELOG.md`
-- `/home/runner/work/Language/Language/services/gateway/pyproject.toml`
-- `/home/runner/work/Language/Language/apps/field_app_flutter/pubspec.yaml`
-- `/home/runner/work/Language/Language/crates/audio_core/Cargo.toml`
-- `/home/runner/work/Language/Language/crates/focus_engine/Cargo.toml`
+- `CHANGELOG.md`
+- `services/gateway/pyproject.toml`
+- `apps/field_app_flutter/pubspec.yaml`
+- `crates/audio_core/Cargo.toml`
+- `crates/focus_engine/Cargo.toml`
 
 This repository starts at `0.1.0` and tags releases as `v0.1.0`.
 
@@ -27,14 +27,14 @@ This repository starts at `0.1.0` and tags releases as `v0.1.0`.
 ### Source validation
 
 ```bash
-cd /home/runner/work/Language/Language
+cd <repository-root>
 make check
 ```
 
 ### Gateway packages
 
 ```bash
-cd /home/runner/work/Language/Language/services/gateway
+cd <repository-root>/services/gateway
 python -m pip install build
 python -m build
 ```
@@ -47,7 +47,7 @@ Outputs:
 ### Flutter Android artifacts
 
 ```bash
-cd /home/runner/work/Language/Language/apps/field_app_flutter
+cd <repository-root>/apps/field_app_flutter
 flutter create . --platforms=android,ios,macos,windows
 rm -f test/widget_test.dart
 flutter pub get
@@ -58,7 +58,7 @@ flutter build appbundle --release
 ### Flutter iOS artifact (unsigned)
 
 ```bash
-cd /home/runner/work/Language/Language/apps/field_app_flutter
+cd <repository-root>/apps/field_app_flutter
 flutter create . --platforms=android,ios,macos,windows
 rm -f test/widget_test.dart
 flutter pub get
@@ -68,7 +68,7 @@ flutter build ios --release --no-codesign
 ### Flutter macOS artifact
 
 ```bash
-cd /home/runner/work/Language/Language/apps/field_app_flutter
+cd <repository-root>/apps/field_app_flutter
 flutter create . --platforms=android,ios,macos,windows
 rm -f test/widget_test.dart
 flutter pub get
@@ -78,7 +78,7 @@ flutter build macos --release
 ### Flutter Windows artifact
 
 ```bash
-cd /home/runner/work/Language/Language/apps/field_app_flutter
+cd <repository-root>/apps/field_app_flutter
 flutter create . --platforms=android,ios,macos,windows
 rm -f test/widget_test.dart
 flutter pub get
@@ -87,7 +87,7 @@ flutter build windows --release
 
 ## Automated release workflow
 
-`/home/runner/work/Language/Language/.github/workflows/release.yml` is the release workflow.
+`.github/workflows/release.yml` is the release workflow.
 It:
 
 1. verifies version alignment
