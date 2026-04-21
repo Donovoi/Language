@@ -1,6 +1,6 @@
 .PHONY: bootstrap check rust-check python-check flutter-check gateway-run flutter-run gateway-package flutter-release-android source-bundle
 
-VERSION ?= $(shell awk -F'["+]+' '/^version:/{print $$2; exit}' apps/field_app_flutter/pubspec.yaml)
+VERSION ?= $(shell awk '/^version:/{split($$2, parts, "+"); print parts[1]; exit}' apps/field_app_flutter/pubspec.yaml)
 
 bootstrap:
 	cargo fetch

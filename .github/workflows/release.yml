@@ -44,7 +44,6 @@ jobs:
               raise SystemExit(f"Release versions are not aligned: {details}")
 
           version = unique_versions.pop()
-          ref_name = Path("/dev/null")
           print(f"version={version}")
           PY
       - name: Verify tag matches version
@@ -173,6 +172,7 @@ jobs:
       - name: Build unsigned iOS artifact
         run: |
           cd apps/field_app_flutter
+          flutter config --enable-ios
           flutter create . --platforms=android,ios,macos,windows
           rm -f test/widget_test.dart
           flutter pub get
@@ -195,6 +195,7 @@ jobs:
       - name: Build macOS artifact
         run: |
           cd apps/field_app_flutter
+          flutter config --enable-macos-desktop
           flutter create . --platforms=android,ios,macos,windows
           rm -f test/widget_test.dart
           flutter pub get
@@ -218,6 +219,7 @@ jobs:
         shell: pwsh
         run: |
           Set-Location apps/field_app_flutter
+          flutter config --enable-windows-desktop
           flutter create . --platforms=android,ios,macos,windows
           if (Test-Path test/widget_test.dart) { Remove-Item test/widget_test.dart }
           flutter pub get
@@ -243,7 +245,7 @@ jobs:
       ]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v5.0.0
+      - uses: actions/download-artifact@v4.2.1
         with:
           path: release-artifacts
           merge-multiple: true
