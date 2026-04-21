@@ -32,7 +32,8 @@ htmlcov/
 Thumbs.db
 
 # Generated
-gen/
-dist/
+/gen/
+/dist/
+services/gateway/dist/
 
 *.egg-info/
