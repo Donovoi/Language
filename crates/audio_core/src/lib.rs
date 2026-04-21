@@ -1,4 +1,8 @@
 //! Shared low-latency domain primitives for the Language project.
+//!
+//! The crate provides validated identifiers, speaker/session state, and
+//! lightweight priority primitives that higher-level policy crates can reuse
+//! without depending on transport or UI concerns.
 
 mod ids;
 mod priority;

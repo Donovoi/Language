@@ -20,18 +20,36 @@ class MockRepository extends ChangeNotifier {
   String? get errorMessage => _errorMessage;
 
   Future<void> load() async {
-    await _replaceSession(() => _api.fetchMockScene(_session.mode == SessionMode.unspecified ? SessionMode.focus : _session.mode));
+    final mode = _session.mode == SessionMode.unspecified
+        ? SessionMode.focus
+        : _session.mode;
+    await _replaceSession(
+      () => _api.fetchMockScene(mode),
+      fallbackMode: mode,
+    );
   }
 
   Future<void> changeMode(SessionMode mode) async {
-    await _replaceSession(() => _api.fetchMockScene(mode));
+    await _replaceSession(
+      () => _api.fetchMockScene(mode),
+      fallbackMode: mode,
+    );
   }
 
   Future<void> refresh() async {
-    await _replaceSession(() => _api.fetchSession(mode: _session.mode));
+    final mode = _session.mode == SessionMode.unspecified
+        ? SessionMode.focus
+        : _session.mode;
+    await _replaceSession(
+      () => _api.fetchSession(mode: mode),
+      fallbackMode: mode,
+    );
   }
 
-  Future<void> _replaceSession(Future<SessionStateModel> Function() loader) async {
+  Future<void> _replaceSession(
+    Future<SessionStateModel> Function() loader, {
+    required SessionMode fallbackMode,
+  }) async {
     _isLoading = true;
     _errorMessage = null;
     notifyListeners();
@@ -39,7 +57,7 @@ class MockRepository extends ChangeNotifier {
     try {
       _session = await loader();
     } catch (_) {
-      _session = SessionStateModel.fallback(mode: _session.mode == SessionMode.unspecified ? SessionMode.focus : _session.mode);
+      _session = SessionStateModel.fallback(mode: fallbackMode);
       _errorMessage = 'Gateway unavailable. Showing local fallback scene.';
     } finally {
       _isLoading = false;

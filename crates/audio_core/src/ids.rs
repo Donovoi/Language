@@ -1,15 +1,24 @@
+/// Validation failures returned by typed `audio_core` constructors.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidationError {
+    /// A required string field was empty or contained only whitespace.
     EmptyField(&'static str),
+    /// A language code did not match the crate's normalized lowercase form:
+    /// a 2-3 letter primary subtag with an optional hyphenated 2-4 letter
+    /// secondary subtag.
     InvalidLanguageCode(String),
+    /// A floating-point priority score was NaN or infinite.
     NonFinitePriority,
+    /// A persistence bonus was negative or not finite.
     NegativePersistenceBonus,
 }
 
+/// Stable identifier for a realtime audio session.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SessionId(String);
 
 impl SessionId {
+    /// Creates a validated session identifier.
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
         if value.trim().is_empty() {
@@ -18,15 +27,18 @@ impl SessionId {
         Ok(Self(value))
     }
 
+    /// Returns the original identifier as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
+/// Stable identifier for a speaker within a session.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SpeakerId(String);
 
 impl SpeakerId {
+    /// Creates a validated speaker identifier.
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
         if value.trim().is_empty() {
@@ -35,15 +47,27 @@ impl SpeakerId {
         Ok(Self(value))
     }
 
+    /// Returns the original identifier as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
+/// Normalized BCP-47-style language code used by speaker state.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LanguageCode(String);
 
 impl LanguageCode {
+    /// Parses and normalizes a language code to lowercase ASCII.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use audio_core::LanguageCode;
+    ///
+    /// let code = LanguageCode::new("EN-us").unwrap();
+    /// assert_eq!(code.as_str(), "en-us");
+    /// ```
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let normalized = value.into().trim().to_ascii_lowercase();
         let mut segments = normalized.split('-');
@@ -70,6 +94,7 @@ impl LanguageCode {
         Ok(Self(normalized))
     }
 
+    /// Returns the normalized language code.
     pub fn as_str(&self) -> &str {
         &self.0
     }

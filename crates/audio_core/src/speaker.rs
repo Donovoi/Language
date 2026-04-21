@@ -1,20 +1,31 @@
 use crate::{LanguageCode, PriorityScore, SpeakerId, ValidationError};
 
+/// Speaker attributes consumed by ranking and focus policy.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SpeakerState {
+    /// Stable speaker identifier.
     pub speaker_id: SpeakerId,
+    /// Human-readable label for UI and diagnostics.
     pub display_name: String,
+    /// Preferred language for the speaker.
     pub language_code: LanguageCode,
+    /// Base score supplied by upstream logic.
     pub priority: PriorityScore,
+    /// Whether the speaker is currently active.
     pub active: bool,
+    /// Whether the user explicitly locked this speaker.
     pub is_locked: bool,
+    /// Whether the speaker is front-facing in the capture layout.
     pub front_facing: bool,
+    /// Additional carry-over score from recent speaker history.
     pub persistence_bonus: f32,
+    /// Timestamp of the last upstream update in Unix milliseconds.
     pub last_updated_unix_ms: u64,
 }
 
 impl SpeakerState {
     #[allow(clippy::too_many_arguments)]
+    /// Creates a validated speaker snapshot.
     pub fn new(
         speaker_id: SpeakerId,
         display_name: impl Into<String>,
@@ -47,6 +58,7 @@ impl SpeakerState {
         })
     }
 
+    /// Returns the base priority plus any persistence bonus.
     pub fn effective_priority(&self) -> f32 {
         self.priority.value() + self.persistence_bonus
     }

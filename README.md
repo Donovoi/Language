@@ -18,6 +18,7 @@ This pass delivers a production-style starter template that lets contributors va
 - `services/gateway` FastAPI mock gateway and session API
 - `proto` shared protobuf contracts
 - `docs` architecture, API, testing, and development notes
+- `CHANGELOG.md` release notes for shipped versions
 - `python/research` reserved space for future evaluation and experiment code
 
 ## Quickstart
@@ -45,6 +46,7 @@ uvicorn app.main:app --reload
 ```bash
 cd apps/field_app_flutter
 flutter create . --platforms=android,ios,macos,windows
+rm -f test/widget_test.dart
 flutter pub get
 flutter analyze
 flutter test
@@ -92,4 +94,4 @@ Still intentionally deferred:
 - add tests whenever behavior could silently drift
 - prefer mock-safe, deterministic defaults over clever abstractions
 
-See `CONTRIBUTING.md` and the docs tree for details.
+See `CONTRIBUTING.md`, `CHANGELOG.md`, `docs/development/release-checklist.md`, and `docs/development/versioning.md` for contribution and release details.
