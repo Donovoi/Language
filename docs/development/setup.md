@@ -25,4 +25,4 @@ make check
 ## Notes
 
 The repository keeps a mock-first developer path. The Flutter app source is tracked in-repo, while local platform runners are regenerated with `flutter create .` during bootstrap and run commands.
-For release prep, use `release-checklist.md`, `versioning.md`, and the root `CHANGELOG.md`.
+For release prep, use `release-builds.md`, `release-checklist.md`, `versioning.md`, and the root `CHANGELOG.md`.

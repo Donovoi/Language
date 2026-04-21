@@ -8,14 +8,18 @@ Use this checklist when preparing a repository release.
 2. Update `CHANGELOG.md` with the release summary.
 3. Make sure version strings and release notes match the guidance in `versioning.md`.
 4. Run the repository's existing validation commands on a clean branch.
+5. Run the packaging commands from `release-builds.md` or the release workflow in dry-run form.
+6. Confirm any unsigned Flutter artifacts are acceptable for the intended audience.
 
 ## Cut the release
 
 1. Create an annotated git tag named `vX.Y.Z`.
 2. Publish release notes from the matching `CHANGELOG.md` entry.
-3. Point consumers to any docs that changed with the release.
+3. Publish the workflow artifacts for the tag and confirm they match the target version.
+4. Point consumers to any docs that changed with the release.
 
 ## After release
 
 1. Add or refresh the next changelog entry when new work starts.
 2. Capture any release follow-ups before the next version is planned.
+3. Track any remaining signing, installer, or deployment work for the next release pass.
