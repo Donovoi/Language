@@ -126,8 +126,19 @@ jobs:
           cd services/gateway
           python -m build
           mkdir -p /tmp/release-artifacts
-          cp dist/language_gateway-*.tar.gz /tmp/release-artifacts/language-gateway-${{ needs.release-metadata.outputs.version }}.tar.gz
-          cp dist/language_gateway-*-py3-none-any.whl /tmp/release-artifacts/
+          shopt -s nullglob
+          sdists=(dist/*.tar.gz)
+          wheels=(dist/*.whl)
+          if [ "${#sdists[@]}" -ne 1 ]; then
+            echo "Expected exactly one sdist in dist/, found ${#sdists[@]}" >&2
+            exit 1
+          fi
+          if [ "${#wheels[@]}" -ne 1 ]; then
+            echo "Expected exactly one wheel in dist/, found ${#wheels[@]}" >&2
+            exit 1
+          fi
+          cp "${sdists[0]}" /tmp/release-artifacts/language-gateway-${{ needs.release-metadata.outputs.version }}.tar.gz
+          cp "${wheels[0]}" /tmp/release-artifacts/
       - uses: actions/upload-artifact@v4.6.2
         with:
           name: release-gateway
