@@ -39,10 +39,10 @@ python -m pip install build
 python -m build
 ```
 
-Outputs:
+Outputs in `services/gateway/dist/`:
 
-- `services/gateway/dist/language_gateway-<version>.tar.gz`
-- `services/gateway/dist/language_gateway-<version>-py3-none-any.whl`
+- source distribution (`*.tar.gz`)
+- wheel distribution (`*.whl`)
 
 ### Flutter Android artifacts
 
