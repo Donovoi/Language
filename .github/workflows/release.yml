@@ -1,0 +1,253 @@
+name: Release Artifacts
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - id: version
+        name: Verify aligned release versions
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          from pathlib import Path
+          import re
+
+          def extract(pattern: str, path: str) -> str:
+              text = Path(path).read_text(encoding="utf-8")
+              match = re.search(pattern, text, re.MULTILINE)
+              if not match:
+                  raise SystemExit(f"Could not find version in {path}")
+              return match.group(1)
+
+          versions = {
+              "gateway": extract(r'^version = "([^"]+)"$', "services/gateway/pyproject.toml"),
+              "flutter": extract(r"^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+[0-9]+$", "apps/field_app_flutter/pubspec.yaml"),
+              "audio_core": extract(r'^version = "([^"]+)"$', "crates/audio_core/Cargo.toml"),
+              "focus_engine": extract(r'^version = "([^"]+)"$', "crates/focus_engine/Cargo.toml"),
+              "changelog": extract(r"^## \[([0-9]+\.[0-9]+\.[0-9]+)\]", "CHANGELOG.md"),
+          }
+
+          unique_versions = set(versions.values())
+          if len(unique_versions) != 1:
+              details = ", ".join(f"{name}={value}" for name, value in versions.items())
+              raise SystemExit(f"Release versions are not aligned: {details}")
+
+          version = unique_versions.pop()
+          ref_name = Path("/dev/null")
+          print(f"version={version}")
+          PY
+      - name: Verify tag matches version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          test "v${{ steps.version.outputs.version }}" = "${GITHUB_REF_NAME}"
+
+  validate-rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal --component clippy --component rustfmt
+      - name: Run cargo fmt
+        run: cargo +stable fmt --all --check
+      - name: Run cargo clippy
+        run: cargo +stable clippy --workspace --all-targets --all-features -- -D warnings
+      - name: Run cargo test
+        run: cargo +stable test --workspace
+
+  validate-python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: '3.12'
+      - name: Install gateway dependencies
+        run: |
+          python -m pip install --upgrade pip
+          cd services/gateway
+          python -m pip install -e '.[dev]'
+      - name: Run Ruff
+        run: cd services/gateway && python -m ruff check .
+      - name: Run pytest
+        run: cd services/gateway && python -m pytest
+
+  validate-flutter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+      - name: Generate platform runners
+        run: cd apps/field_app_flutter && flutter create . --platforms=android,ios,macos,windows && rm -f test/widget_test.dart
+      - name: Install Flutter dependencies
+        run: cd apps/field_app_flutter && flutter pub get
+      - name: Analyze Flutter app
+        run: cd apps/field_app_flutter && flutter analyze
+      - name: Run Flutter tests
+        run: cd apps/field_app_flutter && flutter test
+
+  source-bundle:
+    needs: [release-metadata, validate-rust, validate-python, validate-flutter]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - name: Create source bundles
+        run: |
+          mkdir -p release-artifacts
+          git archive --format=tar.gz --output=release-artifacts/language-${{ needs.release-metadata.outputs.version }}-source.tar.gz HEAD
+          git archive --format=zip --output=release-artifacts/language-${{ needs.release-metadata.outputs.version }}-source.zip HEAD
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: release-source
+          path: release-artifacts/*
+
+  gateway-package:
+    needs: [release-metadata, validate-rust, validate-python, validate-flutter]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: '3.12'
+      - name: Build gateway distributions
+        run: |
+          python -m pip install --upgrade pip build
+          cd services/gateway
+          python -m build
+          mkdir -p /tmp/release-artifacts
+          cp dist/language_gateway-*.tar.gz /tmp/release-artifacts/language-gateway-${{ needs.release-metadata.outputs.version }}.tar.gz
+          cp dist/language_gateway-*-py3-none-any.whl /tmp/release-artifacts/
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: release-gateway
+          path: /tmp/release-artifacts/*
+
+  flutter-android:
+    needs: [release-metadata, validate-rust, validate-python, validate-flutter]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-java@v5.0.0
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+      - name: Build Android artifacts
+        run: |
+          cd apps/field_app_flutter
+          flutter create . --platforms=android,ios,macos,windows
+          rm -f test/widget_test.dart
+          flutter pub get
+          flutter build apk --release
+          flutter build appbundle --release
+          mkdir -p /tmp/release-artifacts
+          cp build/app/outputs/flutter-apk/app-release.apk /tmp/release-artifacts/field_app_flutter-${{ needs.release-metadata.outputs.version }}-android-release.apk
+          cp build/app/outputs/bundle/release/app-release.aab /tmp/release-artifacts/field_app_flutter-${{ needs.release-metadata.outputs.version }}-android-release.aab
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: release-android
+          path: /tmp/release-artifacts/*
+
+  flutter-ios:
+    needs: [release-metadata, validate-rust, validate-python, validate-flutter]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+      - name: Build unsigned iOS artifact
+        run: |
+          cd apps/field_app_flutter
+          flutter create . --platforms=android,ios,macos,windows
+          rm -f test/widget_test.dart
+          flutter pub get
+          flutter build ios --release --no-codesign
+          mkdir -p /tmp/release-artifacts
+          ditto -c -k --sequesterRsrc --keepParent build/ios/iphoneos/Runner.app /tmp/release-artifacts/field_app_flutter-${{ needs.release-metadata.outputs.version }}-ios-unsigned.zip
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: release-ios
+          path: /tmp/release-artifacts/*
+
+  flutter-macos:
+    needs: [release-metadata, validate-rust, validate-python, validate-flutter]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+      - name: Build macOS artifact
+        run: |
+          cd apps/field_app_flutter
+          flutter create . --platforms=android,ios,macos,windows
+          rm -f test/widget_test.dart
+          flutter pub get
+          flutter build macos --release
+          mkdir -p /tmp/release-artifacts
+          ditto -c -k --sequesterRsrc --keepParent build/macos/Build/Products/Release/field_app_flutter.app /tmp/release-artifacts/field_app_flutter-${{ needs.release-metadata.outputs.version }}-macos-release.zip
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: release-macos
+          path: /tmp/release-artifacts/*
+
+  flutter-windows:
+    needs: [release-metadata, validate-rust, validate-python, validate-flutter]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+      - name: Build Windows artifact
+        shell: pwsh
+        run: |
+          Set-Location apps/field_app_flutter
+          flutter create . --platforms=android,ios,macos,windows
+          if (Test-Path test/widget_test.dart) { Remove-Item test/widget_test.dart }
+          flutter pub get
+          flutter build windows --release
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP/release-artifacts" | Out-Null
+          Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath "$env:RUNNER_TEMP/release-artifacts/field_app_flutter-${{ needs.release-metadata.outputs.version }}-windows-release.zip" -Force
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: release-windows
+          path: ${{ runner.temp }}/release-artifacts/*
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      [
+        release-metadata,
+        source-bundle,
+        gateway-package,
+        flutter-android,
+        flutter-ios,
+        flutter-macos,
+        flutter-windows,
+      ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5.0.0
+        with:
+          path: release-artifacts
+          merge-multiple: true
+      - name: Publish GitHub release assets
+        uses: softprops/action-gh-release@v2.3.3
+        with:
+          files: release-artifacts/*

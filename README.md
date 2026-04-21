@@ -94,4 +94,4 @@ Still intentionally deferred:
 - add tests whenever behavior could silently drift
 - prefer mock-safe, deterministic defaults over clever abstractions
 
-See `CONTRIBUTING.md`, `CHANGELOG.md`, `docs/development/release-checklist.md`, and `docs/development/versioning.md` for contribution and release details.
+See `CONTRIBUTING.md`, `CHANGELOG.md`, `docs/development/release-builds.md`, `docs/development/release-checklist.md`, and `docs/development/versioning.md` for contribution and release details.
