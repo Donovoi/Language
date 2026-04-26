@@ -86,5 +86,29 @@ void main() {
     expect(speaker.frontFacing, isFalse);
     expect(speaker.persistenceBonus, 0);
     expect(speaker.lastUpdatedUnixMs, 0);
+    expect(speaker.laneStatus, TranslationLaneStatus.unspecified);
+    expect(speaker.translatedCaption, isNull);
+    expect(speaker.targetLanguageCode, isNull);
+  });
+
+  test('Speaker.fromJson parses translation lane fields', () {
+    final speaker = Speaker.fromJson(<String, dynamic>{
+      'speaker_id': 'speaker-a',
+      'display_name': 'Alice',
+      'language_code': 'en',
+      'priority': 0.9,
+      'active': true,
+      'source_caption': 'Hola',
+      'translated_caption': 'Hello',
+      'target_language_code': 'en',
+      'lane_status': 'READY',
+      'status_message': 'Translation live.',
+    });
+
+    expect(speaker.sourceCaption, 'Hola');
+    expect(speaker.translatedCaption, 'Hello');
+    expect(speaker.targetLanguageCode, 'en');
+    expect(speaker.laneStatus, TranslationLaneStatus.ready);
+    expect(speaker.statusMessage, 'Translation live.');
   });
 }

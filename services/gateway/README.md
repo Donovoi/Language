@@ -4,6 +4,8 @@
 
 This service owns the local FastAPI API, in-memory session state, and deterministic mock scenes for the Language MVP.
 It exposes the client-facing HTTP contract while keeping prioritization logic small and testable.
+The current mock-first pass now includes a deterministic SSE event stream for session snapshots and
+speaker-lane updates.
 
 ## Run and validate
 

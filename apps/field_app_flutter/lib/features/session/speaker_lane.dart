@@ -8,14 +8,25 @@ class SpeakerLane extends StatelessWidget {
     super.key,
     required this.speaker,
     required this.isTopSpeaker,
+    this.onToggleLock,
   });
 
   final Speaker speaker;
   final bool isTopSpeaker;
+  final VoidCallback? onToggleLock;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final translatedCaption = speaker.translatedCaption;
+    final sourceCaption = speaker.sourceCaption;
+    final statusMessage = speaker.statusMessage;
+    final targetLanguage = speaker.targetLanguageCode ?? speaker.languageCode;
+    final languageSummary = targetLanguage == speaker.languageCode
+        ? '${speaker.languageCode} • ${speaker.active ? 'Active' : 'Idle'}'
+        : '${speaker.languageCode} → $targetLanguage • ${speaker.active ? 'Active' : 'Idle'}';
+    final statusColor = _statusColor(context, speaker.laneStatus);
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -42,16 +53,22 @@ class SpeakerLane extends StatelessWidget {
                             ),
                       ),
                     ),
-                    if (speaker.isLocked)
-                      const Padding(
-                        padding: EdgeInsets.only(left: 8),
-                        child: Icon(Icons.lock, size: 18),
+                    IconButton(
+                      onPressed: onToggleLock,
+                      icon: Icon(
+                        speaker.isLocked ? Icons.lock : Icons.lock_open,
+                        size: 18,
                       ),
+                      tooltip: speaker.isLocked
+                          ? 'Unlock speaker ${speaker.displayName}'
+                          : 'Lock speaker ${speaker.displayName}',
+                      visualDensity: VisualDensity.compact,
+                    ),
                   ],
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  '${speaker.languageCode} • ${speaker.active ? 'Active' : 'Idle'}',
+                  languageSummary,
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
                 const SizedBox(height: 4),
@@ -61,6 +78,53 @@ class SpeakerLane extends StatelessWidget {
                         color: colorScheme.onSurfaceVariant,
                       ),
                 ),
+                if (translatedCaption != null && translatedCaption.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 12),
+                  Text(
+                    translatedCaption,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                ],
+                if (sourceCaption != null &&
+                    sourceCaption.isNotEmpty &&
+                    sourceCaption != translatedCaption) ...<Widget>[
+                  const SizedBox(height: 6),
+                  Text(
+                    'Source: $sourceCaption',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: statusColor.withAlpha(24),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    speaker.laneStatus.label,
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                          color: statusColor,
+                          fontWeight: FontWeight.w700,
+                        ),
+                  ),
+                ),
+                if (statusMessage != null && statusMessage.isNotEmpty) ...<Widget>[
+                  const SizedBox(height: 8),
+                  Text(
+                    statusMessage,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -69,5 +133,23 @@ class SpeakerLane extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Color _statusColor(BuildContext context, TranslationLaneStatus status) {
+    final colorScheme = Theme.of(context).colorScheme;
+    switch (status) {
+      case TranslationLaneStatus.unspecified:
+        return colorScheme.onSurfaceVariant;
+      case TranslationLaneStatus.idle:
+        return colorScheme.outline;
+      case TranslationLaneStatus.listening:
+        return colorScheme.secondary;
+      case TranslationLaneStatus.translating:
+        return colorScheme.tertiary;
+      case TranslationLaneStatus.ready:
+        return colorScheme.primary;
+      case TranslationLaneStatus.error:
+        return colorScheme.error;
+    }
   }
 }

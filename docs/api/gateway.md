@@ -34,6 +34,25 @@ Returns the currently ranked speaker list for the active session.
 Replaces the current speaker list with the supplied states and returns a ranked session response.
 Optional query parameter: `mode=FOCUS|CROWD|LOCKED|UNSPECIFIED`.
 
+### `PUT /v1/speakers/{speaker_id}/lock`
+Locks a single speaker in the current session, reranks the session, and returns the updated snapshot.
+
+### `DELETE /v1/speakers/{speaker_id}/lock`
+Releases a speaker lock in the current session, reranks the session, and returns the updated snapshot.
+
+### `GET /v1/events/stream`
+Returns a persistent Server-Sent Events stream for live session updates.
+Optional query parameter: `mode=FOCUS|CROWD|LOCKED|UNSPECIFIED` previews an alternate mode without
+mutating the stored session.
+
+The stream currently emits:
+
+- one initial `session.snapshot` event containing the current ranked session
+- future `session.snapshot` events whenever stored session state changes
+- targeted `speaker.update` events for direct speaker lock/unlock mutations
+
+Idle connections receive SSE keep-alive comments so clients can stay attached between mutations.
+
 ### `GET /v1/mock/scene`
 Builds a deterministic mock scene for `FOCUS`, `CROWD`, or `LOCKED` mode.
 The response includes the ranked session plus the supported modes list.

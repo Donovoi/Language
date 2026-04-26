@@ -41,6 +41,11 @@ class _SessionScreenState extends State<SessionScreen> {
             title: const Text('Language Field Console'),
             actions: <Widget>[
               IconButton(
+                onPressed: widget.repository.isLoading ? null : widget.repository.reset,
+                icon: const Icon(Icons.restart_alt),
+                tooltip: 'Reset session',
+              ),
+              IconButton(
                 onPressed:
                     widget.repository.isLoading ? null : widget.repository.refresh,
                 icon: const Icon(Icons.refresh),
@@ -64,6 +69,36 @@ class _SessionScreenState extends State<SessionScreen> {
                     style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                           fontWeight: FontWeight.w700,
                         ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: widget.repository.isStreaming
+                          ? Theme.of(context)
+                              .colorScheme
+                              .primary
+                              .withAlpha(24)
+                          : Theme.of(context)
+                              .colorScheme
+                              .outlineVariant
+                              .withAlpha(32),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                    child: Text(
+                      widget.repository.isStreaming
+                          ? 'Live updates connected'
+                          : 'Live updates offline',
+                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                            color: widget.repository.isStreaming
+                                ? Theme.of(context).colorScheme.primary
+                                : Theme.of(context).colorScheme.onSurfaceVariant,
+                            fontWeight: FontWeight.w700,
+                          ),
+                    ),
                   ),
                   const SizedBox(height: 16),
                   Wrap(
@@ -155,6 +190,14 @@ class _SessionScreenState extends State<SessionScreen> {
                               return SpeakerLane(
                                 speaker: speaker,
                                 isTopSpeaker: speaker.speakerId == topSpeakerId,
+                                onToggleLock: widget.repository.isLoading
+                                    ? null
+                                    : () {
+                                        widget.repository.setSpeakerLock(
+                                          speaker.speakerId,
+                                          !speaker.isLocked,
+                                        );
+                                      },
                               );
                             },
                             separatorBuilder: (_, __) =>
