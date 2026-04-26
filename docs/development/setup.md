@@ -8,6 +8,19 @@ Install:
 - Python 3.11+
 - Make
 
+## One-command bootstrap
+
+The repository includes `scripts/bootstrap_dev.sh` to install or reuse the local Flutter SDK,
+create the gateway virtual environment, and prepare the Flutter app runners.
+
+```bash
+bash scripts/bootstrap_dev.sh
+```
+
+The script installs Flutter under `~/.local/share/flutter`, creates a launcher at
+`~/.local/bin/flutter`, and creates `services/gateway/.venv` for Python dependencies so local
+development does not rely on `--break-system-packages`.
+
 ## Suggested local workflow
 
 ```bash

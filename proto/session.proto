@@ -9,6 +9,15 @@ enum SessionMode {
   SESSION_MODE_LOCKED = 3;
 }
 
+enum LaneStatus {
+  LANE_STATUS_UNSPECIFIED = 0;
+  LANE_STATUS_IDLE = 1;
+  LANE_STATUS_LISTENING = 2;
+  LANE_STATUS_TRANSLATING = 3;
+  LANE_STATUS_READY = 4;
+  LANE_STATUS_ERROR = 5;
+}
+
 message ClientConfig {
   string preferred_language_code = 1;
   SessionMode mode = 2;
@@ -25,6 +34,11 @@ message SpeakerState {
   bool front_facing = 7;
   float persistence_bonus = 8;
   uint64 last_updated_unix_ms = 9;
+  string source_caption = 10;
+  string translated_caption = 11;
+  string target_language_code = 12;
+  LaneStatus lane_status = 13;
+  string status_message = 14;
 }
 
 message SessionState {
@@ -40,6 +54,11 @@ message SpeakerEvent {
   bool active = 3;
   bool is_locked = 4;
   uint64 observed_unix_ms = 5;
+  string source_caption = 6;
+  string translated_caption = 7;
+  string target_language_code = 8;
+  LaneStatus lane_status = 9;
+  string status_message = 10;
 }
 
 message PriorityUpdate {

@@ -23,6 +23,15 @@ This pass delivers a production-style starter template that lets contributors va
 
 ## Quickstart
 
+### Bootstrap local SDKs and dev env
+
+```bash
+bash scripts/bootstrap_dev.sh
+```
+
+This installs or reuses a local Flutter SDK in `~/.local/share/flutter`, adds a launcher at
+`~/.local/bin/flutter`, and creates `services/gateway/.venv` for Python development.
+
 ### Rust checks
 
 ```bash
@@ -35,10 +44,9 @@ cargo test --workspace
 
 ```bash
 cd services/gateway
-python -m pip install -e '.[dev]'
-python -m ruff check .
-python -m pytest
-uvicorn app.main:app --reload
+.venv/bin/python -m ruff check .
+.venv/bin/python -m pytest
+.venv/bin/python -m uvicorn app.main:app --reload
 ```
 
 ### Flutter checks and run
