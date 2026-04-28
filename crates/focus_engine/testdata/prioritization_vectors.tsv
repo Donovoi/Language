@@ -1,0 +1,16 @@
+# Shared prioritization parity vectors.
+# Rust `crates/focus_engine/src/lib.rs` is the authority.
+# Update this file in the same change as `ModeFocusPolicy::for_mode` and keep the gateway parity test green.
+case_id	mode	speaker_id	display_name	priority	active	is_locked	front_facing	persistence_bonus	expected_score	expected_order
+focus_locked_priority	FOCUS	speaker-alpha	Alice	0.72	true	false	false	0.05	1.170	speaker-bravo,speaker-alpha,speaker-charlie
+focus_locked_priority	FOCUS	speaker-bravo	Bruno	0.60	true	true	true	0.02	1.670	speaker-bravo,speaker-alpha,speaker-charlie
+focus_locked_priority	FOCUS	speaker-charlie	Carmen	0.96	false	false	false	0.10	-0.040	speaker-bravo,speaker-alpha,speaker-charlie
+crowd_persistence_scaled	CROWD	speaker-delta	Devi	0.48	true	false	false	0.50	0.980	speaker-echo,speaker-delta,speaker-foxtrot
+crowd_persistence_scaled	CROWD	speaker-echo	Ella	0.66	true	false	true	0.10	1.020	speaker-echo,speaker-delta,speaker-foxtrot
+crowd_persistence_scaled	CROWD	speaker-foxtrot	Farid	0.90	false	false	false	0.30	0.280	speaker-echo,speaker-delta,speaker-foxtrot
+locked_mode_lock_bonus	LOCKED	speaker-golf	Gita	0.40	true	true	false	0.05	1.640	speaker-golf,speaker-hotel,speaker-india
+locked_mode_lock_bonus	LOCKED	speaker-hotel	Hector	0.70	true	false	true	0.10	1.230	speaker-golf,speaker-hotel,speaker-india
+locked_mode_lock_bonus	LOCKED	speaker-india	Ines	0.95	false	false	false	0.20	0.110	speaker-golf,speaker-hotel,speaker-india
+unspecified_speaker_id_tiebreak	UNSPECIFIED	speaker-alpha	Zulu	0.80	true	false	false	0.10	1.100	speaker-alpha,speaker-zulu,speaker-mike
+unspecified_speaker_id_tiebreak	UNSPECIFIED	speaker-zulu	Alpha	0.80	true	false	false	0.10	1.100	speaker-alpha,speaker-zulu,speaker-mike
+unspecified_speaker_id_tiebreak	UNSPECIFIED	speaker-mike	Mike	0.55	false	false	false	0.00	-0.450	speaker-alpha,speaker-zulu,speaker-mike

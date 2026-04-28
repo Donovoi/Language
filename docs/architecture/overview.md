@@ -31,3 +31,9 @@ Python services expose provider-agnostic APIs for:
 - `services/` Python APIs
 - `docs/` product and architecture records
 - `proto/` shared contracts
+
+## Shared contract boundary
+
+- `proto/session.proto` is the canonical ledger for shared gateway/client session payloads and SSE envelopes.
+- Python and Flutter still use hand-authored transport models for now, but each side carries an explicit contract manifest and CI fails when those models drift from the proto.
+- Rust `audio_core` intentionally validates only the overlapping domain subset today (`SessionMode` plus the shared fields on `SessionState` and `SpeakerState`), which keeps the low-latency core decoupled from transport-only caption and lane-status fields until full codegen or FFI wiring is worth the churn.

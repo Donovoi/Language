@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/session_state.dart';
 import '../models/session_stream_event.dart';
+import '../models/speaker.dart';
 import 'api_client.dart';
 
 class MockRepository extends ChangeNotifier {
@@ -113,15 +114,20 @@ class MockRepository extends ChangeNotifier {
 
   Future<void> _startLiveUpdates() async {
     final generation = _streamGeneration;
+    final wasStreaming = _isStreaming;
+    final hadError = _errorMessage != null;
     try {
       _liveSubscription = _api.watchSessionEvents().listen(
-            _handleStreamEvent,
+            (event) => _handleStreamEvent(event, generation),
             onError: (_) => _handleLiveUpdatesDisconnected(generation),
             onDone: () => _handleLiveUpdatesDisconnected(generation),
           );
       _isStreaming = true;
       _reconnectScheduled = false;
       _errorMessage = null;
+      if (!wasStreaming || hadError) {
+        _notifySafely();
+      }
     } catch (_) {
       _handleLiveUpdatesDisconnected(generation);
     }
@@ -140,14 +146,14 @@ class MockRepository extends ChangeNotifier {
   }
 
   void _scheduleReconnect(int generation) {
-    if (_isDisposed || _isLoading || _reconnectScheduled) {
+    if (_isDisposed || _reconnectScheduled) {
       return;
     }
 
     _reconnectScheduled = true;
     unawaited(
       Future<void>.delayed(_reconnectDelay).then((_) async {
-        if (_isDisposed || generation != _streamGeneration || _isLoading) {
+        if (_isDisposed || generation != _streamGeneration) {
           _reconnectScheduled = false;
           return;
         }
@@ -173,41 +179,119 @@ class MockRepository extends ChangeNotifier {
     }
   }
 
-  void _handleStreamEvent(SessionStreamEvent event) {
+  void _handleStreamEvent(SessionStreamEvent event, int generation) {
+    if (_isDisposed || generation != _streamGeneration) {
+      return;
+    }
+
+    var changed = false;
+
     switch (event.type) {
       case SessionStreamEventType.unknown:
         return;
       case SessionStreamEventType.sessionSnapshot:
         if (event.session case final nextSession?) {
+          if (_sessionsEqual(_session, nextSession)) {
+            return;
+          }
           _session = nextSession;
+          changed = true;
         }
+        break;
       case SessionStreamEventType.speakerUpdate:
         if (event.speakerEvent case final update?) {
-          _session = SessionStateModel(
-            sessionId: _session.sessionId,
-            mode: _session.mode,
-            speakers: _session.speakers
-                .map(
-                  (speaker) => speaker.speakerId == update.speakerId
-                      ? speaker.copyWith(
-                          active: update.active,
-                          isLocked: update.isLocked,
-                          lastUpdatedUnixMs: update.observedUnixMs,
-                          sourceCaption: update.sourceCaption,
-                          translatedCaption: update.translatedCaption,
-                          targetLanguageCode: update.targetLanguageCode,
-                          laneStatus: update.laneStatus,
-                          statusMessage: update.statusMessage,
-                        )
-                      : speaker,
-                )
-                .toList(growable: false),
-            topSpeakerId: _session.topSpeakerId,
-          );
+          changed = _applySpeakerUpdate(update);
         }
+        break;
     }
 
-    _notifySafely();
+    if (changed) {
+      _notifySafely();
+    }
+  }
+
+  bool _applySpeakerUpdate(SpeakerEventModel update) {
+    var changed = false;
+    final speakers = _session.speakers
+        .map(
+          (speaker) {
+            if (speaker.speakerId != update.speakerId) {
+              return speaker;
+            }
+
+            if (update.observedUnixMs < speaker.lastUpdatedUnixMs) {
+              return speaker;
+            }
+
+            final nextSpeaker = speaker.copyWith(
+              active: update.active,
+              isLocked: update.isLocked,
+              lastUpdatedUnixMs: update.observedUnixMs,
+              sourceCaption: update.sourceCaption,
+              translatedCaption: update.translatedCaption,
+              targetLanguageCode: update.targetLanguageCode,
+              laneStatus: update.laneStatus,
+              statusMessage: update.statusMessage,
+            );
+
+            if (_speakersEqual(speaker, nextSpeaker)) {
+              return speaker;
+            }
+
+            changed = true;
+            return nextSpeaker;
+          },
+        )
+        .toList(growable: false);
+
+    if (!changed) {
+      return false;
+    }
+
+    _session = SessionStateModel(
+      sessionId: _session.sessionId,
+      mode: _session.mode,
+      speakers: speakers,
+      topSpeakerId: _session.topSpeakerId,
+    );
+    return true;
+  }
+
+  static bool _sessionsEqual(
+    SessionStateModel left,
+    SessionStateModel right,
+  ) {
+    if (left.sessionId != right.sessionId ||
+        left.mode != right.mode ||
+        left.topSpeakerId != right.topSpeakerId ||
+        left.speakers.length != right.speakers.length) {
+      return false;
+    }
+
+    for (var index = 0; index < left.speakers.length; index += 1) {
+      if (!_speakersEqual(left.speakers[index], right.speakers[index])) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  static bool _speakersEqual(Speaker left, Speaker right) {
+    return left.speakerId == right.speakerId &&
+        left.displayName == right.displayName &&
+        left.languageCode == right.languageCode &&
+        left.priority == right.priority &&
+        left.active == right.active &&
+        left.isLocked == right.isLocked &&
+        left.frontFacing == right.frontFacing &&
+        left.persistenceBonus == right.persistenceBonus &&
+        left.lastUpdatedUnixMs == right.lastUpdatedUnixMs &&
+        left.sourceCaption == right.sourceCaption &&
+        left.translatedCaption == right.translatedCaption &&
+        left.targetLanguageCode == right.targetLanguageCode &&
+        left.laneStatus == right.laneStatus &&
+        left.statusMessage == right.statusMessage;
   }
 
   void _notifySafely() {

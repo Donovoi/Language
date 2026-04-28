@@ -1,19 +1,53 @@
 import 'session_state.dart';
 import 'speaker.dart';
 
-enum SessionStreamEventType { unknown, sessionSnapshot, speakerUpdate }
+// Contract-lock manifest: CI compares these keys against `proto/session.proto`.
+const String kSpeakerEventSpeakerIdJsonKey = 'speaker_id';
+const String kSpeakerEventPriorityDeltaJsonKey = 'priority_delta';
+const String kSpeakerEventActiveJsonKey = 'active';
+const String kSpeakerEventIsLockedJsonKey = 'is_locked';
+const String kSpeakerEventObservedUnixMsJsonKey = 'observed_unix_ms';
+const String kSpeakerEventSourceCaptionJsonKey = 'source_caption';
+const String kSpeakerEventTranslatedCaptionJsonKey = 'translated_caption';
+const String kSpeakerEventTargetLanguageCodeJsonKey = 'target_language_code';
+const String kSpeakerEventLaneStatusJsonKey = 'lane_status';
+const String kSpeakerEventStatusMessageJsonKey = 'status_message';
+
+const List<String> kSpeakerEventContractFields = <String>[
+  kSpeakerEventSpeakerIdJsonKey,
+  kSpeakerEventPriorityDeltaJsonKey,
+  kSpeakerEventActiveJsonKey,
+  kSpeakerEventIsLockedJsonKey,
+  kSpeakerEventObservedUnixMsJsonKey,
+  kSpeakerEventSourceCaptionJsonKey,
+  kSpeakerEventTranslatedCaptionJsonKey,
+  kSpeakerEventTargetLanguageCodeJsonKey,
+  kSpeakerEventLaneStatusJsonKey,
+  kSpeakerEventStatusMessageJsonKey,
+];
+
+const String kSessionStreamEventEventJsonKey = 'event';
+const String kSessionStreamEventSessionJsonKey = 'session';
+const String kSessionStreamEventSpeakerEventJsonKey = 'speaker_event';
+
+const List<String> kSessionStreamEventContractFields = <String>[
+  kSessionStreamEventEventJsonKey,
+  kSessionStreamEventSessionJsonKey,
+  kSessionStreamEventSpeakerEventJsonKey,
+];
+
+enum SessionStreamEventType {
+  unknown('STREAM_EVENT_TYPE_UNSPECIFIED', 'unknown'),
+  sessionSnapshot('STREAM_EVENT_TYPE_SESSION_SNAPSHOT', 'session.snapshot'),
+  speakerUpdate('STREAM_EVENT_TYPE_SPEAKER_UPDATE', 'speaker.update');
+
+  const SessionStreamEventType(this.protoName, this.apiValue);
+
+  final String protoName;
+  final String apiValue;
+}
 
 extension SessionStreamEventTypePresentation on SessionStreamEventType {
-  String get apiValue {
-    switch (this) {
-      case SessionStreamEventType.unknown:
-        return 'unknown';
-      case SessionStreamEventType.sessionSnapshot:
-        return 'session.snapshot';
-      case SessionStreamEventType.speakerUpdate:
-        return 'speaker.update';
-    }
-  }
 
   static SessionStreamEventType fromApiValue(String? value) {
     return SessionStreamEventType.values.firstWhere(
@@ -50,18 +84,19 @@ class SpeakerEventModel {
 
   factory SpeakerEventModel.fromJson(Map<String, dynamic> json) {
     return SpeakerEventModel(
-      speakerId: json['speaker_id'] as String,
-      priorityDelta: (json['priority_delta'] as num).toDouble(),
-      active: json['active'] as bool,
-      isLocked: json['is_locked'] as bool? ?? false,
-      observedUnixMs: (json['observed_unix_ms'] as num?)?.toInt() ?? 0,
-      sourceCaption: json['source_caption'] as String?,
-      translatedCaption: json['translated_caption'] as String?,
-      targetLanguageCode: json['target_language_code'] as String?,
+      speakerId: json[kSpeakerEventSpeakerIdJsonKey] as String,
+      priorityDelta: (json[kSpeakerEventPriorityDeltaJsonKey] as num).toDouble(),
+      active: json[kSpeakerEventActiveJsonKey] as bool,
+      isLocked: json[kSpeakerEventIsLockedJsonKey] as bool? ?? false,
+      observedUnixMs:
+          (json[kSpeakerEventObservedUnixMsJsonKey] as num?)?.toInt() ?? 0,
+      sourceCaption: json[kSpeakerEventSourceCaptionJsonKey] as String?,
+      translatedCaption: json[kSpeakerEventTranslatedCaptionJsonKey] as String?,
+      targetLanguageCode: json[kSpeakerEventTargetLanguageCodeJsonKey] as String?,
       laneStatus: TranslationLaneStatusPresentation.fromApiValue(
-        json['lane_status'] as String?,
+        json[kSpeakerEventLaneStatusJsonKey] as String?,
       ),
-      statusMessage: json['status_message'] as String?,
+      statusMessage: json[kSpeakerEventStatusMessageJsonKey] as String?,
     );
   }
 }
@@ -78,12 +113,12 @@ class SessionStreamEvent {
   final SpeakerEventModel? speakerEvent;
 
   factory SessionStreamEvent.fromJson(Map<String, dynamic> json) {
-    final sessionJson = json['session'];
-    final speakerEventJson = json['speaker_event'];
+    final sessionJson = json[kSessionStreamEventSessionJsonKey];
+    final speakerEventJson = json[kSessionStreamEventSpeakerEventJsonKey];
 
     return SessionStreamEvent(
       type: SessionStreamEventTypePresentation.fromApiValue(
-        json['event'] as String?,
+        json[kSessionStreamEventEventJsonKey] as String?,
       ),
       session: sessionJson is Map<String, dynamic>
           ? SessionStateModel.fromJson(sessionJson)

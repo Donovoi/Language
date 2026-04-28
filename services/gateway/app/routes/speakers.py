@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app.auth import require_write_token
 from app.models import SessionMode, SessionResponse, SpeakerState
 from app.services.session_store import SessionStore, get_session_store
 
@@ -11,7 +12,11 @@ def list_speakers(store: SessionStore = Depends(get_session_store)) -> list[Spea
     return store.current().speakers
 
 
-@router.post("", response_model=SessionResponse)
+@router.post(
+    "",
+    response_model=SessionResponse,
+    dependencies=[Depends(require_write_token)],
+)
 def replace_speakers(
     speakers: list[SpeakerState],
     mode: SessionMode | None = Query(default=None),
@@ -20,7 +25,11 @@ def replace_speakers(
     return store.replace_speakers(speakers, mode=mode)
 
 
-@router.put("/{speaker_id}/lock", response_model=SessionResponse)
+@router.put(
+    "/{speaker_id}/lock",
+    response_model=SessionResponse,
+    dependencies=[Depends(require_write_token)],
+)
 def lock_speaker(
     speaker_id: str,
     store: SessionStore = Depends(get_session_store),
@@ -34,7 +43,11 @@ def lock_speaker(
     return session
 
 
-@router.delete("/{speaker_id}/lock", response_model=SessionResponse)
+@router.delete(
+    "/{speaker_id}/lock",
+    response_model=SessionResponse,
+    dependencies=[Depends(require_write_token)],
+)
 def unlock_speaker(
     speaker_id: str,
     store: SessionStore = Depends(get_session_store),

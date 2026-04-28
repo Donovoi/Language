@@ -2,6 +2,14 @@ syntax = "proto3";
 
 package language.session.v1;
 
+// Contract lock policy:
+// - `proto/session.proto` is the canonical ledger for shared gateway/client
+//   session payloads.
+// - Python and Flutter currently use hand-authored JSON models instead of
+//   generated bindings.
+// - CI validates those models, plus the overlapping Rust `audio_core` subset,
+//   against this file so contract drift cannot happen silently.
+
 enum SessionMode {
   SESSION_MODE_UNSPECIFIED = 0;
   SESSION_MODE_FOCUS = 1;
@@ -16,6 +24,15 @@ enum LaneStatus {
   LANE_STATUS_TRANSLATING = 3;
   LANE_STATUS_READY = 4;
   LANE_STATUS_ERROR = 5;
+}
+
+enum StreamEventType {
+  // Gateway SSE currently serializes this as `unknown`.
+  STREAM_EVENT_TYPE_UNSPECIFIED = 0;
+  // Gateway SSE currently serializes this as `session.snapshot`.
+  STREAM_EVENT_TYPE_SESSION_SNAPSHOT = 1;
+  // Gateway SSE currently serializes this as `speaker.update`.
+  STREAM_EVENT_TYPE_SPEAKER_UPDATE = 2;
 }
 
 message ClientConfig {
@@ -59,6 +76,12 @@ message SpeakerEvent {
   string target_language_code = 8;
   LaneStatus lane_status = 9;
   string status_message = 10;
+}
+
+message SessionStreamEvent {
+  StreamEventType event = 1;
+  SessionState session = 2;
+  SpeakerEvent speaker_event = 3;
 }
 
 message PriorityUpdate {

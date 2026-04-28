@@ -21,6 +21,10 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Local runtime state
+.env
+services/gateway/.state/
+
 # IDE
 .vscode/
 .idea/

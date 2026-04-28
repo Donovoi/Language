@@ -1,46 +1,52 @@
+// Contract-lock manifest: CI compares these keys against `proto/session.proto`.
+const String kSpeakerIdJsonKey = 'speaker_id';
+const String kSpeakerDisplayNameJsonKey = 'display_name';
+const String kSpeakerLanguageCodeJsonKey = 'language_code';
+const String kSpeakerPriorityJsonKey = 'priority';
+const String kSpeakerActiveJsonKey = 'active';
+const String kSpeakerIsLockedJsonKey = 'is_locked';
+const String kSpeakerFrontFacingJsonKey = 'front_facing';
+const String kSpeakerPersistenceBonusJsonKey = 'persistence_bonus';
+const String kSpeakerLastUpdatedUnixMsJsonKey = 'last_updated_unix_ms';
+const String kSpeakerSourceCaptionJsonKey = 'source_caption';
+const String kSpeakerTranslatedCaptionJsonKey = 'translated_caption';
+const String kSpeakerTargetLanguageCodeJsonKey = 'target_language_code';
+const String kSpeakerLaneStatusJsonKey = 'lane_status';
+const String kSpeakerStatusMessageJsonKey = 'status_message';
+
+const List<String> kSpeakerContractFields = <String>[
+  kSpeakerIdJsonKey,
+  kSpeakerDisplayNameJsonKey,
+  kSpeakerLanguageCodeJsonKey,
+  kSpeakerPriorityJsonKey,
+  kSpeakerActiveJsonKey,
+  kSpeakerIsLockedJsonKey,
+  kSpeakerFrontFacingJsonKey,
+  kSpeakerPersistenceBonusJsonKey,
+  kSpeakerLastUpdatedUnixMsJsonKey,
+  kSpeakerSourceCaptionJsonKey,
+  kSpeakerTranslatedCaptionJsonKey,
+  kSpeakerTargetLanguageCodeJsonKey,
+  kSpeakerLaneStatusJsonKey,
+  kSpeakerStatusMessageJsonKey,
+];
+
 enum TranslationLaneStatus {
-  unspecified,
-  idle,
-  listening,
-  translating,
-  ready,
-  error,
+  unspecified('LANE_STATUS_UNSPECIFIED', 'UNSPECIFIED', 'Pending'),
+  idle('LANE_STATUS_IDLE', 'IDLE', 'Idle'),
+  listening('LANE_STATUS_LISTENING', 'LISTENING', 'Listening'),
+  translating('LANE_STATUS_TRANSLATING', 'TRANSLATING', 'Translating'),
+  ready('LANE_STATUS_READY', 'READY', 'Ready'),
+  error('LANE_STATUS_ERROR', 'ERROR', 'Error');
+
+  const TranslationLaneStatus(this.protoName, this.apiValue, this.label);
+
+  final String protoName;
+  final String apiValue;
+  final String label;
 }
 
 extension TranslationLaneStatusPresentation on TranslationLaneStatus {
-  String get apiValue {
-    switch (this) {
-      case TranslationLaneStatus.unspecified:
-        return 'UNSPECIFIED';
-      case TranslationLaneStatus.idle:
-        return 'IDLE';
-      case TranslationLaneStatus.listening:
-        return 'LISTENING';
-      case TranslationLaneStatus.translating:
-        return 'TRANSLATING';
-      case TranslationLaneStatus.ready:
-        return 'READY';
-      case TranslationLaneStatus.error:
-        return 'ERROR';
-    }
-  }
-
-  String get label {
-    switch (this) {
-      case TranslationLaneStatus.unspecified:
-        return 'Pending';
-      case TranslationLaneStatus.idle:
-        return 'Idle';
-      case TranslationLaneStatus.listening:
-        return 'Listening';
-      case TranslationLaneStatus.translating:
-        return 'Translating';
-      case TranslationLaneStatus.ready:
-        return 'Ready';
-      case TranslationLaneStatus.error:
-        return 'Error';
-    }
-  }
 
   static TranslationLaneStatus fromApiValue(String? value) {
     return TranslationLaneStatus.values.firstWhere(
@@ -119,41 +125,43 @@ class Speaker {
 
   factory Speaker.fromJson(Map<String, dynamic> json) {
     return Speaker(
-      speakerId: json['speaker_id'] as String,
-      displayName: json['display_name'] as String,
-      languageCode: json['language_code'] as String,
-      priority: (json['priority'] as num).toDouble(),
-      active: json['active'] as bool,
-      isLocked: json['is_locked'] as bool? ?? false,
-      frontFacing: json['front_facing'] as bool? ?? false,
-      persistenceBonus: (json['persistence_bonus'] as num?)?.toDouble() ?? 0,
-      lastUpdatedUnixMs: (json['last_updated_unix_ms'] as num?)?.toInt() ?? 0,
-      sourceCaption: json['source_caption'] as String?,
-      translatedCaption: json['translated_caption'] as String?,
-      targetLanguageCode: json['target_language_code'] as String?,
+      speakerId: json[kSpeakerIdJsonKey] as String,
+      displayName: json[kSpeakerDisplayNameJsonKey] as String,
+      languageCode: json[kSpeakerLanguageCodeJsonKey] as String,
+      priority: (json[kSpeakerPriorityJsonKey] as num).toDouble(),
+      active: json[kSpeakerActiveJsonKey] as bool,
+      isLocked: json[kSpeakerIsLockedJsonKey] as bool? ?? false,
+      frontFacing: json[kSpeakerFrontFacingJsonKey] as bool? ?? false,
+      persistenceBonus:
+          (json[kSpeakerPersistenceBonusJsonKey] as num?)?.toDouble() ?? 0,
+      lastUpdatedUnixMs:
+          (json[kSpeakerLastUpdatedUnixMsJsonKey] as num?)?.toInt() ?? 0,
+      sourceCaption: json[kSpeakerSourceCaptionJsonKey] as String?,
+      translatedCaption: json[kSpeakerTranslatedCaptionJsonKey] as String?,
+      targetLanguageCode: json[kSpeakerTargetLanguageCodeJsonKey] as String?,
       laneStatus: TranslationLaneStatusPresentation.fromApiValue(
-        json['lane_status'] as String?,
+        json[kSpeakerLaneStatusJsonKey] as String?,
       ),
-      statusMessage: json['status_message'] as String?,
+      statusMessage: json[kSpeakerStatusMessageJsonKey] as String?,
     );
   }
 
   Map<String, dynamic> toJson() {
     return <String, dynamic>{
-      'speaker_id': speakerId,
-      'display_name': displayName,
-      'language_code': languageCode,
-      'priority': priority,
-      'active': active,
-      'is_locked': isLocked,
-      'front_facing': frontFacing,
-      'persistence_bonus': persistenceBonus,
-      'last_updated_unix_ms': lastUpdatedUnixMs,
-      'source_caption': sourceCaption,
-      'translated_caption': translatedCaption,
-      'target_language_code': targetLanguageCode,
-      'lane_status': laneStatus.apiValue,
-      'status_message': statusMessage,
+      kSpeakerIdJsonKey: speakerId,
+      kSpeakerDisplayNameJsonKey: displayName,
+      kSpeakerLanguageCodeJsonKey: languageCode,
+      kSpeakerPriorityJsonKey: priority,
+      kSpeakerActiveJsonKey: active,
+      kSpeakerIsLockedJsonKey: isLocked,
+      kSpeakerFrontFacingJsonKey: frontFacing,
+      kSpeakerPersistenceBonusJsonKey: persistenceBonus,
+      kSpeakerLastUpdatedUnixMsJsonKey: lastUpdatedUnixMs,
+      kSpeakerSourceCaptionJsonKey: sourceCaption,
+      kSpeakerTranslatedCaptionJsonKey: translatedCaption,
+      kSpeakerTargetLanguageCodeJsonKey: targetLanguageCode,
+      kSpeakerLaneStatusJsonKey: laneStatus.apiValue,
+      kSpeakerStatusMessageJsonKey: statusMessage,
     };
   }
 }

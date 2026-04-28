@@ -1,33 +1,32 @@
 import 'speaker.dart';
 
-enum SessionMode { unspecified, focus, crowd, locked }
+// Contract-lock manifest: CI compares these keys against `proto/session.proto`.
+const String kSessionStateSessionIdJsonKey = 'session_id';
+const String kSessionStateModeJsonKey = 'mode';
+const String kSessionStateSpeakersJsonKey = 'speakers';
+const String kSessionStateTopSpeakerIdJsonKey = 'top_speaker_id';
+
+const List<String> kSessionStateContractFields = <String>[
+  kSessionStateSessionIdJsonKey,
+  kSessionStateModeJsonKey,
+  kSessionStateSpeakersJsonKey,
+  kSessionStateTopSpeakerIdJsonKey,
+];
+
+enum SessionMode {
+  unspecified('SESSION_MODE_UNSPECIFIED', 'UNSPECIFIED', 'Unspecified'),
+  focus('SESSION_MODE_FOCUS', 'FOCUS', 'Focus'),
+  crowd('SESSION_MODE_CROWD', 'CROWD', 'Crowd'),
+  locked('SESSION_MODE_LOCKED', 'LOCKED', 'Locked');
+
+  const SessionMode(this.protoName, this.apiValue, this.label);
+
+  final String protoName;
+  final String apiValue;
+  final String label;
+}
 
 extension SessionModePresentation on SessionMode {
-  String get apiValue {
-    switch (this) {
-      case SessionMode.unspecified:
-        return 'UNSPECIFIED';
-      case SessionMode.focus:
-        return 'FOCUS';
-      case SessionMode.crowd:
-        return 'CROWD';
-      case SessionMode.locked:
-        return 'LOCKED';
-    }
-  }
-
-  String get label {
-    switch (this) {
-      case SessionMode.unspecified:
-        return 'Unspecified';
-      case SessionMode.focus:
-        return 'Focus';
-      case SessionMode.crowd:
-        return 'Crowd';
-      case SessionMode.locked:
-        return 'Locked';
-    }
-  }
 
   static SessionMode fromApiValue(String value) {
     return SessionMode.values.firstWhere(
@@ -60,12 +59,14 @@ class SessionStateModel {
 
   factory SessionStateModel.fromJson(Map<String, dynamic> json) {
     return SessionStateModel(
-      sessionId: json['session_id'] as String,
-      mode: SessionModePresentation.fromApiValue(json['mode'] as String),
-      speakers: (json['speakers'] as List<dynamic>)
+      sessionId: json[kSessionStateSessionIdJsonKey] as String,
+      mode: SessionModePresentation.fromApiValue(
+        json[kSessionStateModeJsonKey] as String,
+      ),
+      speakers: (json[kSessionStateSpeakersJsonKey] as List<dynamic>)
           .map((item) => Speaker.fromJson(item as Map<String, dynamic>))
           .toList(growable: false),
-      topSpeakerId: json['top_speaker_id'] as String?,
+      topSpeakerId: json[kSessionStateTopSpeakerIdJsonKey] as String?,
     );
   }
 

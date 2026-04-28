@@ -1,0 +1,351 @@
+name: Contract Lock
+
+on:
+  push:
+    branches:
+      - main
+      - 'copilot/**'
+    tags:
+      - 'v*'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  contract-lock:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: '3.12'
+      - name: Validate proto-backed contract manifests
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import ast
+          import re
+          from pathlib import Path
+
+          ROOT = Path.cwd()
+
+
+          def fail(message: str) -> None:
+              raise SystemExit(message)
+
+
+          def parse_proto(path: Path) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+              text = path.read_text(encoding="utf-8")
+              enums: dict[str, list[str]] = {}
+              messages: dict[str, list[str]] = {}
+
+              for name, body in re.findall(r"enum\s+(\w+)\s*\{(.*?)\}", text, re.DOTALL):
+                  enums[name] = re.findall(
+                      r"^\s*([A-Z0-9_]+)\s*=\s*\d+\s*;",
+                      body,
+                      re.MULTILINE,
+                  )
+
+              for name, body in re.findall(
+                  r"message\s+(\w+)\s*\{(.*?)\}", text, re.DOTALL
+              ):
+                  messages[name] = re.findall(
+                      r"^\s*(?:repeated\s+)?(?:[\w.]+)\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*=\s*\d+\s*;",
+                      body,
+                      re.MULTILINE,
+                  )
+
+              return enums, messages
+
+
+          def class_has_base(node: ast.ClassDef, base_name: str) -> bool:
+              for base in node.bases:
+                  if isinstance(base, ast.Name) and base.id == base_name:
+                      return True
+                  if isinstance(base, ast.Attribute) and base.attr == base_name:
+                      return True
+              return False
+
+
+          def parse_python_models(
+              path: Path,
+          ) -> tuple[
+              dict[str, object],
+              dict[str, object],
+              dict[str, dict[str, str]],
+              dict[str, list[str]],
+          ]:
+              tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+              assignments: dict[str, object] = {}
+              enum_values: dict[str, dict[str, str]] = {}
+              model_fields: dict[str, list[str]] = {}
+
+              for node in tree.body:
+                  if isinstance(node, ast.Assign):
+                      for target in node.targets:
+                          if isinstance(target, ast.Name) and target.id in {
+                              "CONTRACT_LOCKED_PROTO_ENUMS",
+                              "CONTRACT_LOCKED_PROTO_MODELS",
+                          }:
+                              assignments[target.id] = ast.literal_eval(node.value)
+
+                  if isinstance(node, ast.ClassDef) and class_has_base(node, "Enum"):
+                      members: dict[str, str] = {}
+                      for child in node.body:
+                          if not isinstance(child, ast.Assign):
+                              continue
+                          if len(child.targets) != 1 or not isinstance(child.targets[0], ast.Name):
+                              continue
+                          members[child.targets[0].id] = ast.literal_eval(child.value)
+                      enum_values[node.name] = members
+
+                  if isinstance(node, ast.ClassDef) and class_has_base(node, "BaseModel"):
+                      fields: list[str] = []
+                      for child in node.body:
+                          if isinstance(child, ast.AnnAssign) and isinstance(
+                              child.target, ast.Name
+                          ):
+                              fields.append(child.target.id)
+                      model_fields[node.name] = fields
+
+              return (
+                  assignments["CONTRACT_LOCKED_PROTO_ENUMS"],
+                  assignments["CONTRACT_LOCKED_PROTO_MODELS"],
+                  enum_values,
+                  model_fields,
+              )
+
+
+          def parse_dart_file(
+              path: Path,
+          ) -> tuple[dict[str, list[str]], dict[str, dict[str, dict[str, str]]]]:
+              text = path.read_text(encoding="utf-8")
+              string_constants = {
+                  name: value
+                  for name, value in re.findall(
+                      r"^const\s+String\s+(\w+)\s*=\s*'([^']+)';$",
+                      text,
+                      re.MULTILINE,
+                  )
+              }
+
+              lists: dict[str, list[str]] = {}
+              for name, body in re.findall(
+                  r"const\s+List<String>\s+(\w+)\s*=\s*<String>\[(.*?)\];",
+                  text,
+                  re.DOTALL,
+              ):
+                  items: list[str] = []
+                  for raw_item in body.split(","):
+                      token = raw_item.strip()
+                      if not token:
+                          continue
+                      if token in string_constants:
+                          items.append(string_constants[token])
+                          continue
+                      literal_match = re.fullmatch(r"'([^']+)'", token)
+                      if literal_match:
+                          items.append(literal_match.group(1))
+                          continue
+                      fail(f"Could not resolve Dart contract token {token!r} in {path}")
+                  lists[name] = items
+
+              enums: dict[str, dict[str, dict[str, str]]] = {}
+              for name, body in re.findall(r"enum\s+(\w+)\s*\{(.*?);", text, re.DOTALL):
+                  members: dict[str, dict[str, str]] = {}
+                  for raw_line in body.splitlines():
+                      line = raw_line.strip().rstrip(",")
+                      if not line:
+                          continue
+                      match = re.fullmatch(
+                          r"(\w+)\(\s*'([^']+)'\s*,\s*'([^']+)'(?:\s*,\s*'[^']+')?\s*\)",
+                          line,
+                      )
+                      if not match:
+                          fail(f"Could not parse Dart enum entry {line!r} in {path}")
+                      member_name, proto_name, api_value = match.groups()
+                      members[member_name] = {
+                          "proto": proto_name,
+                          "api": api_value,
+                      }
+                  enums[name] = members
+
+              return lists, enums
+
+
+          def parse_rust_struct_fields(path: Path, struct_name: str) -> list[str]:
+              text = path.read_text(encoding="utf-8")
+              match = re.search(
+                  rf"pub\s+struct\s+{struct_name}\s*\{{(.*?)\n\}}",
+                  text,
+                  re.DOTALL,
+              )
+              if not match:
+                  fail(f"Could not find Rust struct {struct_name} in {path}")
+              return re.findall(r"pub\s+([a-z_][a-z0-9_]*)\s*:", match.group(1))
+
+
+          def parse_rust_enum_variants(path: Path, enum_name: str) -> list[str]:
+              text = path.read_text(encoding="utf-8")
+              match = re.search(
+                  rf"pub\s+enum\s+{enum_name}\s*\{{(.*?)\n\}}",
+                  text,
+                  re.DOTALL,
+              )
+              if not match:
+                  fail(f"Could not find Rust enum {enum_name} in {path}")
+              return re.findall(r"^\s*([A-Z][A-Za-z0-9]*)\s*,", match.group(1), re.MULTILINE)
+
+
+          def rust_variant_to_contract_name(name: str) -> str:
+              return re.sub(r"(?<!^)(?=[A-Z])", "_", name).upper()
+
+
+          proto_enums, proto_messages = parse_proto(ROOT / "proto/session.proto")
+          (
+              python_contract_enums,
+              python_contract_models,
+              python_enum_values,
+              python_model_fields,
+          ) = parse_python_models(ROOT / "services/gateway/app/models.py")
+
+          dart_lists: dict[str, list[str]] = {}
+          dart_enums: dict[str, dict[str, dict[str, str]]] = {}
+          for dart_path in (
+              ROOT / "apps/field_app_flutter/lib/models/speaker.dart",
+              ROOT / "apps/field_app_flutter/lib/models/session_state.dart",
+              ROOT / "apps/field_app_flutter/lib/models/session_stream_event.dart",
+          ):
+              lists, enums = parse_dart_file(dart_path)
+              dart_lists.update(lists)
+              dart_enums.update(enums)
+
+          for enum_name, manifest in python_contract_enums.items():
+              proto_enum_name = manifest["proto_enum"]
+              proto_members = proto_enums.get(proto_enum_name)
+              expected_proto_members = [
+                  member["proto"] for member in manifest["members"].values()
+              ]
+              if proto_members != expected_proto_members:
+                  fail(
+                      f"Proto enum {proto_enum_name} drifted: expected {expected_proto_members}, got {proto_members}"
+                  )
+
+              expected_python_values = {
+                  member_name: member["api"]
+                  for member_name, member in manifest["members"].items()
+              }
+              actual_python_values = python_enum_values.get(enum_name)
+              if actual_python_values != expected_python_values:
+                  fail(
+                      f"Python enum {enum_name} drifted: expected {expected_python_values}, got {actual_python_values}"
+                  )
+
+          for model_name, manifest in python_contract_models.items():
+              expected_fields = list(manifest["fields"])
+              actual_fields = python_model_fields.get(model_name)
+              if actual_fields != expected_fields:
+                  fail(
+                      f"Python model {model_name} drifted: expected {expected_fields}, got {actual_fields}"
+                  )
+
+              proto_message_name = manifest["proto_message"]
+              proto_fields = proto_messages.get(proto_message_name)
+              if proto_fields != expected_fields:
+                  fail(
+                      f"Proto message {proto_message_name} drifted from Python manifest: expected {expected_fields}, got {proto_fields}"
+                  )
+
+          dart_field_expectations = {
+              "kSpeakerContractFields": proto_messages["SpeakerState"],
+              "kSessionStateContractFields": proto_messages["SessionState"],
+              "kSpeakerEventContractFields": proto_messages["SpeakerEvent"],
+              "kSessionStreamEventContractFields": proto_messages["SessionStreamEvent"],
+          }
+          for list_name, expected_fields in dart_field_expectations.items():
+              actual_fields = dart_lists.get(list_name)
+              if actual_fields != expected_fields:
+                  fail(
+                      f"Flutter contract list {list_name} drifted: expected {expected_fields}, got {actual_fields}"
+                  )
+
+          dart_enum_expectations = {
+              "TranslationLaneStatus": python_contract_enums["LaneStatus"]["members"],
+              "SessionMode": python_contract_enums["SessionMode"]["members"],
+              "SessionStreamEventType": python_contract_enums["StreamEventType"]["members"],
+          }
+          for dart_enum_name, expected_manifest in dart_enum_expectations.items():
+              actual_members = dart_enums.get(dart_enum_name)
+              expected_pairs = [
+                  (member["proto"], member["api"])
+                  for member in expected_manifest.values()
+              ]
+              actual_pairs = [
+                  (member["proto"], member["api"])
+                  for member in actual_members.values()
+              ] if actual_members is not None else None
+              if actual_pairs != expected_pairs:
+                  fail(
+                      f"Flutter enum {dart_enum_name} drifted: expected {expected_pairs}, got {actual_pairs}"
+                  )
+
+          rust_subset_models = {
+              "SpeakerState": {
+                  "path": ROOT / "crates/audio_core/src/speaker.rs",
+                  "proto_message": "SpeakerState",
+                  "fields": (
+                      "speaker_id",
+                      "display_name",
+                      "language_code",
+                      "priority",
+                      "active",
+                      "is_locked",
+                      "front_facing",
+                      "persistence_bonus",
+                      "last_updated_unix_ms",
+                  ),
+              },
+              "SessionState": {
+                  "path": ROOT / "crates/audio_core/src/session.rs",
+                  "proto_message": "SessionState",
+                  "fields": (
+                      "session_id",
+                      "mode",
+                      "speakers",
+                  ),
+              },
+          }
+          for rust_struct_name, manifest in rust_subset_models.items():
+              actual_fields = parse_rust_struct_fields(manifest["path"], rust_struct_name)
+              expected_fields = list(manifest["fields"])
+              if actual_fields != expected_fields:
+                  fail(
+                      f"Rust struct {rust_struct_name} drifted: expected {expected_fields}, got {actual_fields}"
+                  )
+
+              proto_fields = proto_messages[manifest["proto_message"]]
+              if proto_fields[: len(expected_fields)] != expected_fields:
+                  fail(
+                      f"Proto message {manifest['proto_message']} no longer matches the documented Rust overlap subset {expected_fields}; got {proto_fields}"
+                  )
+
+          rust_session_mode_variants = [
+              rust_variant_to_contract_name(variant)
+              for variant in parse_rust_enum_variants(
+                  ROOT / "crates/audio_core/src/session.rs",
+                  "SessionMode",
+              )
+          ]
+          expected_rust_session_mode_variants = list(
+              python_contract_enums["SessionMode"]["members"].keys()
+          )
+          if rust_session_mode_variants != expected_rust_session_mode_variants:
+              fail(
+                  "Rust enum SessionMode drifted: expected "
+                  f"{expected_rust_session_mode_variants}, got {rust_session_mode_variants}"
+              )
+
+          print("Contract lock validation passed.")
+          PY
