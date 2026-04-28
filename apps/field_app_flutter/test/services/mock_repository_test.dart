@@ -80,6 +80,44 @@ void main() {
     repository.dispose();
   });
 
+  test('reconnects even when the first stream closes immediately', () async {
+    final replacementController = StreamController<SessionStreamEvent>();
+    addTearDown(replacementController.close);
+
+    var streamCallCount = 0;
+    final api = FakeSessionApi(
+      fetchSessionHandler: (_) async => SessionStateModel.fallback(
+        mode: SessionMode.focus,
+      ),
+      watchSessionEventsHandler: (_) {
+        streamCallCount += 1;
+        return streamCallCount == 1
+            ? const Stream<SessionStreamEvent>.empty()
+            : replacementController.stream;
+      },
+    );
+    final repository = MockRepository(
+      api: api,
+      reconnectDelay: Duration.zero,
+      initialSession: const SessionStateModel(
+        sessionId: 'session-123',
+        mode: SessionMode.unspecified,
+        speakers: <Speaker>[],
+        topSpeakerId: null,
+      ),
+    );
+
+    await repository.load();
+    await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(api.watchSessionEventsModes, <SessionMode?>[null, null]);
+    expect(repository.isStreaming, isTrue);
+    expect(repository.errorMessage, isNull);
+
+    repository.dispose();
+  });
+
   test('changeMode falls back to the requested mode when the gateway fails',
       () async {
     final api = FakeSessionApi(
@@ -253,6 +291,183 @@ void main() {
     expect(repository.session.speakers.first.translatedCaption, 'Hello everyone.');
     expect(repository.session.speakers.first.statusMessage, 'Fresh live caption.');
     expect(repository.session.speakers.first.lastUpdatedUnixMs, 1710000000100);
+
+    repository.dispose();
+  });
+
+  test('ignores duplicate snapshot events that do not change the session',
+      () async {
+    final controller = StreamController<SessionStreamEvent>();
+    addTearDown(controller.close);
+    final initialSession = SessionStateModel.fallback(mode: SessionMode.focus);
+    final repository = MockRepository(
+      api: FakeSessionApi(
+        fetchSessionHandler: (_) async => initialSession,
+        watchSessionEventsHandler: (_) => controller.stream,
+      ),
+      initialSession: const SessionStateModel(
+        sessionId: 'session-123',
+        mode: SessionMode.unspecified,
+        speakers: <Speaker>[],
+        topSpeakerId: null,
+      ),
+    );
+    var notifications = 0;
+    repository.addListener(() {
+      notifications += 1;
+    });
+
+    await repository.load();
+    notifications = 0;
+
+    controller.add(
+      SessionStreamEvent(
+        type: SessionStreamEventType.sessionSnapshot,
+        session: initialSession,
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(notifications, 0);
+    expect(repository.session.mode, SessionMode.focus);
+
+    repository.dispose();
+  });
+
+  test('ignores stale speaker updates during rapid event bursts', () async {
+    final controller = StreamController<SessionStreamEvent>();
+    addTearDown(controller.close);
+    final api = FakeSessionApi(
+      fetchSessionHandler: (_) async => SessionStateModel.fallback(
+        mode: SessionMode.focus,
+      ),
+      watchSessionEventsHandler: (_) => controller.stream,
+    );
+    final repository = MockRepository(
+      api: api,
+      initialSession: const SessionStateModel(
+        sessionId: 'session-123',
+        mode: SessionMode.unspecified,
+        speakers: <Speaker>[],
+        topSpeakerId: null,
+      ),
+    );
+
+    await repository.load();
+
+    controller.add(
+      const SessionStreamEvent(
+        type: SessionStreamEventType.speakerUpdate,
+        speakerEvent: SpeakerEventModel(
+          speakerId: 'speaker-alice',
+          priorityDelta: 0.18,
+          active: true,
+          isLocked: false,
+          observedUnixMs: 1710000000200,
+          sourceCaption: 'Newest caption.',
+          translatedCaption: 'Newest translation.',
+          targetLanguageCode: 'en',
+          laneStatus: TranslationLaneStatus.ready,
+          statusMessage: 'Newest status.',
+        ),
+      ),
+    );
+    controller.add(
+      const SessionStreamEvent(
+        type: SessionStreamEventType.speakerUpdate,
+        speakerEvent: SpeakerEventModel(
+          speakerId: 'speaker-alice',
+          priorityDelta: 0.18,
+          active: true,
+          isLocked: false,
+          observedUnixMs: 1710000000100,
+          sourceCaption: 'Older caption.',
+          translatedCaption: 'Older translation.',
+          targetLanguageCode: 'en',
+          laneStatus: TranslationLaneStatus.listening,
+          statusMessage: 'Older status.',
+        ),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(repository.session.speakers.first.translatedCaption, 'Newest translation.');
+    expect(repository.session.speakers.first.statusMessage, 'Newest status.');
+    expect(repository.session.speakers.first.lastUpdatedUnixMs, 1710000000200);
+
+    repository.dispose();
+  });
+
+  test('ignores events from a replaced live stream after reconnect', () async {
+    final firstController = StreamController<SessionStreamEvent>();
+    final secondController = StreamController<SessionStreamEvent>();
+    addTearDown(firstController.close);
+    addTearDown(secondController.close);
+
+    var streamCallCount = 0;
+    final api = FakeSessionApi(
+      fetchSessionHandler: (_) async => SessionStateModel.fallback(
+        mode: SessionMode.focus,
+      ),
+      watchSessionEventsHandler: (_) {
+        streamCallCount += 1;
+        return streamCallCount == 1
+            ? firstController.stream
+            : secondController.stream;
+      },
+    );
+    final repository = MockRepository(
+      api: api,
+      initialSession: const SessionStateModel(
+        sessionId: 'session-123',
+        mode: SessionMode.unspecified,
+        speakers: <Speaker>[],
+        topSpeakerId: null,
+      ),
+    );
+
+    await repository.load();
+    await repository.refresh();
+
+    firstController.add(
+      const SessionStreamEvent(
+        type: SessionStreamEventType.speakerUpdate,
+        speakerEvent: SpeakerEventModel(
+          speakerId: 'speaker-alice',
+          priorityDelta: 0.18,
+          active: true,
+          isLocked: false,
+          observedUnixMs: 1710000000300,
+          sourceCaption: 'Old stream caption.',
+          translatedCaption: 'Old stream translation.',
+          targetLanguageCode: 'en',
+          laneStatus: TranslationLaneStatus.ready,
+          statusMessage: 'Old stream status.',
+        ),
+      ),
+    );
+    secondController.add(
+      const SessionStreamEvent(
+        type: SessionStreamEventType.speakerUpdate,
+        speakerEvent: SpeakerEventModel(
+          speakerId: 'speaker-alice',
+          priorityDelta: 0.18,
+          active: true,
+          isLocked: false,
+          observedUnixMs: 1710000000400,
+          sourceCaption: 'Fresh stream caption.',
+          translatedCaption: 'Fresh stream translation.',
+          targetLanguageCode: 'en',
+          laneStatus: TranslationLaneStatus.ready,
+          statusMessage: 'Fresh stream status.',
+        ),
+      ),
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    expect(repository.session.speakers.first.translatedCaption, 'Fresh stream translation.');
+    expect(repository.session.speakers.first.statusMessage, 'Fresh stream status.');
+    expect(repository.session.speakers.first.lastUpdatedUnixMs, 1710000000400);
 
     repository.dispose();
   });

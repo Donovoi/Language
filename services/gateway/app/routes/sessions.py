@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 
+from app.auth import require_write_token
 from app.models import SessionMode, SessionResetResponse, SessionResponse
 from app.services.session_store import SessionStore, get_session_store
 
@@ -16,7 +17,11 @@ def get_session(
     return store.current()
 
 
-@router.put("/mode", response_model=SessionResponse)
+@router.put(
+    "/mode",
+    response_model=SessionResponse,
+    dependencies=[Depends(require_write_token)],
+)
 def set_session_mode(
     mode: SessionMode = Query(default=SessionMode.FOCUS),
     store: SessionStore = Depends(get_session_store),
@@ -24,7 +29,11 @@ def set_session_mode(
     return store.set_mode(mode)
 
 
-@router.post("/reset", response_model=SessionResetResponse)
+@router.post(
+    "/reset",
+    response_model=SessionResetResponse,
+    dependencies=[Depends(require_write_token)],
+)
 def reset_session(
     mode: SessionMode = Query(default=SessionMode.FOCUS),
     store: SessionStore = Depends(get_session_store),

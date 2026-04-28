@@ -6,9 +6,9 @@ This pass delivers a production-style starter template that lets contributors va
 ## Architecture summary
 
 - **Flutter** owns the cross-platform operator UI in `apps/field_app_flutter`.
-- **Rust** owns typed realtime session and speaker primitives plus prioritization policy in `crates/`.
+- **Rust** owns typed realtime session and speaker primitives plus the authoritative prioritization policy in `crates/`.
 - **Python** owns the local gateway and mock scene orchestration in `services/gateway`.
-- **Protobuf** defines the shared contract in `proto/session.proto`.
+- **Protobuf** is the canonical contract ledger in `proto/session.proto`, and CI now validates the gateway models, Flutter models, and the overlapping Rust subset against it.
 
 ## Repository layout
 
@@ -76,9 +76,10 @@ make flutter-run
 The repository now provides:
 
 - typed Rust session and speaker primitives with prioritization tests
-- a FastAPI gateway with health, session, speaker, reset, and mock-scene endpoints
-- a Flutter operator shell that renders speaker lanes and mode changes from gateway-compatible data
-- CI workflows for Rust, Python, and Flutter validation
+- Rust `focus_engine` as the documented source of truth for mode-aware ranking, with shared parity vectors that keep the Python gateway mirror honest
+- a FastAPI gateway with health, session, speaker, reset, speaker lock/unlock, mock-scene, and persistent SSE endpoints
+- a Flutter operator shell that renders speaker lanes, mode changes, translated-caption fields, live SSE status, and speaker lock controls from gateway-compatible data
+- CI workflows for Rust, Python, Flutter, and proto-backed contract-lock validation
 
 Still intentionally deferred:
 
@@ -89,11 +90,14 @@ Still intentionally deferred:
 
 ## Near-term roadmap
 
-1. generate Rust and Python bindings from `proto/session.proto`
-2. replace mock scene generation with realtime event ingestion
-3. connect Flutter mode switching to live gateway state updates
-4. add transport for streaming speaker events
+1. bridge the Rust prioritization authority directly into runtime call paths if the current mirrored gateway layer becomes too costly
+2. replace deterministic mock scenes with a realistic live ingest path
+3. persist session state and externalize runtime configuration
+4. extend the contract-lock strategy into generated bindings once the runtime boundaries settle
 5. add translation and synthesis provider adapters behind the gateway
+
+For the detailed, time-bound execution plan, see `docs/development/smart-implementation-plan.md`.
+For the prioritization ownership record, see `docs/development/prioritization-authority.md`.
 
 ## Contribution expectations
 

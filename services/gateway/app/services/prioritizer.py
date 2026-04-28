@@ -9,11 +9,14 @@ from app.models import SessionMode, SpeakerState
 class PriorityWeights:
     active_bonus: float
     inactive_penalty: float
-    lock_bonus: float
+    user_lock_bonus: float
     front_facing_bonus: float
     persistence_multiplier: float
 
 
+# Derived mirror of `crates/focus_engine/src/lib.rs::ModeFocusPolicy::for_mode`.
+# Keep this table aligned with the Rust authority and the shared parity vectors in
+# `crates/focus_engine/testdata/prioritization_vectors.tsv`.
 WEIGHTS_BY_MODE: dict[SessionMode, PriorityWeights] = {
     SessionMode.UNSPECIFIED: PriorityWeights(0.25, 1.0, 0.3, 0.1, 0.5),
     SessionMode.FOCUS: PriorityWeights(0.4, 1.1, 0.45, 0.2, 1.0),
@@ -27,7 +30,7 @@ def score_speaker(speaker: SpeakerState, mode: SessionMode) -> float:
     score = speaker.priority + (speaker.persistence_bonus * weights.persistence_multiplier)
     score += weights.active_bonus if speaker.active else -weights.inactive_penalty
     if speaker.is_locked:
-        score += weights.lock_bonus
+        score += weights.user_lock_bonus
     if speaker.front_facing:
         score += weights.front_facing_bonus
     return score
@@ -38,7 +41,6 @@ def sort_speakers(speakers: list[SpeakerState], mode: SessionMode) -> list[Speak
         speakers,
         key=lambda speaker: (
             -score_speaker(speaker, mode),
-            speaker.display_name,
             speaker.speaker_id,
         ),
     )

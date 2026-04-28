@@ -17,9 +17,13 @@ abstract class SessionApi {
 }
 
 class ApiClient implements SessionApi {
-  ApiClient({String? baseUrl}) : _baseUrl = baseUrl ?? _defaultBaseUrl();
+  ApiClient({String? baseUrl}) : _baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultBaseUrl());
 
   final String _baseUrl;
+
+  static const String _configuredBaseUrl = String.fromEnvironment(
+    'FIELD_APP_API_BASE_URL',
+  );
 
   @override
   Future<SessionStateModel> fetchSession({SessionMode? mode}) async {
@@ -149,9 +153,19 @@ class ApiClient implements SessionApi {
   }
 
   static String _defaultBaseUrl() {
+    if (_configuredBaseUrl.isNotEmpty) {
+      return _configuredBaseUrl;
+    }
     if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android) {
       return 'http://10.0.2.2:8000';
     }
     return 'http://127.0.0.1:8000';
+  }
+
+  static String _normalizeBaseUrl(String baseUrl) {
+    if (baseUrl.endsWith('/')) {
+      return baseUrl.substring(0, baseUrl.length - 1);
+    }
+    return baseUrl;
   }
 }

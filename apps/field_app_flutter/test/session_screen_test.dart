@@ -172,16 +172,83 @@ void main() {
     repository.dispose();
   });
 
+  testWidgets('reconnect status returns to connected after a dropped stream',
+      (tester) async {
+    final firstController = StreamController<SessionStreamEvent>();
+    final secondController = StreamController<SessionStreamEvent>();
+
+    var streamCallCount = 0;
+    final repository = MockRepository(
+      api: FakeSessionApi(
+        fetchSessionHandler: (_) async => SessionStateModel.fallback(
+          mode: SessionMode.focus,
+        ),
+        watchSessionEventsHandler: (_) {
+          streamCallCount += 1;
+          return streamCallCount == 1
+              ? firstController.stream
+              : secondController.stream;
+        },
+      ),
+      reconnectDelay: Duration.zero,
+      initialSession: const SessionStateModel(
+        sessionId: 'session-123',
+        mode: SessionMode.unspecified,
+        speakers: <Speaker>[],
+        topSpeakerId: null,
+      ),
+    );
+    addTearDown(() async {
+      repository.dispose();
+      if (!firstController.isClosed) {
+        await firstController.close();
+      }
+      if (!secondController.isClosed) {
+        await secondController.close();
+      }
+    });
+
+    await repository.load();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SessionScreen(
+          repository: repository,
+          autoLoad: false,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Live updates connected'), findsOneWidget);
+
+    await firstController.close();
+    await tester.pump();
+
+    expect(find.text('Live updates offline'), findsOneWidget);
+
+    await tester.pump(const Duration(milliseconds: 1));
+    await tester.pump();
+
+    expect(find.text('Live updates connected'), findsOneWidget);
+  });
+
   testWidgets('reset button requests a rebuilt session from the gateway',
       (tester) async {
+    final controller = StreamController<SessionStreamEvent>();
     final repository = MockRepository(
       api: FakeSessionApi(
         resetSessionHandler: (_) async => SessionStateModel.fallback(
           mode: SessionMode.focus,
         ),
+        watchSessionEventsHandler: (_) => controller.stream,
       ),
       initialSession: SessionStateModel.fallback(mode: SessionMode.locked),
     );
+    addTearDown(() async {
+      repository.dispose();
+      await controller.close();
+    });
 
     await tester.pumpWidget(
       MaterialApp(
@@ -201,6 +268,7 @@ void main() {
   });
 
   testWidgets('lock button requests a speaker lock update', (tester) async {
+    final controller = StreamController<SessionStreamEvent>();
     final repository = MockRepository(
       api: FakeSessionApi(
         setSpeakerLockHandler: (speakerId, isLocked) async {
@@ -222,9 +290,14 @@ void main() {
             topSpeakerId: session.topSpeakerId,
           );
         },
+        watchSessionEventsHandler: (_) => controller.stream,
       ),
       initialSession: SessionStateModel.fallback(mode: SessionMode.focus),
     );
+    addTearDown(() async {
+      repository.dispose();
+      await controller.close();
+    });
 
     await tester.pumpWidget(
       MaterialApp(
