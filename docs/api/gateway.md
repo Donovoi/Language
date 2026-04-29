@@ -81,6 +81,18 @@ Returns the currently ranked speaker list for the active session.
 Replaces the current persisted speaker list with the supplied states and returns a ranked session response.
 Optional query parameter: `mode=FOCUS|CROWD|LOCKED|UNSPECIFIED`.
 
+When the translation adapter is enabled (`LANGUAGE_GATEWAY_TRANSLATION_PROVIDER=libretranslate`
+plus `LANGUAGE_GATEWAY_TRANSLATION_BASE_URL`), the gateway also translates any speaker whose:
+
+- `lane_status` is `READY`
+- `source_caption` is present
+- `translated_caption` is `null` or blank
+
+The target language comes from `speaker.target_language_code` when supplied, otherwise from
+`LANGUAGE_GATEWAY_TRANSLATION_TARGET_LANGUAGE` (default: `en`). If the provider call fails, the
+request still succeeds but the affected speaker lane is returned as `lane_status: "ERROR"` with a
+provider error in `status_message`.
+
 ### `PUT /v1/speakers/{speaker_id}/lock`
 Locks a single speaker in the current session, reranks the session, and returns the updated snapshot.
 
@@ -134,6 +146,8 @@ Behavior:
 - resets the current session through the existing session store
 - replays a scripted `briefing` scenario with more than 20 timed updates across Alice, Bruno, and Carmen
 - uses the same store mutation APIs as the rest of the gateway, so existing SSE subscribers receive the updates without any client refresh
+- when the translation adapter is enabled, `READY` caption beats in the script are translated through the configured provider before they are persisted and broadcast
+- when the translation adapter is disabled or unconfigured, the script keeps its built-in mock translated captions so the local demo still works offline
 - returns `409 Conflict` if another live ingest run is already active
 
 ### `DELETE /v1/mock/live-ingest`
@@ -141,7 +155,8 @@ Stops the active simulated live ingest run and returns the final runner status s
 
 ## What is intentionally deferred
 The gateway currently persists only one local session snapshot.
-Streaming transport beyond SSE, multi-session history, and provider adapters are still deferred until the mock-first workflow is stable.
+Streaming transport beyond SSE and multi-session history are still deferred until the mock-first workflow is stable.
+For providers, the current scope is intentionally narrow: one optional LibreTranslate-compatible adapter for translated text captions.
 The current auth/logging/health work is intentionally minimal and aimed at internal or limited beta use, not full IAM or production observability.
 
 ## How this interacts with SSE

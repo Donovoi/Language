@@ -77,8 +77,9 @@ The repository now provides:
 
 - typed Rust session and speaker primitives with prioritization tests
 - Rust `focus_engine` as the documented source of truth for mode-aware ranking, with shared parity vectors that keep the Python gateway mirror honest
-- a FastAPI gateway with health, session, speaker, reset, speaker lock/unlock, mock-scene, and persistent SSE endpoints
+- a FastAPI gateway with health/readiness, session, speaker, reset, speaker lock/unlock, mock-scene, live-ingest, persistence, and persistent SSE endpoints
 - a Flutter operator shell that renders speaker lanes, mode changes, translated-caption fields, live SSE status, and speaker lock controls from gateway-compatible data
+- a local smoke path, repo-root `.env` config support, a gateway container recipe, and optional bearer auth for mutating API routes
 - CI workflows for Rust, Python, Flutter, and proto-backed contract-lock validation
 
 Still intentionally deferred:
@@ -86,15 +87,16 @@ Still intentionally deferred:
 - live audio capture and diarization
 - translation and TTS provider integration
 - Flutter-to-Rust FFI wiring beyond planning docs
-- persistence, auth, and production deployment concerns
+- generated bindings across every runtime
+- production-grade auth, observability, and deployment hardening
 
 ## Near-term roadmap
 
-1. bridge the Rust prioritization authority directly into runtime call paths if the current mirrored gateway layer becomes too costly
-2. replace deterministic mock scenes with a realistic live ingest path
-3. persist session state and externalize runtime configuration
+1. add one real translation provider adapter behind the gateway
+2. add a cross-stack demo smoke path and short internal runbook
+3. build the first internal beta release candidate and artifacts
 4. extend the contract-lock strategy into generated bindings once the runtime boundaries settle
-5. add translation and synthesis provider adapters behind the gateway
+5. plan the next wave for audio capture, diarization, and TTS
 
 For the detailed, time-bound execution plan, see `docs/development/smart-implementation-plan.md`.
 For the prioritization ownership record, see `docs/development/prioritization-authority.md`.

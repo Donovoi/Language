@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from collections.abc import Callable
 import csv
 import json
@@ -12,6 +14,7 @@ from app.main import create_app
 from app.models import SessionMode, SpeakerState
 from app.routes import events as events_route
 from app.services.prioritizer import build_session, score_speaker, sort_speakers
+from app.services import translation as translation_service
 
 
 @pytest.fixture
@@ -121,6 +124,42 @@ def _load_prioritization_cases() -> list[dict[str, object]]:
             )
 
     return list(cases.values())
+
+
+class _FakeTranslationResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = json.dumps(payload).encode("utf-8")
+
+    def read(self) -> bytes:
+        return self._payload
+
+    def __enter__(self) -> _FakeTranslationResponse:
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        return None
+
+
+def _build_fake_translation_urlopen(
+    translations: dict[tuple[str, str, str], str],
+    recorded_payloads: list[dict[str, object]],
+) -> Callable[[object, float], _FakeTranslationResponse]:
+    def _urlopen(request_obj: object, timeout: float) -> _FakeTranslationResponse:
+        assert isinstance(request_obj, translation_service.request.Request)
+        assert request_obj.full_url == "https://translate.example.test/translate"
+        assert timeout == 4.0
+
+        payload = json.loads(request_obj.data.decode("utf-8"))
+        recorded_payloads.append(payload)
+
+        key = (str(payload["q"]), str(payload["source"]), str(payload["target"]))
+        translated_text = translations.get(key)
+        if translated_text is None:
+            raise AssertionError(f"unexpected translation payload: {payload}")
+
+        return _FakeTranslationResponse({"translatedText": translated_text})
+
+    return _urlopen
 
 
 def test_health_endpoint_returns_ok(client: TestClient) -> None:
@@ -792,6 +831,165 @@ def test_live_ingest_stream_emits_progressive_snapshot_updates() -> None:
     assert events[5]["data"]["session"]["speakers"][0]["lane_status"] == "LISTENING"
     assert events[6]["data"]["session"]["speakers"][0]["lane_status"] == "TRANSLATING"
     assert events[7]["data"]["session"]["speakers"][0]["lane_status"] == "READY"
+
+
+def test_live_ingest_uses_configured_translation_adapter_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LANGUAGE_GATEWAY_TRANSLATION_PROVIDER", "libretranslate")
+    monkeypatch.setenv(
+        "LANGUAGE_GATEWAY_TRANSLATION_BASE_URL",
+        "https://translate.example.test",
+    )
+
+    recorded_payloads: list[dict[str, object]] = []
+    monkeypatch.setattr(
+        translation_service.request,
+        "urlopen",
+        _build_fake_translation_urlopen(
+            {
+                (
+                    "Tenho uma atualização da equipe de apoio.",
+                    "pt",
+                    "en",
+                ): "The support team has an update.",
+            },
+            recorded_payloads,
+        ),
+    )
+
+    app = create_app()
+    results: dict[str, object] = {}
+
+    def read_stream() -> None:
+        with TestClient(app) as stream_client:
+            response = stream_client.get("/v1/events/stream?max_events=8")
+            results["status_code"] = response.status_code
+            results["text"] = response.text
+
+    reader = Thread(target=read_stream)
+    reader.start()
+
+    _wait_for(lambda: bool(app.state.session_store._subscriptions))
+
+    with TestClient(app) as mutation_client:
+        start_response = mutation_client.post("/v1/mock/live-ingest?interval_ms=1")
+
+    reader.join(timeout=5)
+
+    with TestClient(app) as cleanup_client:
+        stop_response = cleanup_client.delete("/v1/mock/live-ingest")
+
+    assert start_response.status_code == 202
+    assert stop_response.status_code == 200
+    assert not reader.is_alive(), "stream reader did not finish after receiving max_events"
+    assert results["status_code"] == 200
+
+    events = _parse_sse(str(results["text"]))
+    assert events[4]["data"]["session"]["speakers"][0]["translated_caption"] == (
+        "Let's open with field safety and timing."
+    )
+    assert events[7]["data"]["session"]["speakers"][0]["translated_caption"] == (
+        "The support team has an update."
+    )
+    assert recorded_payloads == [
+        {
+            "q": "Tenho uma atualização da equipe de apoio.",
+            "source": "pt",
+            "target": "en",
+            "format": "text",
+        }
+    ]
+
+
+def test_live_ingest_keeps_mock_translation_when_provider_is_unconfigured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("LANGUAGE_GATEWAY_TRANSLATION_PROVIDER", raising=False)
+    monkeypatch.delenv("LANGUAGE_GATEWAY_TRANSLATION_BASE_URL", raising=False)
+
+    def _unexpected_urlopen(request_obj: object, timeout: float) -> _FakeTranslationResponse:
+        raise AssertionError("translation adapter should not run when the provider is disabled")
+
+    monkeypatch.setattr(translation_service.request, "urlopen", _unexpected_urlopen)
+
+    app = create_app()
+    results: dict[str, object] = {}
+
+    def read_stream() -> None:
+        with TestClient(app) as stream_client:
+            response = stream_client.get("/v1/events/stream?max_events=8")
+            results["status_code"] = response.status_code
+            results["text"] = response.text
+
+    reader = Thread(target=read_stream)
+    reader.start()
+
+    _wait_for(lambda: bool(app.state.session_store._subscriptions))
+
+    with TestClient(app) as mutation_client:
+        start_response = mutation_client.post("/v1/mock/live-ingest?interval_ms=1")
+
+    reader.join(timeout=5)
+
+    with TestClient(app) as cleanup_client:
+        stop_response = cleanup_client.delete("/v1/mock/live-ingest")
+
+    assert start_response.status_code == 202
+    assert stop_response.status_code == 200
+    assert not reader.is_alive(), "stream reader did not finish after receiving max_events"
+    assert results["status_code"] == 200
+
+    events = _parse_sse(str(results["text"]))
+    assert events[7]["data"]["session"]["speakers"][0]["translated_caption"] == (
+        "I have an update from the support team."
+    )
+
+
+def test_post_speakers_marks_lane_error_when_translation_adapter_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LANGUAGE_GATEWAY_TRANSLATION_PROVIDER", "libretranslate")
+    monkeypatch.setenv(
+        "LANGUAGE_GATEWAY_TRANSLATION_BASE_URL",
+        "https://translate.example.test",
+    )
+
+    def _failing_urlopen(request_obj: object, timeout: float) -> _FakeTranslationResponse:
+        raise translation_service.error.URLError("adapter offline")
+
+    monkeypatch.setattr(translation_service.request, "urlopen", _failing_urlopen)
+
+    with TestClient(create_app()) as client:
+        response = client.post(
+            "/v1/speakers",
+            json=[
+                {
+                    "speaker_id": "speaker-carmen",
+                    "display_name": "Carmen",
+                    "language_code": "es",
+                    "priority": 0.93,
+                    "active": True,
+                    "is_locked": False,
+                    "front_facing": True,
+                    "persistence_bonus": 0.24,
+                    "last_updated_unix_ms": 123,
+                    "source_caption": "La salida norte está despejada.",
+                    "translated_caption": None,
+                    "target_language_code": "en",
+                    "lane_status": "READY",
+                    "status_message": "Translation live.",
+                }
+            ],
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["speakers"][0]["speaker_id"] == "speaker-carmen"
+    assert payload["speakers"][0]["translated_caption"] is None
+    assert payload["speakers"][0]["target_language_code"] == "en"
+    assert payload["speakers"][0]["lane_status"] == "ERROR"
+    assert payload["speakers"][0]["status_message"] == "Translation provider error: adapter offline"
 
 
 def test_live_ingest_emits_lock_and_unlock_speaker_events_over_sse() -> None:
