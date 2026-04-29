@@ -10,44 +10,55 @@ achievable, realistic, and time-bound tasks.
 As of 2026-04-29, the repository already supports a **runnable local mock demo**:
 
 - `make check` passes end to end
+- `make smoke-local-demo` verifies the local gateway demo path
 - `make gateway-run` starts the FastAPI gateway locally
 - `make flutter-run` starts the Flutter app locally
 - Flutter renders live speaker lanes, consumes SSE updates, and supports lock/unlock controls
-- The gateway supports health, session control, speaker replacement, speaker lock/unlock, mock scenes,
-  and persistent SSE subscriptions
+- The gateway supports health/readiness, session control, speaker replacement, speaker lock/unlock,
+  mock scenes, simulated live ingest, persistence, and persistent SSE subscriptions
 
 ### What is already working
 
 - Rust domain model and prioritization crates compile and test cleanly
+- Rust `focus_engine` is the documented source of truth for prioritization, with parity checks against the gateway
+- `proto/session.proto` is CI-locked against the gateway, Flutter, and the overlapping Rust subset
 - Python gateway lint/tests pass
 - Flutter analyze/tests pass
 - Local SDK/bootstrap flow is automated by `scripts/bootstrap_dev.sh`
+- Gateway config, minimal auth, structured request logging, and SQLite session recovery are all in place
 
 ### What is still missing to "finish the work"
 
 The system is still missing several capabilities needed for a realistic, durable, releasable app:
 
-- full generated shared-contract consumption across every runtime (`proto/session.proto` is now CI-locked against the gateway, Flutter, and the overlapping Rust subset, but bindings are still hand-authored)
+- one real provider-backed translation path (today all translated captions are simulated)
+- cross-stack integration smoke coverage and a demo runbook that prove Flutter, gateway, SSE, persistence, and live ingest work together
+- internal beta release packaging and changelog/runbook updates
+- full generated shared-contract consumption across every runtime (`proto/session.proto` is CI-locked, but bindings are still hand-authored)
 - direct Rust reuse from Python/Flutter runtime paths (the current Python mirror is parity-tested, but not bridged)
-- a real event ingestion path beyond deterministic mock scenes
-- persistence and restart recovery
-- production basics like auth, configuration, observability, and release smoke tests
-- real audio / diarization / translation / TTS integrations for a true product workflow
+- real audio capture, diarization, and TTS for a true field-ready workflow
+- production-grade auth/roles, metrics, and deployment hardening beyond the current minimal local/beta layer
 
 ## Finish lines
 
 To keep scope realistic, this plan uses three finish lines.
 
 ### Finish line A — Stable local demo
+**Status:** Complete on 2026-04-29.
+
 A fresh machine can bootstrap the repo, run the gateway and Flutter app locally, and exercise mode
 changes, reset, live SSE updates, and speaker lock/unlock without code changes.
 
 ### Finish line B — Internal end-to-end prototype
+**Status:** Complete on 2026-04-29 for the mock/live-simulated path.
+
 The gateway can ingest a stream of realistic speaker/transcript updates, persist session state, and keep
 Flutter synchronized across reconnects. This is the first milestone that feels like a usable internal
 prototype rather than a mock shell.
 
 ### Finish line C — Beta candidate
+**Status:** In progress.
+
 The system has a real translation pipeline, minimal auth/observability, and reproducible release
 artifacts for controlled external testing.
 
@@ -64,6 +75,9 @@ These targets assume:
 
 ### Task 1 — Stabilize the local run path
 **Target date:** 2026-05-01
+
+**Status (2026-04-29):** Implemented via `scripts/smoke_local_demo.sh`, `make smoke-local-demo`,
+and updated setup documentation.
 
 **Specific**
 - Add one repo-level smoke script that proves the gateway and Flutter app can connect locally without
@@ -146,6 +160,9 @@ The logic is already small and well-contained; the main work is choosing ownersh
 ### Task 4 — Harden SSE for real client behavior
 **Target date:** 2026-05-12
 
+**Status (2026-04-29):** Implemented with deterministic SSE ids, keep-alives, reconnect handling,
+duplicate/stale event filtering, and expanded gateway/Flutter tests.
+
 **Specific**
 - Add deterministic integration coverage for keep-alives, reconnects, and event ordering.
 - Ensure the Flutter repository handles dropped streams, duplicate events, and rapid updates safely.
@@ -168,6 +185,9 @@ The stream and reconnect scaffolding already exist; this task finishes the relia
 
 ### Task 5 — Add a realistic ingest path for live demo data
 **Target date:** 2026-05-15
+
+**Status (2026-04-29):** Implemented via `/v1/mock/live-ingest` and the scripted `briefing`
+scenario that drives 20+ timed updates through the existing SSE pipeline.
 
 **Specific**
 - Add a gateway endpoint or local simulator that can inject realistic speaker/transcript updates over
@@ -193,6 +213,8 @@ This creates a much more convincing internal prototype without waiting for full 
 ### Task 6 — Persist session and lock state
 **Target date:** 2026-05-21
 
+**Status (2026-04-29):** Implemented with SQLite-backed session persistence and restart recovery.
+
 **Specific**
 - Replace purely in-memory gateway state with SQLite-backed persistence for current session, speakers,
   and lock state.
@@ -215,6 +237,9 @@ SQLite is enough for the next milestone and avoids premature distributed-state c
 
 ### Task 7 — Add minimal configuration and deployment hygiene
 **Target date:** 2026-05-28
+
+**Status (2026-04-29):** Implemented with repo-root `.env` support, `.env.example`,
+`services/gateway/app/config.py`, `services/gateway/Dockerfile`, and Flutter base-URL overrides.
 
 **Specific**
 - Add environment-based config for gateway runtime values and Flutter base URL.
@@ -241,6 +266,9 @@ This is foundational plumbing that pays off immediately for contributors and tes
 ### Task 8 — Add minimal auth, logging, and readiness checks
 **Target date:** 2026-06-03
 
+**Status (2026-04-29):** Implemented with optional bearer auth for mutating routes,
+structured request logging, and `/livez` + `/readyz`.
+
 **Specific**
 - Add simple token-based auth for mutating gateway endpoints.
 - Add structured request logging and explicit readiness/liveness endpoints.
@@ -261,20 +289,23 @@ This is enough hardening for an internal or limited beta without requiring a ful
 ---
 
 ### Task 9 — Ship one real translation adapter
-**Target date:** 2026-06-10
+**Target date:** 2026-05-06
 
 **Specific**
-- Add one real translation provider adapter behind the gateway for text-in/text-out translation.
-- Keep the adapter behind an interface so mock mode still works without credentials.
+- Select one translation provider and add a gateway adapter for text-in/text-out translation.
+- Wire the adapter into the existing session/speaker path so live ingest or manual speaker updates can produce real translated captions.
+- Keep mock mode available when credentials are absent or the provider is disabled.
 
 **Primary files**
 - `services/gateway/app/services/` (new adapter modules)
 - `services/gateway/app/config.py`
+- `services/gateway/app/routes/mock.py` or a dedicated adapter entry path
 - gateway docs/tests
 
 **Measurable done criteria**
 - Given source caption text and a target language, the gateway returns a real translated caption through
   the existing session/speaker models
+- A local developer can enable the provider with documented env vars and see real translated captions in the existing Flutter speaker lanes
 - Mock mode remains available when no provider is configured
 - Adapter success/failure paths are tested
 
@@ -283,8 +314,31 @@ Text translation is the smallest real-provider step and unlocks a meaningful pro
 
 ---
 
-### Task 10 — Build the first internal beta release candidate
-**Target date:** 2026-06-12
+### Task 10 — Add cross-stack integration smoke coverage
+**Target date:** 2026-05-09
+
+**Specific**
+- Add one repeatable integration-smoke path that exercises the gateway, live ingest, persistence, and Flutter client expectations together.
+- Write a short demo runbook for contributors and internal reviewers.
+
+**Primary files**
+- `docs/testing/strategy.md`
+- `docs/development/setup.md`
+- `scripts/`
+- targeted gateway/Flutter test or smoke harness files
+
+**Measurable done criteria**
+- A contributor can follow one short runbook and validate the end-to-end demo in under 10 minutes on a fresh machine
+- The smoke path proves `/v1/events/stream`, `/v1/mock/live-ingest`, and Flutter live updates all work together
+- The testing docs explicitly describe what remains manual vs. automated
+
+**Why this is realistic**
+The platform pieces already exist; this task makes the working system demonstrable and repeatable.
+
+---
+
+### Task 11 — Build the first internal beta release candidate
+**Target date:** 2026-05-13
 
 **Specific**
 - Execute the release checklist against the new baseline.
@@ -296,11 +350,13 @@ Text translation is the smallest real-provider step and unlocks a meaningful pro
 - `docs/development/release-builds.md`
 - `CHANGELOG.md`
 - `.github/workflows/release.yml`
+- internal smoke/runbook docs
 
 **Measurable done criteria**
 - `make check`, `make gateway-package`, and `make flutter-release-android` pass
 - Release artifacts are produced and documented
 - The changelog reflects the implemented features since `0.1.0`
+- An internal tester can follow the runbook to launch the gateway, connect the Flutter app, and exercise a live ingest demo without source edits
 
 **Why this is realistic**
 By this point the repo should be beyond “starter template” and into repeatable internal release territory.
@@ -309,35 +365,27 @@ By this point the repo should be beyond “starter template” and into repeatab
 
 These are important, but they should not block the next finish line:
 
-1. audio capture and diarization integration
-2. TTS / translated-audio output and mix metadata
-3. richer operator actions (mute, batch lock, history/timeline)
-4. stronger auth/roles and multi-user coordination
-5. production-grade observability and scaling
-6. signed mobile/desktop distribution and store submission
+1. generated bindings from `proto/session.proto` across every runtime
+2. direct Rust reuse/bridge in Python or Flutter runtime paths
+3. audio capture and diarization integration
+4. TTS / translated-audio output and mix metadata
+5. richer operator actions (mute, batch lock, history/timeline)
+6. stronger auth/roles and multi-user coordination
+7. production-grade observability and scaling
+8. signed mobile/desktop distribution and store submission
 
 ## Recommended execution order
 
 If we continue immediately, the best order is:
 
-1. Task 1 — local run stabilization
-2. Task 2 — contract strategy
-3. Task 3 — prioritization authority
-4. Task 4 — SSE hardening
-5. Task 5 — realistic ingest path
-6. Task 6 — persistence
-7. Task 7 — configuration and container path
-8. Task 8 — auth/logging/readiness
-9. Task 9 — real translation adapter
-10. Task 10 — internal beta release candidate
+1. Task 9 — real translation adapter
+2. Task 10 — cross-stack integration smoke coverage
+3. Task 11 — internal beta release candidate
 
 ## Success summary
 
 We should consider the current phase complete when:
 
-- a fresh machine can bootstrap and run the local demo from docs alone
-- the app stays live over SSE across reconnects
-- contract and ranking behavior cannot drift silently
-- a realistic ingest path drives the Flutter UI without code edits
-- the gateway survives restarts without losing operator state
-- release artifacts can be built and smoke-tested for internal use
+- a provider-backed translation path can drive real translated captions through the existing UI
+- a contributor can run the end-to-end demo from docs alone
+- internal release artifacts can be built and smoke-tested without source edits

@@ -173,6 +173,9 @@ class MockLiveIngestController:
             raise RuntimeError(f"Demo ingest step referenced missing speaker '{step.speaker_id}'.")
 
     def _apply_speaker_frame(self, step: _SpeakerFrameStep, step_index: int) -> None:
+        if self._store.translation_enabled:
+            step = _prefer_provider_translations(step)
+
         session = self._store.current()
         updated_speakers = _apply_mutations_to_speakers(
             session.speakers,
@@ -228,6 +231,30 @@ def _apply_mutations_to_speakers(
         raise RuntimeError(f"Demo ingest step referenced missing speakers: {missing}")
 
     return updated_speakers
+
+
+def _prefer_provider_translations(step: _SpeakerFrameStep) -> _SpeakerFrameStep:
+    translated_mutations: list[_SpeakerMutation] = []
+    changed = False
+
+    for mutation in step.mutations:
+        if mutation.updates.get("lane_status") != LaneStatus.READY:
+            translated_mutations.append(mutation)
+            continue
+
+        if "translated_caption" not in mutation.updates:
+            translated_mutations.append(mutation)
+            continue
+
+        updates = dict(mutation.updates)
+        updates["translated_caption"] = None
+        translated_mutations.append(_SpeakerMutation(speaker_id=mutation.speaker_id, updates=updates))
+        changed = True
+
+    if not changed:
+        return step
+
+    return _SpeakerFrameStep(mutations=tuple(translated_mutations), mode=step.mode)
 
 
 def _build_briefing_script(start_mode: SessionMode) -> tuple[_DemoStep, ...]:

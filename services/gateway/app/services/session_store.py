@@ -22,6 +22,7 @@ from app.models import (
 from app.services.mock_events import build_mock_scene
 from app.services.prioritizer import build_session
 from app.services.session_persistence import SQLiteSessionPersistence
+from app.services.translation import CaptionTranslator
 
 
 _SUBSCRIPTION_QUEUE_SIZE = 64
@@ -59,9 +60,14 @@ class SessionStore:
     def __init__(self, database_path: str | Path | None = None) -> None:
         self._lock = Lock()
         self._persistence = SQLiteSessionPersistence(database_path or _default_database_path())
+        self._translator = CaptionTranslator()
         self._session = self._load_initial_session()
         self._subscriptions: list[_Subscription] = []
         self._last_event_id = 0
+
+    @property
+    def translation_enabled(self) -> bool:
+        return self._translator.enabled
 
     def current(self) -> SessionResponse:
         with self._lock:
@@ -108,8 +114,9 @@ class SessionStore:
     ) -> SessionResponse:
         with self._lock:
             selected_mode = mode or self._session.mode
+            translated_speakers = self._translator.translate_ready_speakers(speakers)
             session = SessionResponse.model_validate(
-                build_session(self._session.session_id, selected_mode, speakers)
+                build_session(self._session.session_id, selected_mode, translated_speakers)
             )
             return self._commit_session_locked(session)
 

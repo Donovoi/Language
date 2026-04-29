@@ -82,11 +82,72 @@ def _read_int(name: str, default: int) -> int:
 _load_default_env()
 
 
+_SUPPORTED_TRANSLATION_PROVIDERS = {"disabled", "libretranslate"}
+
+
 @dataclass(frozen=True, slots=True)
 class GatewaySettings:
     host: str
     port: int
     log_level: str
+
+
+@dataclass(frozen=True, slots=True)
+class TranslationSettings:
+    provider: str
+    base_url: str | None
+    api_key: str | None
+    timeout_ms: int
+    default_target_language_code: str
+
+    @property
+    def enabled(self) -> bool:
+        return self.provider == "libretranslate" and self.base_url is not None
+
+
+def _read_optional_str(name: str) -> str | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+
+    stripped = value.strip()
+    if not stripped:
+        return None
+    return stripped
+
+
+def _normalize_language_tag(language_tag: str) -> str:
+    return language_tag.strip().replace("_", "-").lower()
+
+
+def get_translation_settings() -> TranslationSettings:
+    provider = _read_str("LANGUAGE_GATEWAY_TRANSLATION_PROVIDER", "disabled").lower()
+    if provider not in _SUPPORTED_TRANSLATION_PROVIDERS:
+        supported = ", ".join(sorted(_SUPPORTED_TRANSLATION_PROVIDERS))
+        raise ValueError(
+            f"LANGUAGE_GATEWAY_TRANSLATION_PROVIDER must be one of {supported}, got {provider!r}"
+        )
+
+    timeout_ms = _read_int("LANGUAGE_GATEWAY_TRANSLATION_TIMEOUT_MS", 4000)
+    if timeout_ms <= 0:
+        raise ValueError(
+            "LANGUAGE_GATEWAY_TRANSLATION_TIMEOUT_MS must be greater than zero, "
+            f"got {timeout_ms!r}"
+        )
+
+    base_url = _read_optional_str("LANGUAGE_GATEWAY_TRANSLATION_BASE_URL")
+    if base_url is not None:
+        base_url = base_url.rstrip("/")
+
+    return TranslationSettings(
+        provider=provider,
+        base_url=base_url,
+        api_key=_read_optional_str("LANGUAGE_GATEWAY_TRANSLATION_API_KEY"),
+        timeout_ms=timeout_ms,
+        default_target_language_code=_normalize_language_tag(
+            _read_str("LANGUAGE_GATEWAY_TRANSLATION_TARGET_LANGUAGE", "en")
+        ),
+    )
 
 
 @lru_cache(maxsize=1)

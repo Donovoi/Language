@@ -5,6 +5,20 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      channel:
+        description: Artifact channel label for this run.
+        required: true
+        default: internal-beta
+        type: choice
+        options:
+          - internal-beta
+          - release
+      field_app_api_base_url:
+        description: Optional FIELD_APP_API_BASE_URL injected into Flutter release builds.
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: write
@@ -14,12 +28,19 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.version.outputs.channel }}
+      field_app_api_base_url: ${{ steps.version.outputs.field_app_api_base_url }}
+      smoke_runbook: ${{ steps.version.outputs.smoke_runbook }}
     steps:
       - uses: actions/checkout@v6.0.2
       - id: version
         name: Verify aligned release versions
+        env:
+          WORKFLOW_CHANNEL: ${{ github.event_name == 'workflow_dispatch' && inputs.channel || 'internal-beta' }}
+          FIELD_APP_API_BASE_URL_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.field_app_api_base_url || '' }}
         run: |
           python - <<'PY' >> "$GITHUB_OUTPUT"
+          import os
           from pathlib import Path
           import re
 
@@ -43,8 +64,29 @@ jobs:
               details = ", ".join(f"{name}={value}" for name, value in versions.items())
               raise SystemExit(f"Release versions are not aligned: {details}")
 
+          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          if not re.search(r"^## \[Unreleased\]$", changelog, re.MULTILINE):
+            raise SystemExit("CHANGELOG.md must keep a ## [Unreleased] section.")
+
+          channel = "release" if os.getenv("GITHUB_REF", "").startswith("refs/tags/") else os.getenv(
+            "WORKFLOW_CHANNEL",
+            "internal-beta",
+          )
+          if channel == "internal-beta" and not re.search(
+            r"^### Internal beta candidate$",
+            changelog,
+            re.MULTILINE,
+          ):
+            raise SystemExit(
+              "Internal beta artifact runs require a '### Internal beta candidate' section in CHANGELOG.md."
+            )
+
+          field_app_api_base_url = os.getenv("FIELD_APP_API_BASE_URL_INPUT", "").strip()
           version = unique_versions.pop()
           print(f"version={version}")
+          print(f"channel={channel}")
+          print(f"field_app_api_base_url={field_app_api_base_url}")
+          print("smoke_runbook=docs/development/internal-beta-smoke-runbook.md")
           PY
       - name: Verify tag matches version
         if: startsWith(github.ref, 'refs/tags/')
@@ -109,7 +151,7 @@ jobs:
           git archive --format=zip --output=release-artifacts/language-${{ needs.release-metadata.outputs.version }}-source.zip HEAD
       - uses: actions/upload-artifact@v4.6.2
         with:
-          name: release-source
+          name: ${{ needs.release-metadata.outputs.channel }}-source
           path: release-artifacts/*
 
   gateway-package:
@@ -141,12 +183,14 @@ jobs:
           cp "${wheels[0]}" /tmp/release-artifacts/
       - uses: actions/upload-artifact@v4.6.2
         with:
-          name: release-gateway
+          name: ${{ needs.release-metadata.outputs.channel }}-gateway
           path: /tmp/release-artifacts/*
 
   flutter-android:
     needs: [release-metadata, validate-rust, validate-python, validate-flutter]
     runs-on: ubuntu-latest
+    env:
+      FIELD_APP_API_BASE_URL: ${{ needs.release-metadata.outputs.field_app_api_base_url }}
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: actions/setup-java@v5.0.0
@@ -159,22 +203,28 @@ jobs:
       - name: Build Android artifacts
         run: |
           cd apps/field_app_flutter
+          extra_build_args=()
+          if [ -n "$FIELD_APP_API_BASE_URL" ]; then
+            extra_build_args+=(--dart-define=FIELD_APP_API_BASE_URL=$FIELD_APP_API_BASE_URL)
+          fi
           flutter create . --platforms=android,ios,macos,windows
           rm -f test/widget_test.dart
           flutter pub get
-          flutter build apk --release
-          flutter build appbundle --release
+          flutter build apk --release "${extra_build_args[@]}"
+          flutter build appbundle --release "${extra_build_args[@]}"
           mkdir -p /tmp/release-artifacts
           cp build/app/outputs/flutter-apk/app-release.apk /tmp/release-artifacts/field_app_flutter-${{ needs.release-metadata.outputs.version }}-android-release.apk
           cp build/app/outputs/bundle/release/app-release.aab /tmp/release-artifacts/field_app_flutter-${{ needs.release-metadata.outputs.version }}-android-release.aab
       - uses: actions/upload-artifact@v4.6.2
         with:
-          name: release-android
+          name: ${{ needs.release-metadata.outputs.channel }}-android
           path: /tmp/release-artifacts/*
 
   flutter-ios:
     needs: [release-metadata, validate-rust, validate-python, validate-flutter]
     runs-on: macos-latest
+    env:
+      FIELD_APP_API_BASE_URL: ${{ needs.release-metadata.outputs.field_app_api_base_url }}
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: subosito/flutter-action@v2.23.0
@@ -183,21 +233,27 @@ jobs:
       - name: Build unsigned iOS artifact
         run: |
           cd apps/field_app_flutter
+          extra_build_args=()
+          if [ -n "$FIELD_APP_API_BASE_URL" ]; then
+            extra_build_args+=(--dart-define=FIELD_APP_API_BASE_URL=$FIELD_APP_API_BASE_URL)
+          fi
           flutter config --enable-ios
           flutter create . --platforms=android,ios,macos,windows
           rm -f test/widget_test.dart
           flutter pub get
-          flutter build ios --release --no-codesign
+          flutter build ios --release --no-codesign "${extra_build_args[@]}"
           mkdir -p /tmp/release-artifacts
           ditto -c -k --sequesterRsrc --keepParent build/ios/iphoneos/Runner.app /tmp/release-artifacts/field_app_flutter-${{ needs.release-metadata.outputs.version }}-ios-unsigned.zip
       - uses: actions/upload-artifact@v4.6.2
         with:
-          name: release-ios
+          name: ${{ needs.release-metadata.outputs.channel }}-ios
           path: /tmp/release-artifacts/*
 
   flutter-macos:
     needs: [release-metadata, validate-rust, validate-python, validate-flutter]
     runs-on: macos-latest
+    env:
+      FIELD_APP_API_BASE_URL: ${{ needs.release-metadata.outputs.field_app_api_base_url }}
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: subosito/flutter-action@v2.23.0
@@ -206,21 +262,27 @@ jobs:
       - name: Build macOS artifact
         run: |
           cd apps/field_app_flutter
+          extra_build_args=()
+          if [ -n "$FIELD_APP_API_BASE_URL" ]; then
+            extra_build_args+=(--dart-define=FIELD_APP_API_BASE_URL=$FIELD_APP_API_BASE_URL)
+          fi
           flutter config --enable-macos-desktop
           flutter create . --platforms=android,ios,macos,windows
           rm -f test/widget_test.dart
           flutter pub get
-          flutter build macos --release
+          flutter build macos --release "${extra_build_args[@]}"
           mkdir -p /tmp/release-artifacts
           ditto -c -k --sequesterRsrc --keepParent build/macos/Build/Products/Release/field_app_flutter.app /tmp/release-artifacts/field_app_flutter-${{ needs.release-metadata.outputs.version }}-macos-release.zip
       - uses: actions/upload-artifact@v4.6.2
         with:
-          name: release-macos
+          name: ${{ needs.release-metadata.outputs.channel }}-macos
           path: /tmp/release-artifacts/*
 
   flutter-windows:
     needs: [release-metadata, validate-rust, validate-python, validate-flutter]
     runs-on: windows-latest
+    env:
+      FIELD_APP_API_BASE_URL: ${{ needs.release-metadata.outputs.field_app_api_base_url }}
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: subosito/flutter-action@v2.23.0
@@ -230,17 +292,90 @@ jobs:
         shell: pwsh
         run: |
           Set-Location apps/field_app_flutter
+          $extraBuildArgs = @()
+          if ($env:FIELD_APP_API_BASE_URL) {
+            $extraBuildArgs += "--dart-define=FIELD_APP_API_BASE_URL=$env:FIELD_APP_API_BASE_URL"
+          }
           flutter config --enable-windows-desktop
           flutter create . --platforms=android,ios,macos,windows
           if (Test-Path test/widget_test.dart) { Remove-Item test/widget_test.dart }
           flutter pub get
-          flutter build windows --release
+          flutter build windows --release @extraBuildArgs
           New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP/release-artifacts" | Out-Null
           Compress-Archive -Path build/windows/x64/runner/Release/* -DestinationPath "$env:RUNNER_TEMP/release-artifacts/field_app_flutter-${{ needs.release-metadata.outputs.version }}-windows-release.zip" -Force
       - uses: actions/upload-artifact@v4.6.2
         with:
-          name: release-windows
+          name: ${{ needs.release-metadata.outputs.channel }}-windows
           path: ${{ runner.temp }}/release-artifacts/*
+
+  release-manifest:
+    needs:
+      [
+        release-metadata,
+        source-bundle,
+        gateway-package,
+        flutter-android,
+        flutter-ios,
+        flutter-macos,
+        flutter-windows,
+      ]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4.2.1
+        with:
+          path: release-artifacts
+          merge-multiple: true
+      - name: Build artifact manifest and checksums
+        env:
+          RELEASE_VERSION: ${{ needs.release-metadata.outputs.version }}
+          RELEASE_CHANNEL: ${{ needs.release-metadata.outputs.channel }}
+          SMOKE_RUNBOOK: ${{ needs.release-metadata.outputs.smoke_runbook }}
+          FIELD_APP_API_BASE_URL: ${{ needs.release-metadata.outputs.field_app_api_base_url }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          root = Path("release-artifacts")
+          files = sorted(path for path in root.iterdir() if path.is_file())
+          if not files:
+              raise SystemExit("No release artifacts were downloaded.")
+
+          checksum_lines = []
+          artifact_lines = []
+          for path in files:
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              checksum_lines.append(f"{digest}  {path.name}")
+              artifact_lines.append(f"- `{path.name}`")
+
+          (root / "SHA256SUMS.txt").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
+
+          configured_base_url = os.getenv("FIELD_APP_API_BASE_URL", "").strip() or "(default platform fallback)"
+          manifest = "\n".join(
+              [
+                  f"# {os.getenv('RELEASE_CHANNEL')} artifact manifest",
+                  "",
+                  f"- version: `{os.getenv('RELEASE_VERSION')}`",
+                  f"- channel: `{os.getenv('RELEASE_CHANNEL')}`",
+                  f"- commit: `{os.getenv('GITHUB_SHA')}`",
+                  f"- ref: `{os.getenv('GITHUB_REF')}`",
+                  f"- smoke runbook: `{os.getenv('SMOKE_RUNBOOK')}`",
+                  f"- Flutter FIELD_APP_API_BASE_URL: `{configured_base_url}`",
+                  "- auth note: keep `LANGUAGE_GATEWAY_AUTH_TOKEN` unset for packaged-app smoke tests that need write controls",
+                  "",
+                  "## Files",
+                  *artifact_lines,
+              ]
+          )
+          (root / "manifest.md").write_text(manifest + "\n", encoding="utf-8")
+          PY
+      - uses: actions/upload-artifact@v4.6.2
+        with:
+          name: ${{ needs.release-metadata.outputs.channel }}-manifest
+          path: |
+            release-artifacts/manifest.md
+            release-artifacts/SHA256SUMS.txt
 
   publish-release:
     if: startsWith(github.ref, 'refs/tags/')
@@ -253,6 +388,7 @@ jobs:
         flutter-ios,
         flutter-macos,
         flutter-windows,
+        release-manifest,
       ]
     runs-on: ubuntu-latest
     steps:
