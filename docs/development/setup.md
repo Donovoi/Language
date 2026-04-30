@@ -33,11 +33,18 @@ make check
 ## Contract lock
 
 Pushes and pull requests now run `.github/workflows/contract-lock.yml`, which compares `proto/session.proto` against:
-- the gateway Pydantic models in `services/gateway/app/models.py`
-- the Flutter JSON models in `apps/field_app_flutter/lib/models/`
+- the generated gateway contract module in `services/gateway/app/generated/session_contract.py`
+- the generated Flutter contract module in `apps/field_app_flutter/lib/generated/session_contract.dart`
+- the gateway Pydantic model field shapes in `services/gateway/app/models.py`
 - the documented overlap subset in `crates/audio_core`
 
-If you change a shared field or enum, update the proto and the hand-authored manifests in the same change so the workflow stays green.
+If you change a shared field or enum in `proto/session.proto`, refresh the generated artifacts before you run checks:
+
+```bash
+make generate-contract-bindings
+```
+
+The repository validation now includes `contract-bindings-check`, so `make check` will fail if the generated Python and Flutter contract files are stale.
 
 ## Local smoke check
 
@@ -94,6 +101,7 @@ That runbook keeps the automated gateway checks separate from the manual UI veri
 - `apps/field_app_flutter` shared client shell
 - `crates/audio_core` shared realtime primitives
 - `crates/focus_engine` speaker priority logic
+- `crates/session_proto` generated Rust protobuf transport layer
 - `services/gateway` Python API gateway
 
 ## Notes

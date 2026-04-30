@@ -15,6 +15,7 @@ This pass delivers a production-style starter template that lets contributors va
 - `apps/field_app_flutter` Flutter field console
 - `crates/audio_core` typed Rust domain model for sessions and speakers
 - `crates/focus_engine` Rust prioritization policy and ranking helpers
+- `crates/session_proto` generated Rust protobuf bindings and transport/domain conversion helpers
 - `services/gateway` FastAPI mock gateway and session API
 - `proto` shared protobuf contracts
 - `docs` architecture, API, testing, and development notes
@@ -77,26 +78,28 @@ The repository now provides:
 
 - typed Rust session and speaker primitives with prioritization tests
 - Rust `focus_engine` as the documented source of truth for mode-aware ranking, with shared parity vectors that keep the Python gateway mirror honest
+- proto-derived generated contract artifacts for the gateway and Flutter model layers via `scripts/generate_contract_bindings.py`
+- a generated Rust transport crate in `crates/session_proto` that compiles `proto/session.proto` and converts the overlapping session/speaker subset into `audio_core`
 - a FastAPI gateway with health/readiness, session, speaker, reset, speaker lock/unlock, mock-scene, live-ingest, persistence, and persistent SSE endpoints
+- a configurable LibreTranslate-compatible gateway adapter for real translated captions when provider credentials are available
 - a Flutter operator shell that renders speaker lanes, mode changes, translated-caption fields, live SSE status, and speaker lock controls from gateway-compatible data
-- a local smoke path, repo-root `.env` config support, a gateway container recipe, and optional bearer auth for mutating API routes
+- local smoke and integration-smoke paths, repo-root `.env` config support, a gateway container recipe, optional bearer auth for mutating API routes, and internal beta release/runbook docs
 - CI workflows for Rust, Python, Flutter, and proto-backed contract-lock validation
 
 Still intentionally deferred:
 
 - live audio capture and diarization
-- translation and TTS provider integration
+- TTS provider integration and translated-audio metadata
 - Flutter-to-Rust FFI wiring beyond planning docs
-- generated bindings across every runtime
+- deeper Rust runtime reuse beyond the new transport crate
 - production-grade auth, observability, and deployment hardening
 
 ## Near-term roadmap
 
-1. add one real translation provider adapter behind the gateway
-2. add a cross-stack demo smoke path and short internal runbook
-3. build the first internal beta release candidate and artifacts
-4. extend the contract-lock strategy into generated bindings once the runtime boundaries settle
-5. plan the next wave for audio capture, diarization, and TTS
+1. bridge the Rust prioritization authority directly into runtime call paths
+2. cut and smoke the first internal beta candidate using the release-prep path
+3. plan the next wave for audio capture, diarization, and TTS
+4. deepen auth/metrics/deployment hardening for external beta use
 
 For the detailed, time-bound execution plan, see `docs/development/smart-implementation-plan.md`.
 For the prioritization ownership record, see `docs/development/prioritization-authority.md`.

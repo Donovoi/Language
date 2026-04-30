@@ -1,60 +1,6 @@
-// Contract-lock manifest: CI compares these keys against `proto/session.proto`.
-const String kSpeakerIdJsonKey = 'speaker_id';
-const String kSpeakerDisplayNameJsonKey = 'display_name';
-const String kSpeakerLanguageCodeJsonKey = 'language_code';
-const String kSpeakerPriorityJsonKey = 'priority';
-const String kSpeakerActiveJsonKey = 'active';
-const String kSpeakerIsLockedJsonKey = 'is_locked';
-const String kSpeakerFrontFacingJsonKey = 'front_facing';
-const String kSpeakerPersistenceBonusJsonKey = 'persistence_bonus';
-const String kSpeakerLastUpdatedUnixMsJsonKey = 'last_updated_unix_ms';
-const String kSpeakerSourceCaptionJsonKey = 'source_caption';
-const String kSpeakerTranslatedCaptionJsonKey = 'translated_caption';
-const String kSpeakerTargetLanguageCodeJsonKey = 'target_language_code';
-const String kSpeakerLaneStatusJsonKey = 'lane_status';
-const String kSpeakerStatusMessageJsonKey = 'status_message';
+import '../generated/session_contract.dart';
 
-const List<String> kSpeakerContractFields = <String>[
-  kSpeakerIdJsonKey,
-  kSpeakerDisplayNameJsonKey,
-  kSpeakerLanguageCodeJsonKey,
-  kSpeakerPriorityJsonKey,
-  kSpeakerActiveJsonKey,
-  kSpeakerIsLockedJsonKey,
-  kSpeakerFrontFacingJsonKey,
-  kSpeakerPersistenceBonusJsonKey,
-  kSpeakerLastUpdatedUnixMsJsonKey,
-  kSpeakerSourceCaptionJsonKey,
-  kSpeakerTranslatedCaptionJsonKey,
-  kSpeakerTargetLanguageCodeJsonKey,
-  kSpeakerLaneStatusJsonKey,
-  kSpeakerStatusMessageJsonKey,
-];
-
-enum TranslationLaneStatus {
-  unspecified('LANE_STATUS_UNSPECIFIED', 'UNSPECIFIED', 'Pending'),
-  idle('LANE_STATUS_IDLE', 'IDLE', 'Idle'),
-  listening('LANE_STATUS_LISTENING', 'LISTENING', 'Listening'),
-  translating('LANE_STATUS_TRANSLATING', 'TRANSLATING', 'Translating'),
-  ready('LANE_STATUS_READY', 'READY', 'Ready'),
-  error('LANE_STATUS_ERROR', 'ERROR', 'Error');
-
-  const TranslationLaneStatus(this.protoName, this.apiValue, this.label);
-
-  final String protoName;
-  final String apiValue;
-  final String label;
-}
-
-extension TranslationLaneStatusPresentation on TranslationLaneStatus {
-
-  static TranslationLaneStatus fromApiValue(String? value) {
-    return TranslationLaneStatus.values.firstWhere(
-      (status) => status.apiValue == value,
-      orElse: () => TranslationLaneStatus.unspecified,
-    );
-  }
-}
+export '../generated/session_contract.dart' show TranslationLaneStatus;
 
 class Speaker {
   const Speaker({

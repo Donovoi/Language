@@ -1,40 +1,7 @@
+import '../generated/session_contract.dart';
 import 'speaker.dart';
 
-// Contract-lock manifest: CI compares these keys against `proto/session.proto`.
-const String kSessionStateSessionIdJsonKey = 'session_id';
-const String kSessionStateModeJsonKey = 'mode';
-const String kSessionStateSpeakersJsonKey = 'speakers';
-const String kSessionStateTopSpeakerIdJsonKey = 'top_speaker_id';
-
-const List<String> kSessionStateContractFields = <String>[
-  kSessionStateSessionIdJsonKey,
-  kSessionStateModeJsonKey,
-  kSessionStateSpeakersJsonKey,
-  kSessionStateTopSpeakerIdJsonKey,
-];
-
-enum SessionMode {
-  unspecified('SESSION_MODE_UNSPECIFIED', 'UNSPECIFIED', 'Unspecified'),
-  focus('SESSION_MODE_FOCUS', 'FOCUS', 'Focus'),
-  crowd('SESSION_MODE_CROWD', 'CROWD', 'Crowd'),
-  locked('SESSION_MODE_LOCKED', 'LOCKED', 'Locked');
-
-  const SessionMode(this.protoName, this.apiValue, this.label);
-
-  final String protoName;
-  final String apiValue;
-  final String label;
-}
-
-extension SessionModePresentation on SessionMode {
-
-  static SessionMode fromApiValue(String value) {
-    return SessionMode.values.firstWhere(
-      (mode) => mode.apiValue == value,
-      orElse: () => SessionMode.unspecified,
-    );
-  }
-}
+export '../generated/session_contract.dart' show SessionMode;
 
 class SessionStateModel {
   const SessionStateModel({
