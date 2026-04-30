@@ -21,6 +21,7 @@ Before building artifacts, keep these files aligned:
 - `apps/field_app_flutter/pubspec.yaml`
 - `crates/audio_core/Cargo.toml`
 - `crates/focus_engine/Cargo.toml`
+- `crates/session_proto/Cargo.toml`
 
 Use the guidance in `docs/development/versioning.md` and the checklist in `docs/development/release-checklist.md`.
 

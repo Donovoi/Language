@@ -1,4 +1,4 @@
-.PHONY: bootstrap gateway-venv smoke-local-demo smoke-integration-demo check rust-check python-check flutter-check gateway-run flutter-run gateway-package flutter-release-android source-bundle
+.PHONY: bootstrap gateway-venv generate-contract-bindings contract-bindings-check smoke-local-demo smoke-integration-demo check rust-check python-check flutter-check gateway-run flutter-run gateway-package flutter-release-android source-bundle
 
 VERSION ?= $(shell awk '/^version:/{split($$2, parts, "[+]"); print parts[1]; exit}' apps/field_app_flutter/pubspec.yaml)
 FLUTTER ?= $(HOME)/.local/bin/flutter
@@ -11,6 +11,12 @@ INTEGRATION_SMOKE_PORT ?= 8010
 bootstrap:
 	bash scripts/bootstrap_dev.sh
 
+generate-contract-bindings:
+	python3 scripts/generate_contract_bindings.py
+
+contract-bindings-check:
+	python3 scripts/generate_contract_bindings.py --check
+
 gateway-venv:
 	cd services/gateway && python3 -m venv .venv && .venv/bin/python -m pip install --upgrade pip && .venv/bin/python -m pip install -e '.[dev]'
 
@@ -20,7 +26,7 @@ smoke-local-demo:
 smoke-integration-demo: gateway-venv
 	GATEWAY_HOST=$(GATEWAY_HOST) GATEWAY_PORT=$(INTEGRATION_SMOKE_PORT) GATEWAY_PYTHON=$(abspath $(GATEWAY_PYTHON)) bash scripts/smoke_integration_demo.sh
 
-check: rust-check python-check flutter-check
+check: contract-bindings-check rust-check python-check flutter-check
 
 rust-check:
 	cargo fmt --all --check

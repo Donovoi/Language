@@ -20,6 +20,8 @@ jobs:
       - uses: actions/setup-python@v6.2.0
         with:
           python-version: '3.12'
+            - name: Verify generated contract bindings are current
+                run: python scripts/generate_contract_bindings.py --check
       - name: Validate proto-backed contract manifests
         run: |
           python - <<'PY'
@@ -69,18 +71,12 @@ jobs:
               return False
 
 
-          def parse_python_models(
+          def parse_python_generated(
               path: Path,
-          ) -> tuple[
-              dict[str, object],
-              dict[str, object],
-              dict[str, dict[str, str]],
-              dict[str, list[str]],
-          ]:
+          ) -> tuple[dict[str, object], dict[str, object], dict[str, dict[str, str]]]:
               tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
               assignments: dict[str, object] = {}
               enum_values: dict[str, dict[str, str]] = {}
-              model_fields: dict[str, list[str]] = {}
 
               for node in tree.body:
                   if isinstance(node, ast.Assign):
@@ -101,6 +97,18 @@ jobs:
                           members[child.targets[0].id] = ast.literal_eval(child.value)
                       enum_values[node.name] = members
 
+              return (
+                  assignments["CONTRACT_LOCKED_PROTO_ENUMS"],
+                  assignments["CONTRACT_LOCKED_PROTO_MODELS"],
+                  enum_values,
+              )
+
+
+          def parse_python_model_fields(path: Path) -> dict[str, list[str]]:
+              tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+              model_fields: dict[str, list[str]] = {}
+
+              for node in tree.body:
                   if isinstance(node, ast.ClassDef) and class_has_base(node, "BaseModel"):
                       fields: list[str] = []
                       for child in node.body:
@@ -110,12 +118,7 @@ jobs:
                               fields.append(child.target.id)
                       model_fields[node.name] = fields
 
-              return (
-                  assignments["CONTRACT_LOCKED_PROTO_ENUMS"],
-                  assignments["CONTRACT_LOCKED_PROTO_MODELS"],
-                  enum_values,
-                  model_fields,
-              )
+              return model_fields
 
 
           def parse_dart_file(
@@ -208,19 +211,12 @@ jobs:
               python_contract_enums,
               python_contract_models,
               python_enum_values,
-              python_model_fields,
-          ) = parse_python_models(ROOT / "services/gateway/app/models.py")
+          ) = parse_python_generated(ROOT / "services/gateway/app/generated/session_contract.py")
+          python_model_fields = parse_python_model_fields(ROOT / "services/gateway/app/models.py")
 
-          dart_lists: dict[str, list[str]] = {}
-          dart_enums: dict[str, dict[str, dict[str, str]]] = {}
-          for dart_path in (
-              ROOT / "apps/field_app_flutter/lib/models/speaker.dart",
-              ROOT / "apps/field_app_flutter/lib/models/session_state.dart",
-              ROOT / "apps/field_app_flutter/lib/models/session_stream_event.dart",
-          ):
-              lists, enums = parse_dart_file(dart_path)
-              dart_lists.update(lists)
-              dart_enums.update(enums)
+          dart_lists, dart_enums = parse_dart_file(
+              ROOT / "apps/field_app_flutter/lib/generated/session_contract.dart"
+          )
 
           for enum_name, manifest in python_contract_enums.items():
               proto_enum_name = manifest["proto_enum"]

@@ -1,61 +1,8 @@
+import '../generated/session_contract.dart';
 import 'session_state.dart';
 import 'speaker.dart';
 
-// Contract-lock manifest: CI compares these keys against `proto/session.proto`.
-const String kSpeakerEventSpeakerIdJsonKey = 'speaker_id';
-const String kSpeakerEventPriorityDeltaJsonKey = 'priority_delta';
-const String kSpeakerEventActiveJsonKey = 'active';
-const String kSpeakerEventIsLockedJsonKey = 'is_locked';
-const String kSpeakerEventObservedUnixMsJsonKey = 'observed_unix_ms';
-const String kSpeakerEventSourceCaptionJsonKey = 'source_caption';
-const String kSpeakerEventTranslatedCaptionJsonKey = 'translated_caption';
-const String kSpeakerEventTargetLanguageCodeJsonKey = 'target_language_code';
-const String kSpeakerEventLaneStatusJsonKey = 'lane_status';
-const String kSpeakerEventStatusMessageJsonKey = 'status_message';
-
-const List<String> kSpeakerEventContractFields = <String>[
-  kSpeakerEventSpeakerIdJsonKey,
-  kSpeakerEventPriorityDeltaJsonKey,
-  kSpeakerEventActiveJsonKey,
-  kSpeakerEventIsLockedJsonKey,
-  kSpeakerEventObservedUnixMsJsonKey,
-  kSpeakerEventSourceCaptionJsonKey,
-  kSpeakerEventTranslatedCaptionJsonKey,
-  kSpeakerEventTargetLanguageCodeJsonKey,
-  kSpeakerEventLaneStatusJsonKey,
-  kSpeakerEventStatusMessageJsonKey,
-];
-
-const String kSessionStreamEventEventJsonKey = 'event';
-const String kSessionStreamEventSessionJsonKey = 'session';
-const String kSessionStreamEventSpeakerEventJsonKey = 'speaker_event';
-
-const List<String> kSessionStreamEventContractFields = <String>[
-  kSessionStreamEventEventJsonKey,
-  kSessionStreamEventSessionJsonKey,
-  kSessionStreamEventSpeakerEventJsonKey,
-];
-
-enum SessionStreamEventType {
-  unknown('STREAM_EVENT_TYPE_UNSPECIFIED', 'unknown'),
-  sessionSnapshot('STREAM_EVENT_TYPE_SESSION_SNAPSHOT', 'session.snapshot'),
-  speakerUpdate('STREAM_EVENT_TYPE_SPEAKER_UPDATE', 'speaker.update');
-
-  const SessionStreamEventType(this.protoName, this.apiValue);
-
-  final String protoName;
-  final String apiValue;
-}
-
-extension SessionStreamEventTypePresentation on SessionStreamEventType {
-
-  static SessionStreamEventType fromApiValue(String? value) {
-    return SessionStreamEventType.values.firstWhere(
-      (eventType) => eventType.apiValue == value,
-      orElse: () => SessionStreamEventType.unknown,
-    );
-  }
-}
+export '../generated/session_contract.dart' show SessionStreamEventType;
 
 class SpeakerEventModel {
   const SpeakerEventModel({

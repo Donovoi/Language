@@ -1,6 +1,6 @@
 # SMART Implementation Plan
 
-_Last reviewed: 2026-04-29_
+_Last reviewed: 2026-05-01_
 
 This plan translates the current repository state into a finish roadmap with specific, measurable,
 achievable, realistic, and time-bound tasks.
@@ -22,19 +22,21 @@ As of 2026-04-29, the repository already supports a **runnable local mock demo**
 - Rust domain model and prioritization crates compile and test cleanly
 - Rust `focus_engine` is the documented source of truth for prioritization, with parity checks against the gateway
 - `proto/session.proto` is CI-locked against the gateway, Flutter, and the overlapping Rust subset
+- the gateway and Flutter now consume generated proto-derived contract artifacts instead of hand-maintained enum/key manifests
+- Rust now has a generated transport crate (`crates/session_proto`) that compiles `proto/session.proto` and converts the overlapping session/speaker subset into `audio_core`
 - Python gateway lint/tests pass
 - Flutter analyze/tests pass
 - Local SDK/bootstrap flow is automated by `scripts/bootstrap_dev.sh`
 - Gateway config, minimal auth, structured request logging, and SQLite session recovery are all in place
+- a configurable LibreTranslate-compatible gateway adapter can provide real translated captions without Flutter client changes
+- cross-stack integration smoke coverage and an internal beta runbook are in place
+- release prep now covers internal-beta packaging, manifest/checksum output, and smoke instructions
 
 ### What is still missing to "finish the work"
 
 The system is still missing several capabilities needed for a realistic, durable, releasable app:
 
-- one real provider-backed translation path (today all translated captions are simulated)
-- cross-stack integration smoke coverage and a demo runbook that prove Flutter, gateway, SSE, persistence, and live ingest work together
-- internal beta release packaging and changelog/runbook updates
-- full generated shared-contract consumption across every runtime (`proto/session.proto` is CI-locked, but bindings are still hand-authored)
+- deeper generated/shared-contract runtime use across every runtime (Rust transport bindings now exist, but direct bridge use and fuller runtime migration are still pending)
 - direct Rust reuse from Python/Flutter runtime paths (the current Python mirror is parity-tested, but not bridged)
 - real audio capture, diarization, and TTS for a true field-ready workflow
 - production-grade auth/roles, metrics, and deployment hardening beyond the current minimal local/beta layer
@@ -105,7 +107,7 @@ The repo is already close; this task is mainly about removing ambiguity and codi
 ### Task 2 — Lock down the shared contract strategy
 **Target date:** 2026-05-05
 
-**Status (2026-04-29):** Implemented with a proto-anchored contract-lock strategy. Full multi-language codegen is still deferred, but CI now validates the gateway models, Flutter models, and the overlapping Rust `audio_core` subset against `proto/session.proto`.
+**Status (2026-05-01):** Implemented in three slices: first with a proto-anchored contract-lock strategy, then with generated Python/Dart contract artifacts that feed the active gateway and Flutter model layers, and now with a Rust transport crate (`crates/session_proto`) that compiles the proto contract and converts the overlapping session/speaker subset into `audio_core`.
 
 **Specific**
 - Decide whether `proto/session.proto` becomes the real source of truth or whether the project will
@@ -291,6 +293,8 @@ This is enough hardening for an internal or limited beta without requiring a ful
 ### Task 9 — Ship one real translation adapter
 **Target date:** 2026-05-06
 
+**Status (2026-04-29):** Implemented with a configurable LibreTranslate-compatible adapter in the gateway.
+
 **Specific**
 - Select one translation provider and add a gateway adapter for text-in/text-out translation.
 - Wire the adapter into the existing session/speaker path so live ingest or manual speaker updates can produce real translated captions.
@@ -317,6 +321,9 @@ Text translation is the smallest real-provider step and unlocks a meaningful pro
 ### Task 10 — Add cross-stack integration smoke coverage
 **Target date:** 2026-05-09
 
+**Status (2026-04-29):** Implemented via `scripts/smoke_integration_demo.sh`, `make smoke-integration-demo`,
+and `docs/development/integration-smoke-runbook.md`.
+
 **Specific**
 - Add one repeatable integration-smoke path that exercises the gateway, live ingest, persistence, and Flutter client expectations together.
 - Write a short demo runbook for contributors and internal reviewers.
@@ -339,6 +346,8 @@ The platform pieces already exist; this task makes the working system demonstrab
 
 ### Task 11 — Build the first internal beta release candidate
 **Target date:** 2026-05-13
+
+**Status (2026-04-29):** Release prep implemented. The docs, changelog, and release workflow now support internal-beta candidate runs; cutting the actual candidate is the remaining operational step.
 
 **Specific**
 - Execute the release checklist against the new baseline.
@@ -365,27 +374,26 @@ By this point the repo should be beyond “starter template” and into repeatab
 
 These are important, but they should not block the next finish line:
 
-1. generated bindings from `proto/session.proto` across every runtime
-2. direct Rust reuse/bridge in Python or Flutter runtime paths
-3. audio capture and diarization integration
-4. TTS / translated-audio output and mix metadata
-5. richer operator actions (mute, batch lock, history/timeline)
-6. stronger auth/roles and multi-user coordination
-7. production-grade observability and scaling
-8. signed mobile/desktop distribution and store submission
+1. direct Rust reuse/bridge in Python or Flutter runtime paths
+2. audio capture and diarization integration
+3. TTS / translated-audio output and mix metadata
+4. richer operator actions (mute, batch lock, history/timeline)
+5. stronger auth/roles and multi-user coordination
+6. production-grade observability and scaling
+7. signed mobile/desktop distribution and store submission
 
 ## Recommended execution order
 
 If we continue immediately, the best order is:
 
-1. Task 9 — real translation adapter
-2. Task 10 — cross-stack integration smoke coverage
-3. Task 11 — internal beta release candidate
+1. bridge the Rust prioritization authority directly into runtime call paths
+2. cut and smoke an internal beta candidate using the release-prep path
+3. plan the next wave for audio capture, diarization, and TTS
 
 ## Success summary
 
 We should consider the current phase complete when:
 
-- a provider-backed translation path can drive real translated captions through the existing UI
-- a contributor can run the end-to-end demo from docs alone
+- generated/shared contract handling no longer depends on hand-maintained strings in the active gateway/Flutter paths
+- Rust authority is reused directly where it materially reduces mirrored logic
 - internal release artifacts can be built and smoke-tested without source edits

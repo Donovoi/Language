@@ -2,5 +2,6 @@
 members = [
   "crates/audio_core",
   "crates/focus_engine",
+  "crates/session_proto",
 ]
 resolver = "2"
