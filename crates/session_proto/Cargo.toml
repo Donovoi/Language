@@ -15,7 +15,10 @@ path = "src/lib.rs"
 
 [dependencies]
 audio_core = { path = "../audio_core" }
+focus_engine = { path = "../focus_engine" }
 prost = "0.13"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [build-dependencies]
 prost-build = "0.13"

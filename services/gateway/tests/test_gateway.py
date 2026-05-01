@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from app.main import create_app
 from app.models import SessionMode, SpeakerState
 from app.routes import events as events_route
+from app.services import prioritizer as prioritizer_service
 from app.services.prioritizer import build_session, score_speaker, sort_speakers
 from app.services import translation as translation_service
 
@@ -530,6 +531,137 @@ def test_prioritizer_matches_focus_engine_authority_vectors() -> None:
         assert [speaker.speaker_id for speaker in session["speakers"]] == expected_order, (
             f"session ordering drifted for {case_id}"
         )
+
+
+def test_prioritizer_can_use_rust_runtime_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LANGUAGE_GATEWAY_PRIORITIZER_BACKEND", "rust")
+    prioritizer_service._clear_runtime_bridge_caches()
+
+    captured: dict[str, object] = {}
+
+    def _fake_invoke(
+        mode: SessionMode,
+        speakers: list[SpeakerState],
+        settings: prioritizer_service.PrioritizerRuntimeSettings,
+    ) -> tuple[list[str], str | None]:
+        captured["mode"] = mode
+        captured["speaker_ids"] = [speaker.speaker_id for speaker in speakers]
+        captured["backend"] = settings.backend
+        return ["speaker-b", "speaker-a"], "speaker-b"
+
+    monkeypatch.setattr(prioritizer_service, "_invoke_rust_ranker", _fake_invoke)
+
+    speakers = [
+        SpeakerState(
+            speaker_id="speaker-a",
+            display_name="Alice",
+            language_code="en",
+            priority=0.8,
+            active=True,
+            is_locked=False,
+            front_facing=False,
+            persistence_bonus=0.0,
+            last_updated_unix_ms=1,
+        ),
+        SpeakerState(
+            speaker_id="speaker-b",
+            display_name="Bao",
+            language_code="en",
+            priority=0.6,
+            active=True,
+            is_locked=True,
+            front_facing=False,
+            persistence_bonus=0.0,
+            last_updated_unix_ms=2,
+        ),
+    ]
+
+    ordered = sort_speakers(speakers, SessionMode.LOCKED)
+
+    assert [speaker.speaker_id for speaker in ordered] == ["speaker-b", "speaker-a"]
+    assert captured == {
+        "mode": SessionMode.LOCKED,
+        "speaker_ids": ["speaker-a", "speaker-b"],
+        "backend": "rust",
+    }
+
+
+def test_prioritizer_auto_backend_falls_back_to_python_when_rust_bridge_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LANGUAGE_GATEWAY_PRIORITIZER_BACKEND", "auto")
+    prioritizer_service._clear_runtime_bridge_caches()
+
+    def _raise_runtime_error(
+        mode: SessionMode,
+        speakers: list[SpeakerState],
+        settings: prioritizer_service.PrioritizerRuntimeSettings,
+    ) -> tuple[list[str], str | None]:
+        raise prioritizer_service.PrioritizerRuntimeUnavailableError("session_ranker missing")
+
+    monkeypatch.setattr(prioritizer_service, "_invoke_rust_ranker", _raise_runtime_error)
+
+    speakers = [
+        SpeakerState(
+            speaker_id="speaker-a",
+            display_name="Alice",
+            language_code="en",
+            priority=0.8,
+            active=True,
+            is_locked=False,
+            front_facing=False,
+            persistence_bonus=0.0,
+            last_updated_unix_ms=1,
+        ),
+        SpeakerState(
+            speaker_id="speaker-b",
+            display_name="Bao",
+            language_code="en",
+            priority=0.6,
+            active=True,
+            is_locked=True,
+            front_facing=False,
+            persistence_bonus=0.0,
+            last_updated_unix_ms=2,
+        ),
+    ]
+
+    ordered = sort_speakers(speakers, SessionMode.LOCKED)
+
+    assert [speaker.speaker_id for speaker in ordered] == ["speaker-b", "speaker-a"]
+
+
+def test_prioritizer_auto_backend_does_not_hide_rust_protocol_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LANGUAGE_GATEWAY_PRIORITIZER_BACKEND", "auto")
+    prioritizer_service._clear_runtime_bridge_caches()
+
+    def _raise_protocol_error(
+        mode: SessionMode,
+        speakers: list[SpeakerState],
+        settings: prioritizer_service.PrioritizerRuntimeSettings,
+    ) -> tuple[list[str], str | None]:
+        raise prioritizer_service.PrioritizerRuntimeProtocolError("invalid bridge payload")
+
+    monkeypatch.setattr(prioritizer_service, "_invoke_rust_ranker", _raise_protocol_error)
+
+    speakers = [
+        SpeakerState(
+            speaker_id="speaker-a",
+            display_name="Alice",
+            language_code="en",
+            priority=0.8,
+            active=True,
+            is_locked=False,
+            front_facing=False,
+            persistence_bonus=0.0,
+            last_updated_unix_ms=1,
+        )
+    ]
+
+    with pytest.raises(prioritizer_service.PrioritizerRuntimeProtocolError):
+        sort_speakers(speakers, SessionMode.FOCUS)
 
 
 def test_post_speakers_rejects_unknown_fields_without_mutating_store(client: TestClient) -> None:

@@ -24,6 +24,7 @@ As of 2026-04-29, the repository already supports a **runnable local mock demo**
 - `proto/session.proto` is CI-locked against the gateway, Flutter, and the overlapping Rust subset
 - the gateway and Flutter now consume generated proto-derived contract artifacts instead of hand-maintained enum/key manifests
 - Rust now has a generated transport crate (`crates/session_proto`) that compiles `proto/session.proto` and converts the overlapping session/speaker subset into `audio_core`
+- the gateway runtime can now call the Rust prioritization authority directly through the `session_ranker` bridge, with the Python mirror retained as a tested fallback
 - Python gateway lint/tests pass
 - Flutter analyze/tests pass
 - Local SDK/bootstrap flow is automated by `scripts/bootstrap_dev.sh`
@@ -36,8 +37,8 @@ As of 2026-04-29, the repository already supports a **runnable local mock demo**
 
 The system is still missing several capabilities needed for a realistic, durable, releasable app:
 
-- deeper generated/shared-contract runtime use across every runtime (Rust transport bindings now exist, but direct bridge use and fuller runtime migration are still pending)
-- direct Rust reuse from Python/Flutter runtime paths (the current Python mirror is parity-tested, but not bridged)
+- deeper generated/shared-contract runtime use across every runtime (Rust transport bindings now exist, the gateway now reuses Rust prioritization at runtime, and fuller runtime migration is still pending)
+- broader direct Rust reuse from Python/Flutter runtime paths beyond prioritization
 - real audio capture, diarization, and TTS for a true field-ready workflow
 - production-grade auth/roles, metrics, and deployment hardening beyond the current minimal local/beta layer
 
@@ -134,10 +135,12 @@ This is a 3–4 day alignment task, not a full feature build, and it removes rec
 ### Task 3 — Unify prioritization authority
 **Target date:** 2026-05-07
 
-**Status (2026-04-29):** Implemented. Rust `focus_engine` now owns the mode-aware
-policy table, the Python gateway mirrors it, and both runtimes load shared parity
-vectors from `crates/focus_engine/testdata/prioritization_vectors.tsv` so drift
-fails loudly.
+**Status (2026-05-01):** Implemented. Rust `focus_engine` owns the mode-aware
+policy table, the gateway can now call that authority directly through the
+`session_ranker` runtime bridge, and the Python gateway mirror remains in place
+as the documented fallback. Shared parity vectors in
+`crates/focus_engine/testdata/prioritization_vectors.tsv` still make drift fail
+loudly.
 
 **Specific**
 - Pick one authoritative prioritization implementation: Rust or Python.

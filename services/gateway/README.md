@@ -17,6 +17,9 @@ That keeps the existing source defaults intact while making host/port changes an
 | `LANGUAGE_GATEWAY_HOST` | `127.0.0.1` | `python -m app.main`, container entrypoint | Override to `0.0.0.0` for container runs. |
 | `LANGUAGE_GATEWAY_PORT` | `8000` | `python -m app.main`, container entrypoint | Change the bind port without editing code. |
 | `LANGUAGE_GATEWAY_LOG_LEVEL` | `info` | `python -m app.main`, container entrypoint | Passed straight through to Uvicorn. |
+| `LANGUAGE_GATEWAY_PRIORITIZER_BACKEND` | `auto` | runtime prioritizer bridge | `auto` prefers the Rust `session_ranker` bridge and falls back to Python if the native runner is unavailable. Set to `rust` to require the native path, or `python` to force the mirror. |
+| `LANGUAGE_GATEWAY_RUST_RANKER_BIN` | unset | runtime prioritizer bridge | Optional explicit path to a prebuilt `session_ranker` binary. |
+| `LANGUAGE_GATEWAY_RUST_RANKER_TIMEOUT_MS` | `4000` | runtime prioritizer bridge | Timeout for each Rust ranking request. |
 | `LANGUAGE_GATEWAY_SESSION_DB_PATH` | `services/gateway/.state/session-store.sqlite3` | `SessionStore` | Optional absolute or relative SQLite file path for local session persistence. |
 | `LANGUAGE_GATEWAY_AUTH_TOKEN` | unset | mutating gateway routes | Optional. When set, `POST`/`PUT`/`DELETE` routes require `Authorization: Bearer <token>`. Leave unset for friction-free local mock development. |
 | `LANGUAGE_GATEWAY_TRANSLATION_PROVIDER` | `disabled` | translation adapter | Set to `libretranslate` to enable real text translation. |
@@ -30,6 +33,22 @@ Edit the repo-root `.env` (copied from `.env.example`) when you want explicit lo
 
 The gateway persists the current session id, mode, ranked speaker list, and speaker lock state in SQLite.
 Delete the configured database file when you want a completely fresh local state.
+
+## Prioritization runtime behavior
+
+The gateway now prefers the Rust prioritization authority in the live request path instead of relying
+solely on the Python mirror.
+
+- `LANGUAGE_GATEWAY_PRIORITIZER_BACKEND=auto` looks for a built `session_ranker` binary under the repo `target/`
+	directory, and if it is missing, tries a one-time `cargo build -p session_proto --bin session_ranker`
+	before falling back to the Python mirror
+- `LANGUAGE_GATEWAY_PRIORITIZER_BACKEND=rust` requires the native bridge and raises an error if the runner
+	cannot be resolved or executed
+- `LANGUAGE_GATEWAY_PRIORITIZER_BACKEND=python` keeps the previous pure-Python mirror path for debugging
+	or extremely constrained environments
+
+For predictable startup on shared environments, you can prebuild the native runner and point the gateway
+at it with `LANGUAGE_GATEWAY_RUST_RANKER_BIN`.
 
 ## Translation adapter behavior
 
