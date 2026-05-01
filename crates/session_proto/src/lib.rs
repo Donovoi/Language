@@ -55,10 +55,10 @@ pub struct RankedSpeakerOrder {
 impl From<DomainSessionMode> for language::session::v1::SessionMode {
     fn from(value: DomainSessionMode) -> Self {
         match value {
-            DomainSessionMode::Unspecified => Self::SessionModeUnspecified,
-            DomainSessionMode::Focus => Self::SessionModeFocus,
-            DomainSessionMode::Crowd => Self::SessionModeCrowd,
-            DomainSessionMode::Locked => Self::SessionModeLocked,
+            DomainSessionMode::Unspecified => Self::Unspecified,
+            DomainSessionMode::Focus => Self::Focus,
+            DomainSessionMode::Crowd => Self::Crowd,
+            DomainSessionMode::Locked => Self::Locked,
         }
     }
 }
@@ -68,26 +68,22 @@ impl TryFrom<language::session::v1::SessionMode> for DomainSessionMode {
 
     fn try_from(value: language::session::v1::SessionMode) -> Result<Self, Self::Error> {
         Ok(match value {
-            language::session::v1::SessionMode::SessionModeUnspecified => Self::Unspecified,
-            language::session::v1::SessionMode::SessionModeFocus => Self::Focus,
-            language::session::v1::SessionMode::SessionModeCrowd => Self::Crowd,
-            language::session::v1::SessionMode::SessionModeLocked => Self::Locked,
+            language::session::v1::SessionMode::Unspecified => Self::Unspecified,
+            language::session::v1::SessionMode::Focus => Self::Focus,
+            language::session::v1::SessionMode::Crowd => Self::Crowd,
+            language::session::v1::SessionMode::Locked => Self::Locked,
         })
     }
 }
 
-impl TryFrom<i32> for DomainSessionMode {
-    type Error = ProtoConversionError;
-
-    fn try_from(value: i32) -> Result<Self, Self::Error> {
-        let mode = language::session::v1::SessionMode::try_from(value).map_err(|_| {
-            ProtoConversionError::InvalidEnumValue {
-                field: "mode",
-                value,
-            }
-        })?;
-        Self::try_from(mode)
-    }
+fn domain_session_mode_from_i32(value: i32) -> Result<DomainSessionMode, ProtoConversionError> {
+    let mode = language::session::v1::SessionMode::try_from(value).map_err(|_| {
+        ProtoConversionError::InvalidEnumValue {
+            field: "mode",
+            value,
+        }
+    })?;
+    DomainSessionMode::try_from(mode)
 }
 
 impl From<&SpeakerState> for language::session::v1::SpeakerState {
@@ -105,7 +101,7 @@ impl From<&SpeakerState> for language::session::v1::SpeakerState {
             source_caption: String::new(),
             translated_caption: String::new(),
             target_language_code: String::new(),
-            lane_status: language::session::v1::LaneStatus::LaneStatusUnspecified as i32,
+            lane_status: language::session::v1::LaneStatus::Unspecified as i32,
             status_message: String::new(),
         }
     }
@@ -134,7 +130,11 @@ impl From<&SessionState> for language::session::v1::SessionState {
         Self {
             session_id: value.session_id.as_str().to_string(),
             mode: language::session::v1::SessionMode::from(value.mode) as i32,
-            speakers: value.speakers.iter().map(language::session::v1::SpeakerState::from).collect(),
+            speakers: value
+                .speakers
+                .iter()
+                .map(language::session::v1::SpeakerState::from)
+                .collect(),
             top_speaker_id: value
                 .top_speaker()
                 .map(|speaker| speaker.speaker_id.as_str().to_string())
@@ -155,7 +155,7 @@ impl TryFrom<language::session::v1::SessionState> for SessionState {
 
         Ok(SessionState::new(
             SessionId::new(value.session_id)?,
-            DomainSessionMode::try_from(value.mode)?,
+            domain_session_mode_from_i32(value.mode)?,
             speakers,
         ))
     }
@@ -186,15 +186,15 @@ pub fn rank_proto_speakers(
 pub fn rank_proto_session(
     session: &language::session::v1::SessionState,
 ) -> Result<RankedSpeakerOrder, ProtoConversionError> {
-    let mode = DomainSessionMode::try_from(session.mode)?;
+    let mode = domain_session_mode_from_i32(session.mode)?;
     rank_proto_speakers(mode, &session.speakers)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        language::session::v1, rank_proto_session, DomainSessionMode, ProtoConversionError,
-        SessionState, SpeakerState,
+        domain_session_mode_from_i32, language::session::v1, rank_proto_session, DomainSessionMode,
+        ProtoConversionError, SessionState, SpeakerState,
     };
     use audio_core::{LanguageCode, PriorityScore, SessionId, SpeakerId};
 
@@ -217,7 +217,7 @@ mod tests {
     fn converts_domain_session_mode_to_proto() {
         assert_eq!(
             v1::SessionMode::from(DomainSessionMode::Locked),
-            v1::SessionMode::SessionModeLocked,
+            v1::SessionMode::Locked,
         );
     }
 
@@ -236,7 +236,7 @@ mod tests {
             source_caption: String::new(),
             translated_caption: String::new(),
             target_language_code: String::new(),
-            lane_status: v1::LaneStatus::LaneStatusReady as i32,
+            lane_status: v1::LaneStatus::Ready as i32,
             status_message: String::new(),
         })
         .expect("speaker conversion should succeed");
@@ -248,7 +248,7 @@ mod tests {
     #[test]
     fn rejects_unknown_session_mode_values() {
         assert_eq!(
-            DomainSessionMode::try_from(99),
+            domain_session_mode_from_i32(99),
             Err(ProtoConversionError::InvalidEnumValue {
                 field: "mode",
                 value: 99,
@@ -266,7 +266,7 @@ mod tests {
 
         let proto_session = v1::SessionState::from(&session);
         assert_eq!(proto_session.session_id, "session-1");
-        assert_eq!(proto_session.mode, v1::SessionMode::SessionModeFocus as i32);
+        assert_eq!(proto_session.mode, v1::SessionMode::Focus as i32);
         assert_eq!(proto_session.speakers.len(), 1);
         assert_eq!(proto_session.top_speaker_id, "speaker-1");
     }
@@ -275,7 +275,7 @@ mod tests {
     fn ranks_proto_session_using_focus_engine_authority() {
         let ranked = rank_proto_session(&v1::SessionState {
             session_id: String::from("session-1"),
-            mode: v1::SessionMode::SessionModeLocked as i32,
+            mode: v1::SessionMode::Locked as i32,
             speakers: vec![
                 v1::SpeakerState {
                     speaker_id: String::from("speaker-a"),
@@ -290,7 +290,7 @@ mod tests {
                     source_caption: String::new(),
                     translated_caption: String::new(),
                     target_language_code: String::new(),
-                    lane_status: v1::LaneStatus::LaneStatusReady as i32,
+                    lane_status: v1::LaneStatus::Ready as i32,
                     status_message: String::new(),
                 },
                 v1::SpeakerState {
@@ -306,7 +306,7 @@ mod tests {
                     source_caption: String::new(),
                     translated_caption: String::new(),
                     target_language_code: String::new(),
-                    lane_status: v1::LaneStatus::LaneStatusReady as i32,
+                    lane_status: v1::LaneStatus::Ready as i32,
                     status_message: String::new(),
                 },
             ],

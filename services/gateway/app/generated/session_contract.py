@@ -135,7 +135,6 @@ class SessionMode(str, Enum):
     CROWD = "CROWD"
     LOCKED = "LOCKED"
 
-
 class LaneStatus(str, Enum):
     UNSPECIFIED = "UNSPECIFIED"
     IDLE = "IDLE"
@@ -144,12 +143,10 @@ class LaneStatus(str, Enum):
     READY = "READY"
     ERROR = "ERROR"
 
-
 class StreamEventType(str, Enum):
     UNSPECIFIED = "unknown"
     SESSION_SNAPSHOT = "session.snapshot"
     SPEAKER_UPDATE = "speaker.update"
-
 
 __all__ = [
     "CONTRACT_LOCKED_PROTO_ENUMS",
