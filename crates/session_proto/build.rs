@@ -16,6 +16,9 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     prost_build::Config::new().compile_protos(&[proto_file], &[proto_root])?;
 
-    println!("cargo:rerun-if-changed={}", workspace_root.join("proto/session.proto").display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        workspace_root.join("proto/session.proto").display()
+    );
     Ok(())
 }

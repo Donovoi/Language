@@ -1,6 +1,5 @@
 import '../generated/session_contract.dart';
 import 'session_state.dart';
-import 'speaker.dart';
 
 export '../generated/session_contract.dart' show SessionStreamEventType;
 

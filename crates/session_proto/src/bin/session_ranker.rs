@@ -64,7 +64,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 source_caption: String::new(),
                 translated_caption: String::new(),
                 target_language_code: String::new(),
-                lane_status: v1::LaneStatus::LaneStatusUnspecified as i32,
+                lane_status: v1::LaneStatus::Unspecified as i32,
                 status_message: String::new(),
             })
             .collect(),
