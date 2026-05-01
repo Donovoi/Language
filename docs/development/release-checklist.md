@@ -19,6 +19,7 @@ than by inventing a second package version line.
 	- `apps/field_app_flutter/pubspec.yaml`
 	- `crates/audio_core/Cargo.toml`
 	- `crates/focus_engine/Cargo.toml`
+	- `crates/session_proto/Cargo.toml`
 - [ ] Update `CHANGELOG.md`:
 	- keep `## [Unreleased]` current
 	- refresh the `### Internal beta candidate` notes before each candidate build

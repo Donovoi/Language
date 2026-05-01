@@ -10,6 +10,7 @@ protobuf concerns down into the domain crate.
 
 - generated `language::session::v1` protobuf messages and enums via `prost`
 - conversion helpers between generated transport types and `audio_core`
+- runtime ranking helpers that feed transport-level speaker data into the authoritative Rust `focus_engine`
 - explicit conversion failures for invalid enum values or invalid domain data
 
 ## Example
@@ -44,10 +45,11 @@ assert_eq!(transport.session_id, "session-1");
 ```bash
 cargo fmt --all --check
 cargo test -p session_proto
+cargo run -p session_proto --bin session_ranker <<<'{"mode":"FOCUS","speakers":[]}'
 ```
 
 ## Deliberately out of scope
 
-This crate does not own prioritization policy, Python/Flutter bridges, or runtime networking.
-It is the Rust transport layer for the shared protobuf contract, with higher-level integration still
-owned by sibling crates or future bridge work.
+This crate does not own the prioritization policy table itself, Flutter integration, or runtime networking.
+It does now provide the thin Rust transport/runtime bridge used by the gateway to call the authoritative
+`focus_engine` ranking path without pushing protobuf concerns into `audio_core`.

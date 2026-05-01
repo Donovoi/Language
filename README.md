@@ -80,6 +80,7 @@ The repository now provides:
 - Rust `focus_engine` as the documented source of truth for mode-aware ranking, with shared parity vectors that keep the Python gateway mirror honest
 - proto-derived generated contract artifacts for the gateway and Flutter model layers via `scripts/generate_contract_bindings.py`
 - a generated Rust transport crate in `crates/session_proto` that compiles `proto/session.proto` and converts the overlapping session/speaker subset into `audio_core`
+- a direct gateway-to-Rust prioritization bridge via `crates/session_proto/src/bin/session_ranker.rs`, with `LANGUAGE_GATEWAY_PRIORITIZER_BACKEND=auto|rust|python` controlling runtime selection
 - a FastAPI gateway with health/readiness, session, speaker, reset, speaker lock/unlock, mock-scene, live-ingest, persistence, and persistent SSE endpoints
 - a configurable LibreTranslate-compatible gateway adapter for real translated captions when provider credentials are available
 - a Flutter operator shell that renders speaker lanes, mode changes, translated-caption fields, live SSE status, and speaker lock controls from gateway-compatible data
@@ -91,15 +92,14 @@ Still intentionally deferred:
 - live audio capture and diarization
 - TTS provider integration and translated-audio metadata
 - Flutter-to-Rust FFI wiring beyond planning docs
-- deeper Rust runtime reuse beyond the new transport crate
+- broader Rust runtime reuse beyond the new prioritization bridge and transport crate
 - production-grade auth, observability, and deployment hardening
 
 ## Near-term roadmap
 
-1. bridge the Rust prioritization authority directly into runtime call paths
-2. cut and smoke the first internal beta candidate using the release-prep path
-3. plan the next wave for audio capture, diarization, and TTS
-4. deepen auth/metrics/deployment hardening for external beta use
+1. cut and smoke the first internal beta candidate using the release-prep path
+2. plan the next wave for audio capture, diarization, and TTS
+3. deepen auth/metrics/deployment hardening for external beta use
 
 For the detailed, time-bound execution plan, see `docs/development/smart-implementation-plan.md`.
 For the prioritization ownership record, see `docs/development/prioritization-authority.md`.

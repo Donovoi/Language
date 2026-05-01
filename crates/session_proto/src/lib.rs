@@ -10,6 +10,7 @@ use audio_core::{
     LanguageCode, PriorityScore, SessionId, SessionMode as DomainSessionMode, SessionState,
     SpeakerId, SpeakerState, ValidationError,
 };
+use focus_engine::rank_speakers_for_mode;
 
 pub mod language {
     pub mod session {
@@ -43,6 +44,12 @@ impl From<ValidationError> for ProtoConversionError {
     fn from(value: ValidationError) -> Self {
         Self::DomainValidation(value)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RankedSpeakerOrder {
+    pub ordered_speaker_ids: Vec<String>,
+    pub top_speaker_id: Option<String>,
 }
 
 impl From<DomainSessionMode> for language::session::v1::SessionMode {
@@ -154,12 +161,42 @@ impl TryFrom<language::session::v1::SessionState> for SessionState {
     }
 }
 
+pub fn rank_proto_speakers(
+    mode: DomainSessionMode,
+    speakers: &[language::session::v1::SpeakerState],
+) -> Result<RankedSpeakerOrder, ProtoConversionError> {
+    let domain_speakers = speakers
+        .iter()
+        .cloned()
+        .map(SpeakerState::try_from)
+        .collect::<Result<Vec<_>, _>>()?;
+    let ranked = rank_speakers_for_mode(&domain_speakers, mode);
+    let ordered_speaker_ids = ranked
+        .iter()
+        .map(|speaker| speaker.speaker_id.as_str().to_string())
+        .collect::<Vec<_>>();
+    let top_speaker_id = ordered_speaker_ids.first().cloned();
+
+    Ok(RankedSpeakerOrder {
+        ordered_speaker_ids,
+        top_speaker_id,
+    })
+}
+
+pub fn rank_proto_session(
+    session: &language::session::v1::SessionState,
+) -> Result<RankedSpeakerOrder, ProtoConversionError> {
+    let mode = DomainSessionMode::try_from(session.mode)?;
+    rank_proto_speakers(mode, &session.speakers)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{language::session::v1, DomainSessionMode, ProtoConversionError, SessionState, SpeakerState};
-    use audio_core::{
-        LanguageCode, PriorityScore, SessionId, SpeakerId,
+    use super::{
+        language::session::v1, rank_proto_session, DomainSessionMode, ProtoConversionError,
+        SessionState, SpeakerState,
     };
+    use audio_core::{LanguageCode, PriorityScore, SessionId, SpeakerId};
 
     fn sample_speaker() -> SpeakerState {
         SpeakerState::new(
@@ -232,5 +269,52 @@ mod tests {
         assert_eq!(proto_session.mode, v1::SessionMode::SessionModeFocus as i32);
         assert_eq!(proto_session.speakers.len(), 1);
         assert_eq!(proto_session.top_speaker_id, "speaker-1");
+    }
+
+    #[test]
+    fn ranks_proto_session_using_focus_engine_authority() {
+        let ranked = rank_proto_session(&v1::SessionState {
+            session_id: String::from("session-1"),
+            mode: v1::SessionMode::SessionModeLocked as i32,
+            speakers: vec![
+                v1::SpeakerState {
+                    speaker_id: String::from("speaker-a"),
+                    display_name: String::from("Alice"),
+                    language_code: String::from("en"),
+                    priority: 0.6,
+                    active: true,
+                    is_locked: false,
+                    front_facing: false,
+                    persistence_bonus: 0.0,
+                    last_updated_unix_ms: 1,
+                    source_caption: String::new(),
+                    translated_caption: String::new(),
+                    target_language_code: String::new(),
+                    lane_status: v1::LaneStatus::LaneStatusReady as i32,
+                    status_message: String::new(),
+                },
+                v1::SpeakerState {
+                    speaker_id: String::from("speaker-b"),
+                    display_name: String::from("Bao"),
+                    language_code: String::from("en"),
+                    priority: 0.4,
+                    active: true,
+                    is_locked: true,
+                    front_facing: false,
+                    persistence_bonus: 0.0,
+                    last_updated_unix_ms: 2,
+                    source_caption: String::new(),
+                    translated_caption: String::new(),
+                    target_language_code: String::new(),
+                    lane_status: v1::LaneStatus::LaneStatusReady as i32,
+                    status_message: String::new(),
+                },
+            ],
+            top_speaker_id: String::new(),
+        })
+        .expect("proto ranking should succeed");
+
+        assert_eq!(ranked.top_speaker_id.as_deref(), Some("speaker-b"));
+        assert_eq!(ranked.ordered_speaker_ids, vec!["speaker-b", "speaker-a"]);
     }
 }

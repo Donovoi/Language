@@ -56,6 +56,7 @@ jobs:
               "flutter": extract(r"^version:\s*([0-9]+\.[0-9]+\.[0-9]+)\+[0-9]+$", "apps/field_app_flutter/pubspec.yaml"),
               "audio_core": extract(r'^version = "([^"]+)"$', "crates/audio_core/Cargo.toml"),
               "focus_engine": extract(r'^version = "([^"]+)"$', "crates/focus_engine/Cargo.toml"),
+              "session_proto": extract(r'^version = "([^"]+)"$', "crates/session_proto/Cargo.toml"),
               "changelog": extract(r"^## \[([0-9]+\.[0-9]+\.[0-9]+)\]", "CHANGELOG.md"),
           }
 

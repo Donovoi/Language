@@ -1,6 +1,6 @@
 # Prioritization authority
 
-_Last reviewed: 2026-04-29_
+_Last reviewed: 2026-05-01_
 
 ## Decision
 
@@ -9,9 +9,11 @@ _Last reviewed: 2026-04-29_
 - `ModeFocusPolicy::for_mode(SessionMode)` defines the shipped `FOCUS`, `CROWD`,
   `LOCKED`, and `UNSPECIFIED` scoring behavior.
 - Deterministic ties break by `speaker_id` across runtimes.
-- Python `services/gateway/app/services/prioritizer.py` remains in place only as
-  a derived gateway mirror until a direct Rust bridge is worth the added build
-  and runtime complexity.
+- The gateway runtime now prefers a direct Rust bridge via the `session_ranker`
+  binary in `crates/session_proto/src/bin/session_ranker.rs`.
+- Python `services/gateway/app/services/prioritizer.py` remains in place as the
+  derived mirror and fallback path for environments where the native bridge is
+  intentionally disabled or temporarily unavailable.
 
 ## Drift guard
 
@@ -29,6 +31,7 @@ This means policy drift fails loudly in both runtimes:
 - change the Rust mode table without updating the fixture and Rust tests fail
 - change the fixture without updating the Python mirror and gateway tests fail
 - change the Python mirror without updating the Rust authority and gateway tests fail
+- change the Rust runtime bridge contract and the gateway runtime tests fail
 
 ## Contributor workflow
 
@@ -36,8 +39,9 @@ When prioritization behavior changes:
 
 1. update `ModeFocusPolicy::for_mode(SessionMode)` in `crates/focus_engine/src/lib.rs`
 2. update `crates/focus_engine/testdata/prioritization_vectors.tsv`
-3. align `services/gateway/app/services/prioritizer.py`
+3. keep `services/gateway/app/services/prioritizer.py` aligned as the documented fallback mirror
 4. run focused validation in both runtimes
+5. if the runtime bridge payload changes, update `crates/session_proto/src/bin/session_ranker.rs`
 
 Recommended validation:
 
@@ -46,7 +50,7 @@ Recommended validation:
 
 ## Why this is the current shape
 
-Task 3 needed one clear owner for prioritization behavior without forcing a full
+Task 3 first established one clear owner for prioritization behavior without forcing a full
 Rust↔Python bridge in the same pass.
-This approach keeps the existing Python gateway architecture intact while making
-the Rust policy table the documented authority and making drift visible immediately.
+The follow-up runtime bridge now lets the gateway use the Rust authority directly while keeping
+the Python path available as a small, parity-tested fallback instead of the primary implementation.
