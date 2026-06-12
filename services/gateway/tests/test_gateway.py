@@ -11,8 +11,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
-from app.models import SessionMode, SpeakerState
+from app.models import (
+    DiarizationPredictionInput,
+    SessionMode,
+    SourceSuppressionMode,
+    SpeakerState,
+)
 from app.routes import events as events_route
+from app.services.diarization import speaker_states_from_diarization
 from app.services import prioritizer as prioritizer_service
 from app.services.prioritizer import build_session, score_speaker, sort_speakers
 from app.services import translation as translation_service
@@ -248,6 +254,29 @@ def test_read_endpoints_remain_auth_free_when_token_is_configured(
     assert ready_response.status_code == 200
 
 
+def test_positive_suppression_requires_explicit_mode() -> None:
+    base_payload = {
+        "speaker_id": "speaker-a",
+        "display_name": "Alice",
+        "language_code": "en",
+        "priority": 0.9,
+        "active": True,
+        "last_updated_unix_ms": 1,
+        "original_voice_suppression_db": 6.0,
+    }
+
+    with pytest.raises(ValueError, match="source_suppression_mode"):
+        SpeakerState(**base_payload)
+
+    speaker = SpeakerState(
+        **{
+            **base_payload,
+            "source_suppression_mode": SourceSuppressionMode.OVERLAY_DUCKING,
+        }
+    )
+    assert speaker.source_suppression_mode == SourceSuppressionMode.OVERLAY_DUCKING
+
+
 @pytest.mark.parametrize(
     ("method", "path", "payload"),
     [
@@ -258,6 +287,26 @@ def test_read_endpoints_remain_auth_free_when_token_is_configured(
         ("delete", "/v1/speakers/speaker-alice/lock", None),
         ("post", "/v1/mock/live-ingest?interval_ms=1", None),
         ("delete", "/v1/mock/live-ingest", None),
+        (
+            "post",
+            "/v1/mock/diarization",
+            {
+                "schema_version": 1,
+                "fixture_id": "auth-smoke",
+                "adapter_id": "auth-test",
+                "segments": [],
+            },
+        ),
+        (
+            "post",
+            "/v1/ingest/diarization",
+            {
+                "schema_version": 1,
+                "fixture_id": "auth-smoke",
+                "adapter_id": "auth-test",
+                "segments": [],
+            },
+        ),
     ],
 )
 def test_mutating_endpoints_require_bearer_token_when_configured(
@@ -376,6 +425,13 @@ def test_event_stream_broadcasts_lock_updates() -> None:
     assert speaker_event["data"]["speaker_event"]["speaker_id"] == "speaker-alice"
     assert speaker_event["data"]["speaker_event"]["is_locked"] is True
     assert speaker_event["data"]["speaker_event"]["status_message"] == "Pinned by operator."
+    assert speaker_event["data"]["speaker_event"]["input_level_dbfs"] == -23.0
+    assert speaker_event["data"]["speaker_event"]["output_level_dbfs"] == -23.0
+    assert speaker_event["data"]["speaker_event"]["detected_language_code"] == "en"
+    assert speaker_event["data"]["speaker_event"]["voice_clone_status"] == "READY"
+    assert speaker_event["data"]["speaker_event"]["translated_audio_stream_id"] == "mix-demo-alice-en"
+    assert speaker_event["data"]["speaker_event"]["original_voice_suppression_db"] == 6.0
+    assert speaker_event["data"]["speaker_event"]["source_suppression_mode"] == "OVERLAY_DUCKING"
 
 
 def test_event_stream_emits_keep_alive_comments_before_next_event(
@@ -505,6 +561,129 @@ def test_post_speakers_returns_priority_order(client: TestClient) -> None:
     assert payload["speakers"][0]["translated_caption"] == "Can I share the next question now?"
     assert payload["speakers"][0]["target_language_code"] == "en"
     assert payload["speakers"][0]["lane_status"] == "READY"
+
+
+def test_diarization_prediction_maps_to_speaker_lanes() -> None:
+    prediction = DiarizationPredictionInput.model_validate(
+        {
+            "schema_version": 1,
+            "fixture_id": "unit-overlap",
+            "adapter_id": "unit-diarizer",
+            "segments": [
+                {
+                    "speaker_id": "model-speaker-a",
+                    "start_s": 0.2,
+                    "end_s": 2.0,
+                    "confidence": 0.90,
+                },
+                {
+                    "speaker_id": "model-speaker-b",
+                    "start_s": 1.2,
+                    "end_s": 3.1,
+                    "confidence": 0.80,
+                },
+            ],
+        }
+    )
+
+    speakers = speaker_states_from_diarization(prediction, observed_end_s=3.1)
+
+    assert [speaker.speaker_id for speaker in speakers] == [
+        "model-speaker-a",
+        "model-speaker-b",
+    ]
+    assert speakers[0].active is False
+    assert speakers[0].lane_status == "IDLE"
+    assert speakers[0].overlapping_speaker_ids == ["model-speaker-b"]
+    assert speakers[0].language_code == "und"
+    assert speakers[0].detected_language_code is None
+    assert speakers[1].active is True
+    assert speakers[1].lane_status == "LISTENING"
+    assert speakers[1].overlapping_speaker_ids == ["model-speaker-a"]
+    assert "unit-diarizer" in str(speakers[1].status_message)
+
+
+def test_mock_diarization_endpoint_updates_gateway_speaker_lanes(client: TestClient) -> None:
+    response = client.post(
+        "/v1/mock/diarization?mode=CROWD&observed_end_s=3.1",
+        json={
+            "schema_version": 1,
+            "fixture_id": "gateway-overlap",
+            "adapter_id": "pyannote-dev",
+            "segments": [
+                {
+                    "speaker_id": "SPEAKER_00",
+                    "start_s": 0.2,
+                    "end_s": 2.0,
+                },
+                {
+                    "speaker_id": "SPEAKER_01",
+                    "start_s": 1.2,
+                    "end_s": 3.1,
+                },
+            ],
+            "model_layer_latency_ms": {
+                "diarization": 612.4,
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "CROWD"
+    assert len(payload["speakers"]) == 2
+    assert payload["top_speaker_id"] == "SPEAKER_01"
+    active_speaker = payload["speakers"][0]
+    assert active_speaker["speaker_id"] == "SPEAKER_01"
+    assert active_speaker["lane_status"] == "LISTENING"
+    assert active_speaker["overlapping_speaker_ids"] == ["SPEAKER_00"]
+    assert active_speaker["translated_caption"] is None
+
+
+def test_diarization_ingest_endpoint_updates_gateway_speaker_lanes(client: TestClient) -> None:
+    response = client.post(
+        "/v1/ingest/diarization?mode=CROWD&observed_end_s=2.6",
+        json={
+            "schema_version": 1,
+            "fixture_id": "runtime-overlap",
+            "adapter_id": "sortformer-rolling-runtime",
+            "segments": [
+                {
+                    "speaker_label": "speaker_0",
+                    "start_s": 0.0,
+                    "end_s": 1.7,
+                    "confidence": 0.91,
+                },
+                {
+                    "speaker_label": "speaker_1",
+                    "start_s": 0.8,
+                    "end_s": 2.6,
+                    "confidence": 0.87,
+                },
+            ],
+            "model_layer_latency_ms": {
+                "diarization": 224.5,
+            },
+            "metadata": {
+                "source": "rolling_pcm",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "CROWD"
+    assert payload["top_speaker_id"] == "speaker_1"
+    assert [speaker["speaker_id"] for speaker in payload["speakers"]] == [
+        "speaker_1",
+        "speaker_0",
+    ]
+    active_speaker = payload["speakers"][0]
+    assert active_speaker["lane_status"] == "LISTENING"
+    assert active_speaker["overlapping_speaker_ids"] == ["speaker_0"]
+    assert active_speaker["translated_audio_stream_id"] is None
+    assert active_speaker["original_voice_suppression_db"] is None
+    assert active_speaker["source_suppression_mode"] is None
 
 
 def test_prioritizer_matches_focus_engine_authority_vectors() -> None:
@@ -914,6 +1093,16 @@ def test_mock_scene_shape_changes_with_mode(client: TestClient) -> None:
     assert payload["session"]["speakers"][0]["translated_caption"]
     assert payload["session"]["speakers"][0]["target_language_code"] == "en"
     assert payload["session"]["speakers"][0]["lane_status"] == "READY"
+    assert payload["session"]["speakers"][0]["input_level_dbfs"] == -23.0
+    assert payload["session"]["speakers"][0]["output_level_dbfs"] == -23.0
+    assert payload["session"]["speakers"][0]["overlapping_speaker_ids"] == ["speaker-bruno"]
+    assert payload["session"]["speakers"][0]["detected_language_code"] == "en"
+    assert payload["session"]["speakers"][0]["language_confidence"] == 0.99
+    assert payload["session"]["speakers"][0]["voice_clone_status"] == "READY"
+    assert payload["session"]["speakers"][0]["translated_audio_stream_id"] == "mix-demo-alice-en"
+    assert payload["session"]["speakers"][0]["original_voice_suppression_db"] == 6.0
+    assert payload["session"]["speakers"][0]["playback_latency_ms"] == 280
+    assert payload["session"]["speakers"][0]["source_suppression_mode"] == "OVERLAY_DUCKING"
 
 
 def test_live_ingest_stream_emits_progressive_snapshot_updates() -> None:

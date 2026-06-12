@@ -1,0 +1,41 @@
+.git/
+.github/
+
+# Build outputs and dependency caches
+target/
+dist/
+artifacts/
+build/
+gen/
+**/.venv/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+**/*.egg-info/
+
+# Flutter/Dart generated state
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+apps/field_app_flutter/.pub-cache/
+apps/field_app_flutter/android/
+apps/field_app_flutter/ios/
+apps/field_app_flutter/linux/
+apps/field_app_flutter/macos/
+apps/field_app_flutter/web/
+apps/field_app_flutter/windows/
+
+# Local runtime state and secrets
+.env
+services/gateway/.state/
+
+# Editor/OS noise
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db

@@ -1,0 +1,32 @@
+FROM python:3.12-slim-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PYTHONPATH=/opt/wesep:/opt/wespeaker
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        ffmpeg \
+        git \
+        libgomp1 \
+        libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY docker/dev/requirements-audio-eval.txt /tmp/requirements-audio-eval.txt
+COPY docker/dev/requirements-audio-eval-wesep.txt /tmp/requirements-audio-eval-wesep.txt
+RUN python -m pip install --upgrade pip \
+    && python -m pip install --no-cache-dir -r /tmp/requirements-audio-eval.txt \
+    && python -m pip install --no-cache-dir -r /tmp/requirements-audio-eval-wesep.txt \
+    && git clone https://github.com/wenet-e2e/wesep.git /opt/wesep \
+    && git -C /opt/wesep checkout 99eca54b60300d39b9353d93cf285a14bba37854 \
+    && git clone https://github.com/wenet-e2e/wespeaker.git /opt/wespeaker \
+    && git -C /opt/wespeaker checkout e9bbf73d0fd13db6cf42a6cb2eafb0d7dd0f8e0e \
+    && python -c "from pathlib import Path; init_path=Path('/opt/wespeaker/wespeaker/__init__.py'); assert init_path.exists(), 'wespeaker package initializer not found'; init_path.write_text('# Patched for Language audio-eval-wesep: avoid importing CLI diarization deps when WeSep only needs wespeaker.models.\\n', encoding='utf-8')"
+
+WORKDIR /workspace
+
+CMD ["bash"]

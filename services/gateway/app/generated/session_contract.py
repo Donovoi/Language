@@ -73,6 +73,31 @@ CONTRACT_LOCKED_PROTO_ENUMS = {
             },
         },
     },
+    "SourceSuppressionMode": {
+        "proto_enum": "SourceSuppressionMode",
+        "members": {
+            "UNSPECIFIED": {
+                "proto": "SOURCE_SUPPRESSION_MODE_UNSPECIFIED",
+                "api": "UNSPECIFIED",
+            },
+            "UNAVAILABLE": {
+                "proto": "SOURCE_SUPPRESSION_MODE_UNAVAILABLE",
+                "api": "UNAVAILABLE",
+            },
+            "OVERLAY_DUCKING": {
+                "proto": "SOURCE_SUPPRESSION_MODE_OVERLAY_DUCKING",
+                "api": "OVERLAY_DUCKING",
+            },
+            "HEADPHONE_ISOLATED": {
+                "proto": "SOURCE_SUPPRESSION_MODE_HEADPHONE_ISOLATED",
+                "api": "HEADPHONE_ISOLATED",
+            },
+            "TRUE_CANCELLATION": {
+                "proto": "SOURCE_SUPPRESSION_MODE_TRUE_CANCELLATION",
+                "api": "TRUE_CANCELLATION",
+            },
+        },
+    },
 }
 
 CONTRACT_LOCKED_PROTO_MODELS = {
@@ -93,6 +118,17 @@ CONTRACT_LOCKED_PROTO_MODELS = {
             "target_language_code",
             "lane_status",
             "status_message",
+            "input_level_dbfs",
+            "output_level_dbfs",
+            "overlapping_speaker_ids",
+            "detected_language_code",
+            "language_confidence",
+            "voice_clone_id",
+            "voice_clone_status",
+            "translated_audio_stream_id",
+            "original_voice_suppression_db",
+            "playback_latency_ms",
+            "source_suppression_mode",
         ),
     },
     "SessionResponse": {
@@ -117,6 +153,17 @@ CONTRACT_LOCKED_PROTO_MODELS = {
             "target_language_code",
             "lane_status",
             "status_message",
+            "input_level_dbfs",
+            "output_level_dbfs",
+            "overlapping_speaker_ids",
+            "detected_language_code",
+            "language_confidence",
+            "voice_clone_id",
+            "voice_clone_status",
+            "translated_audio_stream_id",
+            "original_voice_suppression_db",
+            "playback_latency_ms",
+            "source_suppression_mode",
         ),
     },
     "SessionStreamEvent": {
@@ -148,10 +195,18 @@ class StreamEventType(str, Enum):
     SESSION_SNAPSHOT = "session.snapshot"
     SPEAKER_UPDATE = "speaker.update"
 
+class SourceSuppressionMode(str, Enum):
+    UNSPECIFIED = "UNSPECIFIED"
+    UNAVAILABLE = "UNAVAILABLE"
+    OVERLAY_DUCKING = "OVERLAY_DUCKING"
+    HEADPHONE_ISOLATED = "HEADPHONE_ISOLATED"
+    TRUE_CANCELLATION = "TRUE_CANCELLATION"
+
 __all__ = [
     "CONTRACT_LOCKED_PROTO_ENUMS",
     "CONTRACT_LOCKED_PROTO_MODELS",
     "SessionMode",
     "LaneStatus",
     "StreamEventType",
+    "SourceSuppressionMode",
 ]

@@ -37,6 +37,18 @@ than by inventing a second package version line.
 - [ ] Run repository validation on a clean branch:
 	- `make check`
 	- `make smoke-local-demo`
+- [ ] For a product release that claims the realtime audio-loop goal, run the hard audio evidence gate:
+	- `make live-microphone-capture-check` on the release host or target capture device
+	- `make release-audio-gate`
+	- Treat any missing, warning-only, or failing audio report as a release blocker.
+	- Confirm live microphone evidence has matching WAV/chunk JSONL artifacts that the gate validates.
+	- Confirm prototype-only evidence is listed separately and is not being used to satisfy live
+	  microphone capture, causal diarization, real TSE/separation, streaming speech translation,
+	  same-voice/fallback TTS, or real-room playback/suppression gates.
+	- Confirm fallback TTS reports contain hashed WAV artifacts, level matching, and no same-voice
+	  claim unless a same-speaker benchmark has passed.
+	- Confirm the gate rejects bare `summary.passed=true` reports and requires product-specific
+	  evidence fields for each release-blocking subsystem.
 - [ ] Build the local artifacts that are practical on your host:
 	- `make gateway-package`
 	- `make source-bundle`

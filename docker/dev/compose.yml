@@ -1,0 +1,136 @@
+services:
+  core:
+    build:
+      context: ../..
+      dockerfile: docker/dev/Dockerfile.core
+    image: ${DEV_IMAGE:-language-core-dev:local}
+    working_dir: /workspace
+    environment:
+      CARGO_TARGET_DIR: /workspace/target
+      PIP_CACHE_DIR: /root/.cache/pip
+    volumes:
+      - ../..:/workspace
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+      - cargo-target:/workspace/target
+      - gateway-venv:/workspace/services/gateway/.venv
+      - pip-cache:/root/.cache/pip
+
+  audio-eval:
+    profiles: ["audio-eval"]
+    build:
+      context: ../..
+      dockerfile: docker/dev/Dockerfile.audio-eval
+    image: ${AUDIO_EVAL_IMAGE:-language-audio-eval-dev:local}
+    working_dir: /workspace
+    environment:
+      AUDIO_EVAL_OUTPUT_DIR: /workspace/artifacts/audio_eval
+      PIP_CACHE_DIR: /root/.cache/pip
+    volumes:
+      - ../..:/workspace
+      - audio-eval-pip-cache:/root/.cache/pip
+      - audio-eval-model-cache:/root/.cache/language-audio-eval
+
+  audio-eval-pyannote:
+    profiles: ["audio-eval-pyannote"]
+    build:
+      context: ../..
+      dockerfile: docker/dev/Dockerfile.audio-eval-pyannote
+    image: ${AUDIO_EVAL_PYANNOTE_IMAGE:-language-audio-eval-pyannote-dev:local}
+    working_dir: /workspace
+    environment:
+      AUDIO_EVAL_OUTPUT_DIR: /workspace/artifacts/audio_eval
+      HF_TOKEN: ${HF_TOKEN:-}
+      HUGGINGFACE_TOKEN: ${HUGGINGFACE_TOKEN:-}
+      HUGGINGFACE_HUB_TOKEN: ${HUGGINGFACE_HUB_TOKEN:-}
+      HF_HOME: /root/.cache/huggingface
+      PIP_CACHE_DIR: /root/.cache/pip
+    volumes:
+      - ../..:/workspace
+      - audio-eval-pip-cache:/root/.cache/pip
+      - audio-eval-model-cache:/root/.cache/huggingface
+
+  audio-eval-sortformer:
+    profiles: ["audio-eval-sortformer"]
+    build:
+      context: ../..
+      dockerfile: docker/dev/Dockerfile.audio-eval-sortformer
+    image: ${AUDIO_EVAL_SORTFORMER_IMAGE:-language-audio-eval-sortformer-dev:local}
+    working_dir: /workspace
+    environment:
+      AUDIO_EVAL_OUTPUT_DIR: /workspace/artifacts/audio_eval
+      HF_TOKEN: ${HF_TOKEN:-}
+      HUGGINGFACE_TOKEN: ${HUGGINGFACE_TOKEN:-}
+      HUGGINGFACE_HUB_TOKEN: ${HUGGINGFACE_HUB_TOKEN:-}
+      HF_HOME: /root/.cache/huggingface
+      PIP_CACHE_DIR: /root/.cache/pip
+    volumes:
+      - ../..:/workspace
+      - audio-eval-pip-cache:/root/.cache/pip
+      - audio-eval-model-cache:/root/.cache/huggingface
+
+  audio-eval-whisper:
+    profiles: ["audio-eval-whisper"]
+    build:
+      context: ../..
+      dockerfile: docker/dev/Dockerfile.audio-eval-whisper
+    image: ${AUDIO_EVAL_WHISPER_IMAGE:-language-audio-eval-whisper-dev:local}
+    working_dir: /workspace
+    environment:
+      AUDIO_EVAL_OUTPUT_DIR: /workspace/artifacts/audio_eval
+      HF_TOKEN: ${HF_TOKEN:-}
+      HUGGINGFACE_TOKEN: ${HUGGINGFACE_TOKEN:-}
+      HUGGINGFACE_HUB_TOKEN: ${HUGGINGFACE_HUB_TOKEN:-}
+      HF_HOME: /root/.cache/huggingface
+      PIP_CACHE_DIR: /root/.cache/pip
+    volumes:
+      - ../..:/workspace
+      - audio-eval-pip-cache:/root/.cache/pip
+      - audio-eval-model-cache:/root/.cache/huggingface
+
+  audio-eval-speechbrain-sepformer:
+    profiles: ["audio-eval-speechbrain-sepformer"]
+    build:
+      context: ../..
+      dockerfile: docker/dev/Dockerfile.audio-eval-speechbrain-sepformer
+    image: ${AUDIO_EVAL_SPEECHBRAIN_SEPFORMER_IMAGE:-language-audio-eval-speechbrain-sepformer-dev:local}
+    working_dir: /workspace
+    environment:
+      AUDIO_EVAL_OUTPUT_DIR: /workspace/artifacts/audio_eval
+      HF_TOKEN: ${HF_TOKEN:-}
+      HUGGINGFACE_TOKEN: ${HUGGINGFACE_TOKEN:-}
+      HUGGINGFACE_HUB_TOKEN: ${HUGGINGFACE_HUB_TOKEN:-}
+      HF_HOME: /root/.cache/huggingface
+      SPEECHBRAIN_CACHE_DIR: /root/.cache/huggingface
+      PIP_CACHE_DIR: /root/.cache/pip
+    volumes:
+      - ../..:/workspace
+      - audio-eval-pip-cache:/root/.cache/pip
+      - audio-eval-model-cache:/root/.cache/huggingface
+
+  audio-eval-wesep:
+    profiles: ["audio-eval-wesep"]
+    build:
+      context: ../..
+      dockerfile: docker/dev/Dockerfile.audio-eval-wesep
+    image: ${AUDIO_EVAL_WESEP_IMAGE:-language-audio-eval-wesep-dev:local}
+    working_dir: /workspace
+    environment:
+      AUDIO_EVAL_OUTPUT_DIR: /workspace/artifacts/audio_eval
+      TORCH_HOME: /root/.cache/torch
+      PIP_CACHE_DIR: /root/.cache/pip
+    volumes:
+      - ../..:/workspace
+      - audio-eval-pip-cache:/root/.cache/pip
+      - audio-eval-model-cache:/root/.cache/torch
+      - audio-eval-wesep-cache:/root/.wesep
+
+volumes:
+  cargo-registry:
+  cargo-git:
+  cargo-target:
+  gateway-venv:
+  pip-cache:
+  audio-eval-pip-cache:
+  audio-eval-model-cache:
+  audio-eval-wesep-cache:

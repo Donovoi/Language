@@ -3,7 +3,14 @@ import uvicorn
 
 from app.config import get_settings
 from app.observability import configure_request_logger, register_request_logging_middleware
-from app.routes import events_router, health_router, mock_router, sessions_router, speakers_router
+from app.routes import (
+    events_router,
+    health_router,
+    ingest_router,
+    mock_router,
+    sessions_router,
+    speakers_router,
+)
 from app.services.session_store import SessionStore
 
 
@@ -18,6 +25,7 @@ def create_app() -> FastAPI:
     app.include_router(events_router)
     app.include_router(sessions_router)
     app.include_router(speakers_router)
+    app.include_router(ingest_router)
     app.include_router(mock_router)
     return app
 

@@ -95,6 +95,38 @@ ENUM_SPECS = {
             },
         },
     },
+    "SourceSuppressionMode": {
+        "proto_prefix": "SOURCE_SUPPRESSION_MODE_",
+        "python_name": "SourceSuppressionMode",
+        "dart_name": "SourceSuppressionMode",
+        "members": {
+            "UNSPECIFIED": {
+                "api": "UNSPECIFIED",
+                "dart_member": "unspecified",
+                "label": "Not set",
+            },
+            "UNAVAILABLE": {
+                "api": "UNAVAILABLE",
+                "dart_member": "unavailable",
+                "label": "Unavailable",
+            },
+            "OVERLAY_DUCKING": {
+                "api": "OVERLAY_DUCKING",
+                "dart_member": "overlayDucking",
+                "label": "Overlay ducking",
+            },
+            "HEADPHONE_ISOLATED": {
+                "api": "HEADPHONE_ISOLATED",
+                "dart_member": "headphoneIsolated",
+                "label": "Headphone isolated",
+            },
+            "TRUE_CANCELLATION": {
+                "api": "TRUE_CANCELLATION",
+                "dart_member": "trueCancellation",
+                "label": "Cancellation measured",
+            },
+        },
+    },
 }
 
 PYTHON_MODEL_SPECS = {
@@ -122,6 +154,17 @@ DART_MESSAGE_SPECS = {
             "target_language_code": "kSpeakerTargetLanguageCodeJsonKey",
             "lane_status": "kSpeakerLaneStatusJsonKey",
             "status_message": "kSpeakerStatusMessageJsonKey",
+            "input_level_dbfs": "kSpeakerInputLevelDbfsJsonKey",
+            "output_level_dbfs": "kSpeakerOutputLevelDbfsJsonKey",
+            "overlapping_speaker_ids": "kSpeakerOverlappingSpeakerIdsJsonKey",
+            "detected_language_code": "kSpeakerDetectedLanguageCodeJsonKey",
+            "language_confidence": "kSpeakerLanguageConfidenceJsonKey",
+            "voice_clone_id": "kSpeakerVoiceCloneIdJsonKey",
+            "voice_clone_status": "kSpeakerVoiceCloneStatusJsonKey",
+            "translated_audio_stream_id": "kSpeakerTranslatedAudioStreamIdJsonKey",
+            "original_voice_suppression_db": "kSpeakerOriginalVoiceSuppressionDbJsonKey",
+            "playback_latency_ms": "kSpeakerPlaybackLatencyMsJsonKey",
+            "source_suppression_mode": "kSpeakerSourceSuppressionModeJsonKey",
         },
     },
     "SessionState": {
@@ -146,6 +189,17 @@ DART_MESSAGE_SPECS = {
             "target_language_code": "kSpeakerEventTargetLanguageCodeJsonKey",
             "lane_status": "kSpeakerEventLaneStatusJsonKey",
             "status_message": "kSpeakerEventStatusMessageJsonKey",
+            "input_level_dbfs": "kSpeakerEventInputLevelDbfsJsonKey",
+            "output_level_dbfs": "kSpeakerEventOutputLevelDbfsJsonKey",
+            "overlapping_speaker_ids": "kSpeakerEventOverlappingSpeakerIdsJsonKey",
+            "detected_language_code": "kSpeakerEventDetectedLanguageCodeJsonKey",
+            "language_confidence": "kSpeakerEventLanguageConfidenceJsonKey",
+            "voice_clone_id": "kSpeakerEventVoiceCloneIdJsonKey",
+            "voice_clone_status": "kSpeakerEventVoiceCloneStatusJsonKey",
+            "translated_audio_stream_id": "kSpeakerEventTranslatedAudioStreamIdJsonKey",
+            "original_voice_suppression_db": "kSpeakerEventOriginalVoiceSuppressionDbJsonKey",
+            "playback_latency_ms": "kSpeakerEventPlaybackLatencyMsJsonKey",
+            "source_suppression_mode": "kSpeakerEventSourceSuppressionModeJsonKey",
         },
     },
     "SessionStreamEvent": {

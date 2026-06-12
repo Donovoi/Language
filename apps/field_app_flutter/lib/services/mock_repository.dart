@@ -232,6 +232,17 @@ class MockRepository extends ChangeNotifier {
               targetLanguageCode: update.targetLanguageCode,
               laneStatus: update.laneStatus,
               statusMessage: update.statusMessage,
+              inputLevelDbfs: update.inputLevelDbfs,
+              outputLevelDbfs: update.outputLevelDbfs,
+              overlappingSpeakerIds: update.overlappingSpeakerIds,
+              detectedLanguageCode: update.detectedLanguageCode,
+              languageConfidence: update.languageConfidence,
+              voiceCloneId: update.voiceCloneId,
+              voiceCloneStatus: update.voiceCloneStatus,
+              translatedAudioStreamId: update.translatedAudioStreamId,
+              originalVoiceSuppressionDb: update.originalVoiceSuppressionDb,
+              playbackLatencyMs: update.playbackLatencyMs,
+              sourceSuppressionMode: update.sourceSuppressionMode,
             );
 
             if (_speakersEqual(speaker, nextSpeaker)) {
@@ -291,7 +302,18 @@ class MockRepository extends ChangeNotifier {
         left.translatedCaption == right.translatedCaption &&
         left.targetLanguageCode == right.targetLanguageCode &&
         left.laneStatus == right.laneStatus &&
-        left.statusMessage == right.statusMessage;
+        left.statusMessage == right.statusMessage &&
+        left.inputLevelDbfs == right.inputLevelDbfs &&
+        left.outputLevelDbfs == right.outputLevelDbfs &&
+        listEquals(left.overlappingSpeakerIds, right.overlappingSpeakerIds) &&
+        left.detectedLanguageCode == right.detectedLanguageCode &&
+        left.languageConfidence == right.languageConfidence &&
+        left.voiceCloneId == right.voiceCloneId &&
+        left.voiceCloneStatus == right.voiceCloneStatus &&
+        left.translatedAudioStreamId == right.translatedAudioStreamId &&
+        left.originalVoiceSuppressionDb == right.originalVoiceSuppressionDb &&
+        left.playbackLatencyMs == right.playbackLatencyMs &&
+        left.sourceSuppressionMode == right.sourceSuppressionMode;
   }
 
   void _notifySafely() {

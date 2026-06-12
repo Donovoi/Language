@@ -6,6 +6,11 @@ This service owns the local FastAPI API, SQLite-backed session state, and determ
 It exposes the client-facing HTTP contract while keeping prioritization logic small and testable.
 The current mock-first pass now includes a deterministic SSE event stream for session snapshots and
 speaker-lane updates.
+Those speaker lanes now carry the product-loop state needed by the original app goal: detected
+language confidence, overlapping speaker ids, input/output dBFS levels, voice-clone status,
+translated-audio stream ids, playback latency, and source-voice suppression diagnostics.
+Runtime diarizer adapters should write into `POST /v1/ingest/diarization`; the older
+`POST /v1/mock/diarization` route is only a demo-compatible alias.
 
 ## Configuration
 
@@ -52,7 +57,7 @@ at it with `LANGUAGE_GATEWAY_RUST_RANKER_BIN`.
 
 ## Translation adapter behavior
 
-Task 9 lands one real-provider path without changing the Flutter client contract:
+The gateway includes one real-provider path without changing the Flutter client contract:
 
 - when `LANGUAGE_GATEWAY_TRANSLATION_PROVIDER=libretranslate` and
 	`LANGUAGE_GATEWAY_TRANSLATION_BASE_URL` are both configured, the gateway translates any
@@ -65,6 +70,8 @@ Task 9 lands one real-provider path without changing the Flutter client contract
 	translations exactly as before
 - if the adapter call fails, the speaker lane moves to `ERROR` and `status_message` carries the
 	provider error instead of crashing the session update
+- when a speaker has `detected_language_code`, the adapter uses that language instead of the older
+	`language_code` fallback so language detection can become the runtime source of truth
 
 ## Auth and health behavior
 
@@ -122,6 +129,7 @@ The container exposes the same `GET /health` endpoint at `http://127.0.0.1:8000/
 
 ## Deliberately out of scope
 
-This service does not own realtime audio capture, diarization, or TTS.
-Only a minimal text-in/text-out translation adapter is included for the current beta slice.
-Broader provider orchestration still stays deferred until the mock-first API contract is stable.
+This service does not yet own realtime microphone capture, overlapping-speaker separation,
+provider-backed voice cloning/TTS, or source-voice cancellation DSP.
+It does own the HTTP/SSE contract those integrations will feed, so provider work should preserve the
+current speaker fields instead of inventing a parallel audio payload.

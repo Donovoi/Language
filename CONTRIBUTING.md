@@ -24,9 +24,12 @@ Use conventional prefixes where practical:
 A change is ready when:
 
 - local checks pass
+- new environment-sensitive dependencies have disposable test scaffolding
 - affected docs are updated
 - public interfaces are documented
 - defaults are safe and deterministic
+
+For disposable test environments, follow `docs/development/disposable-test-environments.md`.
 
 ## Architectural discipline
 

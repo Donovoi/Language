@@ -35,6 +35,14 @@ enum StreamEventType {
   STREAM_EVENT_TYPE_SPEAKER_UPDATE = 2;
 }
 
+enum SourceSuppressionMode {
+  SOURCE_SUPPRESSION_MODE_UNSPECIFIED = 0;
+  SOURCE_SUPPRESSION_MODE_UNAVAILABLE = 1;
+  SOURCE_SUPPRESSION_MODE_OVERLAY_DUCKING = 2;
+  SOURCE_SUPPRESSION_MODE_HEADPHONE_ISOLATED = 3;
+  SOURCE_SUPPRESSION_MODE_TRUE_CANCELLATION = 4;
+}
+
 message ClientConfig {
   string preferred_language_code = 1;
   SessionMode mode = 2;
@@ -56,6 +64,17 @@ message SpeakerState {
   string target_language_code = 12;
   LaneStatus lane_status = 13;
   string status_message = 14;
+  float input_level_dbfs = 15;
+  float output_level_dbfs = 16;
+  repeated string overlapping_speaker_ids = 17;
+  string detected_language_code = 18;
+  float language_confidence = 19;
+  string voice_clone_id = 20;
+  string voice_clone_status = 21;
+  string translated_audio_stream_id = 22;
+  float original_voice_suppression_db = 23;
+  uint32 playback_latency_ms = 24;
+  SourceSuppressionMode source_suppression_mode = 25;
 }
 
 message SessionState {
@@ -76,6 +95,17 @@ message SpeakerEvent {
   string target_language_code = 8;
   LaneStatus lane_status = 9;
   string status_message = 10;
+  float input_level_dbfs = 11;
+  float output_level_dbfs = 12;
+  repeated string overlapping_speaker_ids = 13;
+  string detected_language_code = 14;
+  float language_confidence = 15;
+  string voice_clone_id = 16;
+  string voice_clone_status = 17;
+  string translated_audio_stream_id = 18;
+  float original_voice_suppression_db = 19;
+  uint32 playback_latency_ms = 20;
+  SourceSuppressionMode source_suppression_mode = 21;
 }
 
 message SessionStreamEvent {

@@ -1,0 +1,2255 @@
+#!/usr/bin/env python3
+"""Fail product releases until the realtime audio-loop evidence exists.
+
+Exploratory audio-eval targets are allowed to be warning-only so research can
+keep moving. This gate is harsher: it writes a durable release-readiness report
+and exits non-zero while any release-blocking product audio capability is still
+missing, failing, stubbed, or only proven by a prototype fixture.
+"""
+
+from __future__ import annotations
+
+import argparse
+import array
+import hashlib
+import json
+import math
+import sys
+import tempfile
+import time
+import wave
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+
+DEFAULT_AUDIO_EVAL_DIR = Path("artifacts/audio_eval")
+DEFAULT_RELEASE_REPORT = Path("artifacts/release/audio-gate-report.json")
+DEFAULT_LIVE_CAPTURE_REPORT = (
+    DEFAULT_AUDIO_EVAL_DIR / "runs/live-microphone-capture/live-microphone-capture-report.json"
+)
+DEFAULT_CAUSAL_DIARIZATION_REPORT = (
+    DEFAULT_AUDIO_EVAL_DIR
+    / "runs/sortformer-streaming-4spk-v2-1-real-speech-rolling-pcm/rolling-diarization-report.json"
+)
+DEFAULT_TSE_REPORT = (
+    DEFAULT_AUDIO_EVAL_DIR / "runs/fleurs-wesep-enrolled-target-speaker-extraction/wesep-enrolled-tse-report.json"
+)
+DEFAULT_STREAMING_TRANSLATION_REPORT = (
+    DEFAULT_AUDIO_EVAL_DIR
+    / "runs/whisper-tiny-fleurs-wesep-causal-tse-translation/whisper-tse-translation-report.json"
+)
+DEFAULT_VOICE_REPORT = DEFAULT_AUDIO_EVAL_DIR / "runs/same-voice-tts/voice-clone-report.json"
+DEFAULT_ROOM_SUPPRESSION_REPORT = (
+    DEFAULT_AUDIO_EVAL_DIR / "runs/real-room-playback-suppression/room-playback-suppression-report.json"
+)
+DEFAULT_PLAYBACK_PROTOTYPE_REPORT = (
+    DEFAULT_AUDIO_EVAL_DIR / "runs/fleurs-playback-ducking-suppression/playback-suppression-report.json"
+)
+DEFAULT_CAPTURE_PROTOTYPE_REPORT = (
+    DEFAULT_AUDIO_EVAL_DIR / "runs/fixture-live-pcm-capture/capture-runtime-report.json"
+)
+EXPECTED_LIVE_CAPTURE_ADAPTER_ID = "sounddevice_portaudio_microphone_capture_v1"
+EXPECTED_LIVE_CAPTURE_BACKEND = "sounddevice_portaudio_callback"
+EXPECTED_LIVE_CAPTURE_GENERATOR = "scripts/run_live_microphone_capture.py"
+EXPECTED_LIVE_CAPTURE_PROVENANCE_KIND = "host_portaudio_callback_artifact_coherence"
+EXPECTED_LIVE_CAPTURE_TRUST_BOUNDARY = "local_artifact_coherence_not_tamper_proof"
+
+PLAYBACK_PROTOTYPE_CLAIM = "ducking_masking_simulation_not_true_cancellation"
+PROTOTYPE_FIXTURE_KINDS = {
+    "fixture_pcm_capture_replay",
+    "fleurs_playback_suppression",
+}
+
+LIVE_CAPTURE_REQUIRED_GATES = {
+    "capture_source_is_microphone",
+    "capture_device_identity_present",
+    "capture_provenance_scope_declared",
+    "pcm_chunk_schema_valid",
+    "chunk_timing_jitter_within_limit",
+    "no_chunk_gaps_or_reorders",
+    "capture_sample_rate_stable",
+    "capture_duration_minimum",
+    "capture_chunk_count",
+    "capture_callback_status_clean",
+    "capture_input_not_silent",
+    "capture_artifact_hash_chain_present",
+    "capture_timestamps_monotonic",
+    "capture_release_proof",
+}
+CAUSAL_DIARIZATION_REQUIRED_GATES = {
+    "chunked_chunk_count",
+    "chunked_final_der_like",
+    "chunked_first_speech_detection_latency",
+    "chunked_overlap_detected",
+}
+TSE_ORACLE_QUALITY_GATES = {
+    "tse_prediction_segment_count",
+    "tse_overlap_covered",
+    "tse_min_segment_snr_db",
+    "tse_min_interferer_reduction_db",
+    "tse_output_level_preserved",
+    "tse_duration_preserved",
+    "tse_extracted_audio_hashed",
+}
+TSE_REAL_MODEL_REQUIRED_GATES = {
+    "tse_prediction_segment_count",
+    "tse_overlap_covered",
+    "tse_duration_preserved",
+    "tse_extracted_audio_hashed",
+    "tse_polarity_invariant_scoring_declared",
+    "tse_real_model_not_oracle",
+    "tse_real_model_enrollment_contract_passed",
+    "tse_real_model_postprocess_declared",
+    "tse_real_model_beats_passthrough_mean_snr",
+    "tse_real_model_beats_passthrough_mean_interferer_reduction",
+    "tse_real_model_min_segment_snr_floor",
+    "tse_real_model_output_level_preserved",
+    "tse_real_model_polarity_invariant_scoring_declared",
+}
+TSE_PASSTHROUGH_GATES = {
+    "beats_mixture_passthrough",
+    "target_to_interferer_ratio_beats_passthrough",
+    "wesep_beats_passthrough_mean_snr",
+}
+TRANSLATION_REQUIRED_GATES = {
+    "tse_quality_gates_passed",
+}
+ORACLE_TRANSLATION_STREAMING_PREFIXES = ("oracle_diarization_",)
+ORACLE_DIARIZATION_ADAPTER_IDS = {"oracle_diarization_v1"}
+VOICE_REQUIRED_GATES = {
+    "voice_reference_consent_present",
+    "tts_audio_hashed",
+    "tts_output_level_matched",
+    "voice_similarity_or_fallback_declared",
+}
+ROOM_SUPPRESSION_REQUIRED_GATES = {
+    "device_path_identity_recorded",
+    "room_loopback_recorded",
+    "calibration_recordings_audible",
+    "calibration_reference_fidelity",
+    "source_residual_measured",
+    "translated_output_not_distorted",
+    "suppression_claim_matches_measurement",
+    "room_suppression_artifacts_hashed",
+}
+ROOM_REQUIRED_MEASUREMENT_KIND = "real_room_loopback"
+ROOM_REQUIRED_SUPPRESSION_CLAIM = "true_source_cancellation"
+ROOM_MIN_SOURCE_RESIDUAL_REDUCTION_DB = 6.0
+ROOM_MAX_TRANSLATED_OUTPUT_DISTORTION_DB = 12.0
+ROOM_MIN_TRANSLATED_OUTPUT_CORRELATION = 0.3
+ROOM_MIN_CALIBRATION_DBFS = -60.0
+ROOM_MIN_CALIBRATION_CORRELATION = 0.3
+ROOM_MAX_CALIBRATION_DISTORTION_DB = 12.0
+ROOM_DB_TOLERANCE = 0.075
+ROOM_CORRELATION_TOLERANCE = 0.001
+ROOM_MAX_ALIGNMENT_LAG_MS = 500.0
+
+
+@dataclass(frozen=True)
+class EvidenceSpec:
+    name: str
+    path: Path
+    description: str
+    next_step: str
+    release_blocking: bool = True
+
+
+@dataclass(frozen=True)
+class GateResult:
+    name: str
+    passed: bool
+    release_blocking: bool
+    message: str
+    path: str
+    next_step: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "passed": self.passed,
+            "release_blocking": self.release_blocking,
+            "message": self.message,
+            "path": self.path,
+            "next_step": self.next_step,
+        }
+
+
+def _load_json(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    with path.open(encoding="utf-8") as handle:
+        payload = json.load(handle)
+    if not isinstance(payload, dict):
+        raise ValueError(f"{path} did not contain a JSON object")
+    return payload
+
+
+def _summary(report: dict[str, Any]) -> dict[str, Any]:
+    summary = report.get("summary", {})
+    return summary if isinstance(summary, dict) else {}
+
+
+def _summary_passed(report: dict[str, Any]) -> bool:
+    return bool(_summary(report).get("passed"))
+
+
+def _quality_gates(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    gates = _summary(report).get("quality_gates", [])
+    named: dict[str, dict[str, Any]] = {}
+    if not isinstance(gates, list):
+        return named
+    for gate in gates:
+        if isinstance(gate, dict) and isinstance(gate.get("name"), str):
+            named[str(gate["name"])] = gate
+    return named
+
+
+def _gate_passed(report: dict[str, Any], name: str) -> bool:
+    gate = _quality_gates(report).get(name)
+    return isinstance(gate, dict) and bool(gate.get("passed"))
+
+
+def _missing_gates(report: dict[str, Any], required: set[str]) -> list[str]:
+    return sorted(name for name in required if not _gate_passed(report, name))
+
+
+def _pass_fail_prefix(spec: EvidenceSpec, report: dict[str, Any] | None) -> GateResult | None:
+    if report is None:
+        return GateResult(
+            spec.name,
+            False,
+            spec.release_blocking,
+            f"missing required report: {spec.description}",
+            str(spec.path),
+            spec.next_step,
+        )
+    if not _summary_passed(report):
+        return GateResult(
+            spec.name,
+            False,
+            spec.release_blocking,
+            f"report is present but did not pass: {spec.description}",
+            str(spec.path),
+            spec.next_step,
+        )
+    return None
+
+
+def _fail(spec: EvidenceSpec, message: str) -> GateResult:
+    return GateResult(
+        spec.name,
+        False,
+        spec.release_blocking,
+        message,
+        str(spec.path),
+        spec.next_step,
+    )
+
+
+def _pass(spec: EvidenceSpec, message: str = "passing product-specific evidence present") -> GateResult:
+    return GateResult(
+        spec.name,
+        True,
+        spec.release_blocking,
+        message,
+        str(spec.path),
+        spec.next_step,
+    )
+
+
+def _reject_prototype_fixture(spec: EvidenceSpec, report: dict[str, Any]) -> GateResult | None:
+    fixture_kind = report.get("fixture_kind")
+    if fixture_kind in PROTOTYPE_FIXTURE_KINDS:
+        return _fail(spec, f"prototype fixture report cannot satisfy product gate: {fixture_kind}")
+    return None
+
+
+def _capture_summary(report: dict[str, Any]) -> dict[str, Any]:
+    capture = report.get("benchmarks", {}).get("capture", {})
+    if isinstance(capture, dict):
+        summary = capture.get("summary", {})
+        if isinstance(summary, dict):
+            return summary
+    return {}
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _device_path_fingerprint(
+    device_info: dict[str, Any],
+    *,
+    sample_rate_hz: int,
+    input_channels: int,
+    output_channels: int = 2,
+) -> str:
+    payload = {
+        "device": device_info,
+        "input_channels": int(input_channels),
+        "output_channels": int(output_channels),
+        "sample_rate_hz": int(sample_rate_hz),
+    }
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(data).hexdigest()
+
+
+def _resolve_artifact_path(report_path: Path, value: Any) -> Path | None:
+    if not isinstance(value, str) or not value:
+        return None
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    beside_report = report_path.parent / path
+    if beside_report.exists():
+        return beside_report
+    return path
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    with path.open(encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, start=1):
+            text = line.strip()
+            if not text:
+                continue
+            record = json.loads(text)
+            if not isinstance(record, dict):
+                raise ValueError(f"{path}:{line_number} did not contain a JSON object")
+            records.append(record)
+    return records
+
+
+def _is_sha256(value: Any) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(char in "0123456789abcdef" for char in value.lower())
+    )
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if math.isfinite(result) else None
+
+
+def _linear_to_db(value: float) -> float:
+    if value <= 0.0:
+        return float("-inf")
+    return float(20.0 * math.log10(value))
+
+
+def _dbfs_from_rms_i16(rms_value: float) -> float:
+    return _linear_to_db((rms_value + 1.0e-12) / 32768.0)
+
+
+def _read_mono_pcm16_wav(path: Path) -> tuple[int, array.array]:
+    with wave.open(str(path), "rb") as wav:
+        if wav.getnchannels() != 1:
+            raise ValueError(f"{path} must be mono")
+        if wav.getsampwidth() != 2:
+            raise ValueError(f"{path} must be 16-bit PCM")
+        frame_count = wav.getnframes()
+        if frame_count <= 0:
+            raise ValueError(f"{path} must contain frames")
+        raw = wav.readframes(frame_count)
+        sample_rate_hz = wav.getframerate()
+    samples = array.array("h")
+    samples.frombytes(raw)
+    if sys.byteorder != "little":
+        samples.byteswap()
+    return sample_rate_hz, samples
+
+
+def _rms_i16(samples: array.array, frame_count: int | None = None) -> float:
+    count = min(len(samples), frame_count) if frame_count is not None else len(samples)
+    if count <= 0:
+        return 0.0
+    total = 0.0
+    for index in range(count):
+        value = float(samples[index])
+        total += value * value
+    return math.sqrt(total / float(count))
+
+
+def _projection_gain_i16(target: array.array, reference: array.array, frame_count: int | None = None) -> float:
+    count = min(len(target), len(reference), frame_count) if frame_count is not None else min(len(target), len(reference))
+    if count <= 0:
+        return 0.0
+    numerator = 0.0
+    denominator = 0.0
+    for index in range(count):
+        target_value = float(target[index])
+        reference_value = float(reference[index])
+        numerator += target_value * reference_value
+        denominator += reference_value * reference_value
+    if denominator <= 1.0e-12:
+        return 0.0
+    return numerator / denominator
+
+
+def _best_alignment_lag_samples(
+    measured: Any,
+    reference: Any,
+    sample_rate_hz: int,
+    max_lag_ms: float,
+    *,
+    stride: int = 64,
+) -> int:
+    frame_count = min(len(measured), len(reference))
+    max_lag_samples = max(0, int(round(float(sample_rate_hz) * float(max_lag_ms) / 1000.0)))
+    if frame_count <= stride * 2 or max_lag_samples <= 0:
+        return 0
+    measured_values = [float(measured[index]) for index in range(0, frame_count, stride)]
+    reference_values = [float(reference[index]) for index in range(0, frame_count, stride)]
+    measured_mean = sum(measured_values) / float(len(measured_values))
+    reference_mean = sum(reference_values) / float(len(reference_values))
+    measured_values = [value - measured_mean for value in measured_values]
+    reference_values = [value - reference_mean for value in reference_values]
+    max_lag_steps = min(max_lag_samples // stride, max(0, min(len(measured_values), len(reference_values)) - 2))
+    best_lag_steps = 0
+    best_score = float("-inf")
+    for lag_steps in range(-max_lag_steps, max_lag_steps + 1):
+        if lag_steps > 0:
+            measured_slice = measured_values[lag_steps:]
+            reference_slice = reference_values[: len(measured_slice)]
+        elif lag_steps < 0:
+            measured_slice = measured_values[: len(measured_values) + lag_steps]
+            reference_slice = reference_values[-lag_steps : -lag_steps + len(measured_slice)]
+        else:
+            measured_slice = measured_values
+            reference_slice = reference_values[: len(measured_slice)]
+        if len(measured_slice) <= 1:
+            continue
+        numerator = 0.0
+        measured_energy = 0.0
+        reference_energy = 0.0
+        for measured_value, reference_value in zip(measured_slice, reference_slice):
+            numerator += measured_value * reference_value
+            measured_energy += measured_value * measured_value
+            reference_energy += reference_value * reference_value
+        denominator = math.sqrt(measured_energy * reference_energy)
+        if denominator <= 1.0e-12:
+            continue
+        score = abs(numerator / denominator)
+        if score > best_score:
+            best_score = score
+            best_lag_steps = lag_steps
+    return int(best_lag_steps * stride)
+
+
+def _align_numeric_sequences(a: Any, b: Any, lag_samples: int) -> tuple[list[float], list[float]]:
+    frame_count = min(len(a), len(b))
+    if frame_count <= 0:
+        return [], []
+    if lag_samples > 0:
+        lag = min(lag_samples, frame_count)
+        count = min(len(a) - lag, len(b))
+        return (
+            [float(a[index]) for index in range(lag, lag + count)],
+            [float(b[index]) for index in range(count)],
+        )
+    if lag_samples < 0:
+        lag = min(-lag_samples, frame_count)
+        count = min(len(a), len(b) - lag)
+        return (
+            [float(a[index]) for index in range(count)],
+            [float(b[index]) for index in range(lag, lag + count)],
+        )
+    count = frame_count
+    return (
+        [float(a[index]) for index in range(count)],
+        [float(b[index]) for index in range(count)],
+    )
+
+
+def _projection_gain_values(target: list[float], reference: list[float]) -> float:
+    count = min(len(target), len(reference))
+    if count <= 0:
+        return 0.0
+    numerator = 0.0
+    denominator = 0.0
+    for index in range(count):
+        numerator += target[index] * reference[index]
+        denominator += reference[index] * reference[index]
+    if denominator <= 1.0e-12:
+        return 0.0
+    return numerator / denominator
+
+
+def _correlation_values(a: list[float], b: list[float]) -> float:
+    count = min(len(a), len(b))
+    if count <= 1:
+        return 0.0
+    mean_a = sum(a[:count]) / float(count)
+    mean_b = sum(b[:count]) / float(count)
+    numerator = 0.0
+    a_energy = 0.0
+    b_energy = 0.0
+    for index in range(count):
+        a_value = a[index] - mean_a
+        b_value = b[index] - mean_b
+        numerator += a_value * b_value
+        a_energy += a_value * a_value
+        b_energy += b_value * b_value
+    denominator = math.sqrt(a_energy * b_energy)
+    if denominator <= 1.0e-12:
+        return 0.0
+    return numerator / denominator
+
+
+def _distortion_db_values(measured: list[float], reference: list[float]) -> float:
+    count = min(len(measured), len(reference))
+    if count <= 0:
+        return float("inf")
+    gain = _projection_gain_values(measured[:count], reference[:count])
+    error_energy = 0.0
+    aligned_energy = 0.0
+    for index in range(count):
+        aligned = reference[index] * gain
+        error = measured[index] - aligned
+        error_energy += error * error
+        aligned_energy += aligned * aligned
+    error_rms = math.sqrt(error_energy / float(count))
+    aligned_rms = math.sqrt(aligned_energy / float(count))
+    return _linear_to_db((error_rms + 1.0e-12) / (aligned_rms + 1.0e-12))
+
+
+def _recompute_room_metrics(artifact_paths: dict[str, Path]) -> dict[str, float]:
+    source_rate, source = _read_mono_pcm16_wav(artifact_paths["source_only_room_recording"])
+    source_reference_rate, source_reference = _read_mono_pcm16_wav(artifact_paths["source_reference"])
+    translated_rate, translated = _read_mono_pcm16_wav(artifact_paths["translated_only_room_recording"])
+    translated_reference_rate, translated_reference = _read_mono_pcm16_wav(artifact_paths["translated_playback_reference"])
+    loopback_rate, loopback = _read_mono_pcm16_wav(artifact_paths["room_loopback_recording"])
+    if len({source_rate, source_reference_rate, translated_rate, translated_reference_rate, loopback_rate}) != 1:
+        raise ValueError("room calibration and loopback WAV sample rates must match")
+    frame_count = min(len(source), len(translated), len(loopback))
+    if frame_count <= 0:
+        raise ValueError("room calibration and loopback WAVs must contain overlapping frames")
+    source_lag = _best_alignment_lag_samples(loopback, source, source_rate, ROOM_MAX_ALIGNMENT_LAG_MS)
+    aligned_loopback, aligned_source = _align_numeric_sequences(loopback, source, source_lag)
+    raw_gain = _projection_gain_values(aligned_loopback, aligned_source)
+    residual_gain = abs(raw_gain)
+    source_reduction_db = -_linear_to_db(residual_gain) if residual_gain > 0.0 else 120.0
+    source_rms = _rms_i16(source, frame_count)
+    source_reference_lag = _best_alignment_lag_samples(
+        source,
+        source_reference,
+        source_rate,
+        ROOM_MAX_ALIGNMENT_LAG_MS,
+    )
+    aligned_source_recording, aligned_source_reference = _align_numeric_sequences(
+        source,
+        source_reference,
+        source_reference_lag,
+    )
+    translated_reference_lag = _best_alignment_lag_samples(
+        translated,
+        translated_reference,
+        translated_rate,
+        ROOM_MAX_ALIGNMENT_LAG_MS,
+    )
+    aligned_translated_recording, aligned_translated_reference = _align_numeric_sequences(
+        translated,
+        translated_reference,
+        translated_reference_lag,
+    )
+    component = [
+        loopback_value - (source_value * raw_gain)
+        for loopback_value, source_value in zip(aligned_loopback, aligned_source)
+    ]
+    translated_lag = _best_alignment_lag_samples(
+        component,
+        translated,
+        translated_rate,
+        ROOM_MAX_ALIGNMENT_LAG_MS,
+    )
+    aligned_component, aligned_translated = _align_numeric_sequences(component, translated, translated_lag)
+    return {
+        "max_alignment_lag_ms": ROOM_MAX_ALIGNMENT_LAG_MS,
+        "source_calibration_dbfs": _dbfs_from_rms_i16(source_rms),
+        "source_calibration_reference_correlation": _correlation_values(
+            aligned_source_recording,
+            aligned_source_reference,
+        ),
+        "source_calibration_reference_distortion_db": _distortion_db_values(
+            aligned_source_recording,
+            aligned_source_reference,
+        ),
+        "source_calibration_reference_lag_samples": float(source_reference_lag),
+        "source_alignment_lag_samples": float(source_lag),
+        "source_residual_dbfs": _dbfs_from_rms_i16(source_rms * residual_gain),
+        "source_residual_reduction_db": source_reduction_db,
+        "translated_calibration_reference_correlation": _correlation_values(
+            aligned_translated_recording,
+            aligned_translated_reference,
+        ),
+        "translated_calibration_reference_distortion_db": _distortion_db_values(
+            aligned_translated_recording,
+            aligned_translated_reference,
+        ),
+        "translated_calibration_reference_lag_samples": float(translated_reference_lag),
+        "translated_alignment_lag_samples": float(translated_lag),
+        "translated_output_correlation": _correlation_values(aligned_component, aligned_translated),
+        "translated_output_distortion_db": _distortion_db_values(aligned_component, aligned_translated),
+        "translated_reference_dbfs": _dbfs_from_rms_i16(_rms_i16(translated, frame_count)),
+    }
+
+
+def _room_metric_tolerance(field: str) -> float:
+    return ROOM_CORRELATION_TOLERANCE if field.endswith("_correlation") else ROOM_DB_TOLERANCE
+
+
+def _int_or_none(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _strictly_increasing(values: list[float]) -> bool:
+    return all(current > previous for previous, current in zip(values, values[1:], strict=False))
+
+
+def _live_capture_artifact_failures(
+    spec: EvidenceSpec,
+    report: dict[str, Any],
+    capture: dict[str, Any],
+) -> list[str]:
+    failures: list[str] = []
+    benchmark = report.get("benchmarks", {}).get("capture", {})
+    benchmark = benchmark if isinstance(benchmark, dict) else {}
+
+    if report.get("fixture_kind") != "live_microphone_capture":
+        failures.append(f"fixture_kind must be live_microphone_capture, got {report.get('fixture_kind')!r}")
+    if report.get("capture_source_kind") != "microphone":
+        failures.append(f"top-level capture_source_kind must be microphone, got {report.get('capture_source_kind')!r}")
+    if capture.get("generator") != EXPECTED_LIVE_CAPTURE_GENERATOR:
+        failures.append(f"capture generator must be {EXPECTED_LIVE_CAPTURE_GENERATOR}")
+    if capture.get("backend") != EXPECTED_LIVE_CAPTURE_BACKEND:
+        failures.append(f"capture backend must be {EXPECTED_LIVE_CAPTURE_BACKEND}")
+    if capture.get("adapter_id") != EXPECTED_LIVE_CAPTURE_ADAPTER_ID:
+        failures.append(f"capture adapter_id must be {EXPECTED_LIVE_CAPTURE_ADAPTER_ID}")
+    if capture.get("provenance_kind") != EXPECTED_LIVE_CAPTURE_PROVENANCE_KIND:
+        failures.append(f"capture provenance_kind must be {EXPECTED_LIVE_CAPTURE_PROVENANCE_KIND}")
+    if capture.get("provenance_trust_boundary") != EXPECTED_LIVE_CAPTURE_TRUST_BOUNDARY:
+        failures.append(
+            f"capture provenance_trust_boundary must be {EXPECTED_LIVE_CAPTURE_TRUST_BOUNDARY}"
+        )
+    if benchmark.get("adapter_id") != EXPECTED_LIVE_CAPTURE_ADAPTER_ID:
+        failures.append("benchmarks.capture.adapter_id must match the expected live microphone adapter")
+
+    device = capture.get("device", {})
+    device = device if isinstance(device, dict) else {}
+    if not device.get("name"):
+        failures.append("capture device.name must be present")
+    if not device.get("hostapi"):
+        failures.append("capture device.hostapi must be present")
+    max_input_channels = _int_or_none(device.get("max_input_channels"))
+    if max_input_channels is None or max_input_channels < 1:
+        failures.append("capture device.max_input_channels must be >= 1")
+    default_samplerate = _float_or_none(device.get("default_samplerate"))
+    if default_samplerate is None or default_samplerate <= 0.0:
+        failures.append("capture device.default_samplerate must be > 0")
+
+    artifact_paths = report.get("artifact_paths", {})
+    artifact_paths = artifact_paths if isinstance(artifact_paths, dict) else {}
+    prediction_paths = report.get("prediction_paths", {})
+    prediction_paths = prediction_paths if isinstance(prediction_paths, dict) else {}
+    artifact_hashes = report.get("artifact_hashes", {})
+    artifact_hashes = artifact_hashes if isinstance(artifact_hashes, dict) else {}
+
+    audio_path = _resolve_artifact_path(
+        spec.path,
+        artifact_paths.get("captured_audio") or capture.get("captured_audio_path"),
+    )
+    chunks_path = _resolve_artifact_path(
+        spec.path,
+        prediction_paths.get("capture_chunks") or capture.get("capture_chunks_path"),
+    )
+    if audio_path is None:
+        failures.append("artifact_paths.captured_audio is required")
+    if chunks_path is None:
+        failures.append("prediction_paths.capture_chunks is required")
+    if audio_path is None or chunks_path is None:
+        return failures
+    if not audio_path.exists():
+        failures.append(f"captured audio WAV does not exist: {audio_path}")
+    if not chunks_path.exists():
+        failures.append(f"capture chunks JSONL does not exist: {chunks_path}")
+    if failures:
+        return failures
+
+    audio_hash = _sha256_file(audio_path)
+    chunks_hash = _sha256_file(chunks_path)
+    if artifact_hashes.get("captured_audio") != audio_hash:
+        failures.append("artifact_hashes.captured_audio does not match the WAV file")
+    if capture.get("captured_audio_sha256") != audio_hash:
+        failures.append("capture summary captured_audio_sha256 does not match the WAV file")
+    if artifact_hashes.get("capture_chunks") != chunks_hash:
+        failures.append("artifact_hashes.capture_chunks does not match the chunk JSONL file")
+    if capture.get("capture_chunks_sha256") != chunks_hash:
+        failures.append("capture summary capture_chunks_sha256 does not match the chunk JSONL file")
+
+    try:
+        records = _read_jsonl(chunks_path)
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        failures.append(f"capture chunks JSONL could not be parsed: {exc}")
+        return failures
+
+    reported_chunks = benchmark.get("chunks")
+    if isinstance(reported_chunks, list) and reported_chunks != records:
+        failures.append("benchmarks.capture.chunks must exactly match the chunk JSONL records")
+
+    sample_rates = capture.get("sample_rates_hz")
+    if not isinstance(sample_rates, list) or len(sample_rates) != 1:
+        failures.append("capture sample_rates_hz must contain exactly one sample rate")
+        sample_rate_hz = None
+    else:
+        sample_rate_hz = _int_or_none(sample_rates[0])
+        if sample_rate_hz is None or sample_rate_hz <= 0:
+            failures.append("capture sample rate must be a positive integer")
+
+    if _int_or_none(capture.get("channel_count")) != 1:
+        failures.append("capture channel_count must be 1")
+    if capture.get("pcm_subtype") != "PCM_16":
+        failures.append("capture pcm_subtype must be PCM_16")
+
+    try:
+        with wave.open(str(audio_path), "rb") as wav:
+            wav_channels = wav.getnchannels()
+            wav_sampwidth = wav.getsampwidth()
+            wav_rate = wav.getframerate()
+            wav_frames = wav.getnframes()
+    except (OSError, wave.Error) as exc:
+        failures.append(f"captured audio WAV could not be inspected: {exc}")
+        return failures
+
+    if wav_channels != 1:
+        failures.append(f"captured WAV channel count must be 1, got {wav_channels}")
+    if wav_sampwidth != 2:
+        failures.append(f"captured WAV sample width must be 2 bytes, got {wav_sampwidth}")
+    if sample_rate_hz is not None and wav_rate != sample_rate_hz:
+        failures.append(f"captured WAV sample rate {wav_rate} did not match report {sample_rate_hz}")
+
+    captured_frame_count = _int_or_none(capture.get("captured_frame_count"))
+    if captured_frame_count is None:
+        failures.append("capture captured_frame_count must be present")
+    elif captured_frame_count != wav_frames:
+        failures.append(
+            f"capture captured_frame_count {captured_frame_count} did not match WAV frames {wav_frames}"
+        )
+
+    chunk_count = _int_or_none(capture.get("chunk_count"))
+    if chunk_count is None:
+        failures.append("capture chunk_count must be present")
+    elif chunk_count != len(records):
+        failures.append(f"capture chunk_count {chunk_count} did not match JSONL records {len(records)}")
+    if len(records) < 2:
+        failures.append("capture chunks JSONL must contain at least two chunks")
+
+    sample_cursor = 0
+    frame_counts: list[int] = []
+    callback_offsets: list[float] = []
+    adc_times: list[float] = []
+    chunk_ms = _float_or_none(capture.get("chunk_ms"))
+    for expected_index, record in enumerate(records):
+        record_index = _int_or_none(record.get("chunk_index"))
+        start_sample = _int_or_none(record.get("start_sample"))
+        end_sample = _int_or_none(record.get("end_sample"))
+        frame_count = _int_or_none(record.get("frame_count"))
+        duration_ms = _float_or_none(record.get("duration_ms"))
+        callback_offset = _float_or_none(record.get("callback_wall_time_offset_s"))
+
+        if record_index != expected_index:
+            failures.append(f"chunk {expected_index} has unexpected chunk_index {record.get('chunk_index')!r}")
+        if frame_count is None or frame_count <= 0:
+            failures.append(f"chunk {expected_index} frame_count must be positive")
+            continue
+        if start_sample != sample_cursor:
+            failures.append(f"chunk {expected_index} start_sample did not continue from previous chunk")
+        if end_sample != sample_cursor + frame_count:
+            failures.append(f"chunk {expected_index} end_sample did not match start + frame_count")
+        if sample_rate_hz is not None and duration_ms is not None:
+            expected_duration_ms = frame_count / float(sample_rate_hz) * 1000.0
+            if abs(duration_ms - expected_duration_ms) > 0.01:
+                failures.append(f"chunk {expected_index} duration_ms did not match frame_count/sample_rate")
+        if record.get("status") not in {"", None}:
+            failures.append(f"chunk {expected_index} has callback status {record.get('status')!r}")
+        if not _is_sha256(record.get("sha256_float32")):
+            failures.append(f"chunk {expected_index} sha256_float32 is not a SHA-256 hex digest")
+        if callback_offset is None:
+            failures.append(f"chunk {expected_index} callback_wall_time_offset_s is required")
+        else:
+            callback_offsets.append(callback_offset)
+        adc_time = _float_or_none(record.get("input_adc_time_s"))
+        if adc_time is not None:
+            adc_times.append(adc_time)
+        frame_counts.append(frame_count)
+        sample_cursor += frame_count
+
+    if sample_cursor != wav_frames:
+        failures.append(f"sum of chunk frame_count {sample_cursor} did not match WAV frames {wav_frames}")
+
+    if len(callback_offsets) == len(records) and not _strictly_increasing(callback_offsets):
+        failures.append("callback_wall_time_offset_s values must be strictly increasing")
+
+    if chunk_ms is not None and len(callback_offsets) > 1:
+        interarrival_ms = [
+            (current - previous) * 1000.0
+            for previous, current in zip(callback_offsets, callback_offsets[1:], strict=False)
+        ]
+        max_jitter = max(abs(value - chunk_ms) for value in interarrival_ms)
+        reported_max_jitter = _float_or_none(capture.get("max_interarrival_jitter_ms"))
+        if reported_max_jitter is None or abs(reported_max_jitter - round(max_jitter, 3)) > 1.0:
+            failures.append("capture max_interarrival_jitter_ms did not match recomputed chunk timing")
+
+    timestamp_source = capture.get("timestamp_source")
+    if timestamp_source not in {"device_input_adc_time", "callback_wall_clock_fallback"}:
+        failures.append(f"unexpected timestamp_source {timestamp_source!r}")
+    if capture.get("timestamp_monotonic") is not True:
+        failures.append("capture timestamp_monotonic must be true")
+    if timestamp_source == "device_input_adc_time":
+        if len(adc_times) != len(records) or not _strictly_increasing(adc_times):
+            failures.append("device_input_adc_time source requires strictly increasing input_adc_time_s values")
+    elif timestamp_source == "callback_wall_clock_fallback":
+        if len(callback_offsets) != len(records) or not _strictly_increasing(callback_offsets):
+            failures.append("callback fallback source requires strictly increasing callback offsets")
+
+    if sample_rate_hz is not None and frame_counts and callback_offsets:
+        duration_from_frames_s = wav_frames / float(sample_rate_hz)
+        callback_clock_duration_s = callback_offsets[-1] + frame_counts[-1] / float(sample_rate_hz)
+        frame_clock_drift_ppm = (
+            abs(callback_clock_duration_s - duration_from_frames_s)
+            / duration_from_frames_s
+            * 1_000_000.0
+            if duration_from_frames_s > 0.0
+            else None
+        )
+        reported_duration = _float_or_none(capture.get("duration_from_frames_s") or capture.get("duration_s"))
+        reported_callback_duration = _float_or_none(capture.get("callback_clock_duration_s"))
+        reported_drift = _float_or_none(capture.get("frame_clock_drift_ppm"))
+        if reported_duration is None or abs(reported_duration - duration_from_frames_s) > 0.001:
+            failures.append("capture duration_from_frames_s did not match WAV frame count")
+        if reported_callback_duration is None or abs(reported_callback_duration - callback_clock_duration_s) > 0.002:
+            failures.append("capture callback_clock_duration_s did not match chunk callback timing")
+        if frame_clock_drift_ppm is None or reported_drift is None or abs(reported_drift - frame_clock_drift_ppm) > 25.0:
+            failures.append("capture frame_clock_drift_ppm did not match recomputed chunk timing")
+
+    if not capture.get("artifact_hash_chain_present"):
+        failures.append("capture artifact_hash_chain_present must be true")
+    if not capture.get("release_proof"):
+        failures.append("capture release_proof must be true")
+
+    return failures
+
+
+def _live_capture_gate(spec: EvidenceSpec) -> GateResult:
+    report = _load_json(spec.path)
+    prefix = _pass_fail_prefix(spec, report)
+    if prefix:
+        return prefix
+    assert report is not None
+
+    prototype = _reject_prototype_fixture(spec, report)
+    if prototype:
+        return prototype
+
+    capture = _capture_summary(report)
+    source_kind = capture.get("capture_source_kind") or report.get("capture_source_kind")
+    release_proof = bool(capture.get("release_proof") or _summary(report).get("release_proof"))
+    missing = _missing_gates(report, LIVE_CAPTURE_REQUIRED_GATES)
+    failures: list[str] = []
+    if source_kind != "microphone":
+        failures.append(f"capture_source_kind must be microphone, got {source_kind!r}")
+    if not release_proof:
+        failures.append("release_proof must be true for microphone capture evidence")
+    if missing:
+        failures.append(f"missing/passing required live-capture gates: {', '.join(missing)}")
+    failures.extend(_live_capture_artifact_failures(spec, report, capture))
+    if failures:
+        return _fail(spec, "; ".join(failures))
+    return _pass(spec, "coherent host microphone artifact evidence present")
+
+
+def _causal_diarization_gate(spec: EvidenceSpec) -> GateResult:
+    report = _load_json(spec.path)
+    prefix = _pass_fail_prefix(spec, report)
+    if prefix:
+        return prefix
+    assert report is not None
+
+    missing = _missing_gates(report, CAUSAL_DIARIZATION_REQUIRED_GATES)
+    metrics = _summary(report).get("streaming_metrics", {})
+    metrics = metrics if isinstance(metrics, dict) else {}
+    failures: list[str] = []
+    if report.get("streaming_mode") not in {"raw_pcm_rolling_stateful", "live_pcm_rolling_stateful"}:
+        failures.append(f"unexpected streaming_mode {report.get('streaming_mode')!r}")
+    if missing:
+        failures.append(f"missing/passing required causal-diarization gates: {', '.join(missing)}")
+    if metrics.get("causality_ok") is not True:
+        failures.append("streaming_metrics.causality_ok must be true")
+    if int(metrics.get("max_future_samples_used", -1)) != 0:
+        failures.append("streaming_metrics.max_future_samples_used must be 0")
+    if failures:
+        return _fail(spec, "; ".join(failures))
+    return _pass(spec)
+
+
+def _tse_gate(spec: EvidenceSpec) -> GateResult:
+    report = _load_json(spec.path)
+    if report is None:
+        return _fail(spec, f"missing required report: {spec.description}")
+
+    missing_real_model = _missing_gates(report, TSE_REAL_MODEL_REQUIRED_GATES)
+    if _summary_passed(report) and not missing_real_model:
+        return _pass(spec, "real TSE/separation beats mixture passthrough with release-candidate gates")
+
+    missing_oracle = _missing_gates(report, TSE_ORACLE_QUALITY_GATES)
+    failures: list[str] = []
+    if not _summary_passed(report):
+        failures.append("report summary did not pass real-model release-candidate gates")
+    if missing_real_model:
+        failures.append(
+            "missing/passing required real-model TSE gates: " + ", ".join(missing_real_model)
+        )
+    if missing_oracle:
+        failures.append(
+            "oracle-quality diagnostic gates still failing: " + ", ".join(missing_oracle)
+        )
+    if not any(_gate_passed(report, gate_name) for gate_name in TSE_PASSTHROUGH_GATES) and missing_real_model:
+        failures.append("report does not prove the real separator beats mixture passthrough")
+    return _fail(spec, "; ".join(failures))
+
+
+def _translation_after_tse_gate(spec: EvidenceSpec) -> GateResult:
+    report = _load_json(spec.path)
+    prefix = _pass_fail_prefix(spec, report)
+    if prefix:
+        return prefix
+    assert report is not None
+
+    failures: list[str] = []
+    missing = _missing_gates(report, TRANSLATION_REQUIRED_GATES)
+    if missing:
+        failures.append(
+            "missing/passing required translation-after-TSE gates: " + ", ".join(missing)
+        )
+
+    adapter = report.get("adapter", {})
+    adapter = adapter if isinstance(adapter, dict) else {}
+    translation = adapter.get("translation", {})
+    translation = translation if isinstance(translation, dict) else {}
+    streaming_mode = translation.get("streaming_mode") or report.get("streaming_mode")
+    if not isinstance(streaming_mode, str) or not streaming_mode:
+        failures.append("adapter.translation.streaming_mode must be declared")
+    elif any(streaming_mode.startswith(prefix) for prefix in ORACLE_TRANSLATION_STREAMING_PREFIXES):
+        failures.append(
+            f"translation streaming_mode must use non-oracle diarization, got {streaming_mode!r}"
+        )
+
+    segmentation_prior = translation.get("segmentation_prior")
+    if not isinstance(segmentation_prior, str) or not segmentation_prior:
+        failures.append("adapter.translation.segmentation_prior must be declared")
+    elif segmentation_prior == "oracle_diarization":
+        failures.append("translation segmentation_prior must not be oracle_diarization")
+
+    translation_diarization_adapter_id = translation.get("diarization_adapter_id")
+    if (
+        not isinstance(translation_diarization_adapter_id, str)
+        or not translation_diarization_adapter_id
+    ):
+        failures.append("adapter.translation.diarization_adapter_id must be declared")
+    elif translation_diarization_adapter_id in ORACLE_DIARIZATION_ADAPTER_IDS:
+        failures.append(
+            "adapter.translation.diarization_adapter_id must be non-oracle, "
+            f"got {translation_diarization_adapter_id!r}"
+        )
+
+    if translation.get("uses_oracle_diarization") is not False:
+        failures.append("adapter.translation.uses_oracle_diarization must be false")
+
+    diarization = report.get("benchmarks", {}).get("diarization", {})
+    diarization = diarization if isinstance(diarization, dict) else {}
+    diarization_adapter_id = diarization.get("adapter_id")
+    if diarization_adapter_id in ORACLE_DIARIZATION_ADAPTER_IDS:
+        failures.append(
+            f"benchmarks.diarization.adapter_id must be non-oracle, got {diarization_adapter_id!r}"
+        )
+
+    if failures:
+        return _fail(spec, "; ".join(failures))
+    return _pass(spec, "non-oracle streaming speech translation evidence present after accepted TSE")
+
+
+def _voice_gate(spec: EvidenceSpec) -> GateResult:
+    report = _load_json(spec.path)
+    prefix = _pass_fail_prefix(spec, report)
+    if prefix:
+        return prefix
+    assert report is not None
+
+    prototype = _reject_prototype_fixture(spec, report)
+    if prototype:
+        return prototype
+    missing = _missing_gates(report, VOICE_REQUIRED_GATES)
+    if missing:
+        return _fail(spec, f"missing/passing required voice/TTS gates: {', '.join(missing)}")
+
+    failures: list[str] = []
+    summary = _summary(report)
+    voice_status = summary.get("voice_clone_status")
+    voice_claim = summary.get("voice_similarity_claim")
+    if voice_status not in {"fallback_voice", "same_voice_candidate"}:
+        failures.append(
+            "summary.voice_clone_status must be fallback_voice or same_voice_candidate"
+        )
+    if voice_status == "fallback_voice" and voice_claim != "not_claimed":
+        failures.append("fallback voice reports must set voice_similarity_claim='not_claimed'")
+
+    benchmark = report.get("benchmarks", {}).get("same_voice_or_fallback_tts", {})
+    benchmark = benchmark if isinstance(benchmark, dict) else {}
+    segments = benchmark.get("segments")
+    if not isinstance(segments, list) or not segments:
+        failures.append("benchmarks.same_voice_or_fallback_tts.segments must be non-empty")
+    else:
+        for index, segment in enumerate(segments):
+            if not isinstance(segment, dict):
+                failures.append(f"voice/TTS segment {index} is not an object")
+                continue
+            audio_path = _resolve_artifact_path(spec.path, segment.get("tts_output_path"))
+            if audio_path is None or not audio_path.exists():
+                failures.append(f"voice/TTS segment {index} output audio is missing")
+                continue
+            expected_hash = segment.get("tts_output_sha256")
+            if not _is_sha256(expected_hash):
+                failures.append(f"voice/TTS segment {index} tts_output_sha256 is invalid")
+            elif _sha256_file(audio_path) != expected_hash:
+                failures.append(f"voice/TTS segment {index} tts_output_sha256 does not match file")
+            frame_count = _int_or_none(segment.get("tts_output_frame_count"))
+            if frame_count is not None:
+                try:
+                    with wave.open(str(audio_path), "rb") as wav:
+                        if wav.getnframes() != frame_count:
+                            failures.append(
+                                f"voice/TTS segment {index} frame count does not match WAV"
+                            )
+                        if wav.getnchannels() != 1:
+                            failures.append(f"voice/TTS segment {index} WAV must be mono")
+                        if wav.getsampwidth() != 2:
+                            failures.append(
+                                f"voice/TTS segment {index} WAV sample width must be 2 bytes"
+                            )
+                except (OSError, wave.Error) as exc:
+                    failures.append(f"voice/TTS segment {index} WAV could not be inspected: {exc}")
+            level_error = _float_or_none(segment.get("output_level_error_db"))
+            if level_error is None or level_error > 0.75:
+                failures.append(
+                    f"voice/TTS segment {index} output level error must be <= 0.75 dB"
+                )
+            if voice_status == "fallback_voice":
+                if segment.get("voice_clone_reference_used") is not False:
+                    failures.append(
+                        f"voice/TTS segment {index} fallback must not use voice clone references"
+                    )
+                if segment.get("voice_similarity_claim") != "not_claimed":
+                    failures.append(
+                        f"voice/TTS segment {index} fallback must not claim voice similarity"
+                    )
+            reference_hash = segment.get("reference_audio_sha256")
+            if reference_hash is not None and not _is_sha256(reference_hash):
+                failures.append(f"voice/TTS segment {index} reference_audio_sha256 is invalid")
+            reference_path = _resolve_artifact_path(spec.path, segment.get("reference_audio_path"))
+            if reference_hash is not None and reference_path is not None and reference_path.exists():
+                if _sha256_file(reference_path) != reference_hash:
+                    failures.append(
+                        f"voice/TTS segment {index} reference_audio_sha256 does not match file"
+                    )
+
+    if failures:
+        return _fail(spec, "; ".join(failures))
+    return _pass(spec)
+
+
+def _room_suppression_summary(report: dict[str, Any]) -> dict[str, Any]:
+    benchmark = report.get("benchmarks", {}).get("room_playback_suppression", {})
+    if isinstance(benchmark, dict):
+        summary = benchmark.get("summary", {})
+        if isinstance(summary, dict):
+            return summary
+    return {}
+
+
+def _room_suppression_benchmark(report: dict[str, Any]) -> dict[str, Any]:
+    benchmark = report.get("benchmarks", {}).get("room_playback_suppression", {})
+    return benchmark if isinstance(benchmark, dict) else {}
+
+
+def _room_suppression_gate(spec: EvidenceSpec) -> GateResult:
+    report = _load_json(spec.path)
+    prefix = _pass_fail_prefix(spec, report)
+    if prefix:
+        return prefix
+    assert report is not None
+
+    prototype = _reject_prototype_fixture(spec, report)
+    if prototype:
+        return prototype
+
+    room_benchmark = _room_suppression_benchmark(report)
+    room_summary = _room_suppression_summary(report)
+    missing = _missing_gates(report, ROOM_SUPPRESSION_REQUIRED_GATES)
+    failures: list[str] = []
+    if report.get("fixture_kind") != "real_room_playback_suppression":
+        failures.append(f"fixture_kind must be real_room_playback_suppression, got {report.get('fixture_kind')!r}")
+    if room_summary.get("measurement_kind") != ROOM_REQUIRED_MEASUREMENT_KIND:
+        failures.append(
+            f"room_playback_suppression.summary.measurement_kind must be {ROOM_REQUIRED_MEASUREMENT_KIND}"
+        )
+    if room_summary.get("translated_audio_is_surrogate") is True:
+        failures.append("surrogate translated audio cannot satisfy real-room suppression")
+    if missing:
+        failures.append(f"missing/passing required room-suppression gates: {', '.join(missing)}")
+    device_info = room_benchmark.get("device", {})
+    if not isinstance(device_info, dict):
+        failures.append("room_playback_suppression.device must be recorded")
+        device_info = {}
+    input_device = device_info.get("input_device", {})
+    output_device = device_info.get("output_device", {})
+    if not isinstance(input_device, dict) or not isinstance(output_device, dict):
+        failures.append("room device info must include input_device and output_device")
+    else:
+        for label, device in (("input_device", input_device), ("output_device", output_device)):
+            for field in ("name", "hostapi", "hostapi_name", "max_input_channels", "max_output_channels"):
+                if device.get(field) is None:
+                    failures.append(f"room device {label}.{field} must be recorded")
+    metric_values = {
+        "device_path_fingerprint": room_summary.get("device_path_fingerprint"),
+        "device_path_identity_recorded": room_summary.get("device_path_identity_recorded"),
+        "input_channels": _float_or_none(room_summary.get("input_channels")),
+        "output_channels": _float_or_none(room_summary.get("output_channels")),
+        "sample_rate_hz": _float_or_none(room_summary.get("sample_rate_hz")),
+        "source_calibration_dbfs": _float_or_none(room_summary.get("source_calibration_dbfs")),
+        "source_calibration_reference_correlation": _float_or_none(
+            room_summary.get("source_calibration_reference_correlation")
+        ),
+        "source_calibration_reference_distortion_db": _float_or_none(
+            room_summary.get("source_calibration_reference_distortion_db")
+        ),
+        "source_residual_dbfs": _float_or_none(room_summary.get("source_residual_dbfs")),
+        "source_residual_reduction_db": _float_or_none(room_summary.get("source_residual_reduction_db")),
+        "translated_calibration_reference_correlation": _float_or_none(
+            room_summary.get("translated_calibration_reference_correlation")
+        ),
+        "translated_calibration_reference_distortion_db": _float_or_none(
+            room_summary.get("translated_calibration_reference_distortion_db")
+        ),
+        "translated_output_distortion_db": _float_or_none(room_summary.get("translated_output_distortion_db")),
+        "translated_output_correlation": _float_or_none(room_summary.get("translated_output_correlation")),
+        "translated_reference_dbfs": _float_or_none(room_summary.get("translated_reference_dbfs")),
+    }
+    for field, value in metric_values.items():
+        if field in {"device_path_fingerprint", "device_path_identity_recorded"}:
+            continue
+        if value is None:
+            failures.append(f"room_playback_suppression.summary.{field} must be finite")
+    if room_summary.get("device_path_identity_recorded") is not True:
+        failures.append("room_playback_suppression.summary.device_path_identity_recorded must be true")
+    fingerprint = room_summary.get("device_path_fingerprint")
+    if not _is_sha256(fingerprint):
+        failures.append("room_playback_suppression.summary.device_path_fingerprint must be a SHA-256 hex string")
+    sample_rate_hz = metric_values["sample_rate_hz"]
+    input_channels = metric_values["input_channels"]
+    output_channels = metric_values["output_channels"]
+    if (
+        isinstance(device_info, dict)
+        and _is_sha256(fingerprint)
+        and sample_rate_hz is not None
+        and input_channels is not None
+        and output_channels is not None
+    ):
+        expected_fingerprint = _device_path_fingerprint(
+            device_info,
+            sample_rate_hz=int(sample_rate_hz),
+            input_channels=int(input_channels),
+            output_channels=int(output_channels),
+        )
+        if fingerprint != expected_fingerprint:
+            failures.append("room_playback_suppression.summary.device_path_fingerprint does not match device info")
+    if isinstance(input_device, dict) and input_channels is not None:
+        try:
+            if int(input_device.get("max_input_channels", 0)) < int(input_channels):
+                failures.append("room input device does not support reported input_channels")
+        except (TypeError, ValueError):
+            failures.append("room input device max_input_channels must be numeric")
+    if isinstance(output_device, dict) and output_channels is not None:
+        try:
+            if int(output_device.get("max_output_channels", 0)) < int(output_channels):
+                failures.append("room output device does not support reported output_channels")
+        except (TypeError, ValueError):
+            failures.append("room output device max_output_channels must be numeric")
+    suppression_claim = room_summary.get("suppression_claim")
+    if not isinstance(suppression_claim, str) or not suppression_claim:
+        failures.append("room_playback_suppression.summary.suppression_claim must be declared")
+    elif suppression_claim != ROOM_REQUIRED_SUPPRESSION_CLAIM:
+        failures.append(
+            f"room_playback_suppression.summary.suppression_claim must be {ROOM_REQUIRED_SUPPRESSION_CLAIM}"
+        )
+    reduction = metric_values["source_residual_reduction_db"]
+    if reduction is not None and reduction < ROOM_MIN_SOURCE_RESIDUAL_REDUCTION_DB:
+        failures.append(
+            "room_playback_suppression.summary.source_residual_reduction_db must be "
+            f">= {ROOM_MIN_SOURCE_RESIDUAL_REDUCTION_DB:.1f}"
+        )
+    source_calibration = metric_values["source_calibration_dbfs"]
+    if source_calibration is not None and source_calibration < ROOM_MIN_CALIBRATION_DBFS:
+        failures.append(
+            "room_playback_suppression.summary.source_calibration_dbfs must be "
+            f">= {ROOM_MIN_CALIBRATION_DBFS:.1f}"
+        )
+    translated_calibration = metric_values["translated_reference_dbfs"]
+    if translated_calibration is not None and translated_calibration < ROOM_MIN_CALIBRATION_DBFS:
+        failures.append(
+            "room_playback_suppression.summary.translated_reference_dbfs must be "
+            f">= {ROOM_MIN_CALIBRATION_DBFS:.1f}"
+        )
+    source_calibration_corr = metric_values["source_calibration_reference_correlation"]
+    if source_calibration_corr is not None and source_calibration_corr < ROOM_MIN_CALIBRATION_CORRELATION:
+        failures.append(
+            "room_playback_suppression.summary.source_calibration_reference_correlation must be "
+            f">= {ROOM_MIN_CALIBRATION_CORRELATION:.3f}"
+        )
+    translated_calibration_corr = metric_values["translated_calibration_reference_correlation"]
+    if (
+        translated_calibration_corr is not None
+        and translated_calibration_corr < ROOM_MIN_CALIBRATION_CORRELATION
+    ):
+        failures.append(
+            "room_playback_suppression.summary.translated_calibration_reference_correlation must be "
+            f">= {ROOM_MIN_CALIBRATION_CORRELATION:.3f}"
+        )
+    source_calibration_distortion = metric_values["source_calibration_reference_distortion_db"]
+    if (
+        source_calibration_distortion is not None
+        and source_calibration_distortion > ROOM_MAX_CALIBRATION_DISTORTION_DB
+    ):
+        failures.append(
+            "room_playback_suppression.summary.source_calibration_reference_distortion_db must be "
+            f"<= {ROOM_MAX_CALIBRATION_DISTORTION_DB:.1f}"
+        )
+    translated_calibration_distortion = metric_values["translated_calibration_reference_distortion_db"]
+    if (
+        translated_calibration_distortion is not None
+        and translated_calibration_distortion > ROOM_MAX_CALIBRATION_DISTORTION_DB
+    ):
+        failures.append(
+            "room_playback_suppression.summary.translated_calibration_reference_distortion_db must be "
+            f"<= {ROOM_MAX_CALIBRATION_DISTORTION_DB:.1f}"
+        )
+    distortion = metric_values["translated_output_distortion_db"]
+    if distortion is not None and distortion > ROOM_MAX_TRANSLATED_OUTPUT_DISTORTION_DB:
+        failures.append(
+            "room_playback_suppression.summary.translated_output_distortion_db must be "
+            f"<= {ROOM_MAX_TRANSLATED_OUTPUT_DISTORTION_DB:.1f}"
+        )
+    translated_corr = metric_values["translated_output_correlation"]
+    if translated_corr is not None and translated_corr < ROOM_MIN_TRANSLATED_OUTPUT_CORRELATION:
+        failures.append(
+            "room_playback_suppression.summary.translated_output_correlation must be "
+            f">= {ROOM_MIN_TRANSLATED_OUTPUT_CORRELATION:.3f}"
+        )
+    artifact_paths = report.get("artifact_paths", {})
+    artifact_hashes = report.get("artifact_hashes", {})
+    resolved_artifacts: dict[str, Path] = {}
+    if not isinstance(artifact_paths, dict) or not isinstance(artifact_hashes, dict):
+        failures.append("room report must include artifact_paths and artifact_hashes objects")
+    else:
+        for key in (
+            "room_loopback_recording",
+            "source_only_room_recording",
+            "source_reference",
+            "translated_only_room_recording",
+            "translated_playback_reference",
+        ):
+            artifact_path = _resolve_artifact_path(spec.path, artifact_paths.get(key))
+            expected_hash = artifact_hashes.get(key)
+            if artifact_path is None or not artifact_path.exists():
+                failures.append(f"room artifact {key!r} is missing")
+                continue
+            resolved_artifacts[key] = artifact_path
+            if not _is_sha256(expected_hash):
+                failures.append(f"room artifact hash {key!r} is invalid")
+            elif _sha256_file(artifact_path) != expected_hash:
+                failures.append(f"room artifact hash {key!r} does not match file")
+            if key in {"room_loopback_recording", "source_only_room_recording", "translated_only_room_recording"}:
+                try:
+                    with wave.open(str(artifact_path), "rb") as wav:
+                        if wav.getnchannels() != 1:
+                            failures.append(f"{key} WAV must be mono")
+                        if wav.getsampwidth() != 2:
+                            failures.append(f"{key} WAV sample width must be 2 bytes")
+                        if wav.getnframes() <= 0:
+                            failures.append(f"{key} WAV must contain frames")
+                except (OSError, wave.Error) as exc:
+                    failures.append(f"{key} WAV could not be inspected: {exc}")
+    if not failures:
+        try:
+            recomputed = _recompute_room_metrics(resolved_artifacts)
+        except (OSError, ValueError, wave.Error) as exc:
+            failures.append(f"room metrics could not be recomputed from WAV artifacts: {exc}")
+        else:
+            for field, recomputed_value in recomputed.items():
+                reported_value = metric_values.get(field)
+                if reported_value is None:
+                    continue
+                tolerance = _room_metric_tolerance(field)
+                if abs(reported_value - recomputed_value) > tolerance:
+                    failures.append(
+                        f"room_playback_suppression.summary.{field}={reported_value:.6g} "
+                        f"does not match WAV-derived {recomputed_value:.6g}"
+                    )
+            if recomputed["source_residual_reduction_db"] < ROOM_MIN_SOURCE_RESIDUAL_REDUCTION_DB:
+                failures.append(
+                    "WAV-derived room source residual reduction must be "
+                    f">= {ROOM_MIN_SOURCE_RESIDUAL_REDUCTION_DB:.1f}"
+                )
+            if recomputed["source_calibration_dbfs"] < ROOM_MIN_CALIBRATION_DBFS:
+                failures.append(
+                    "WAV-derived source calibration level must be "
+                    f">= {ROOM_MIN_CALIBRATION_DBFS:.1f} dBFS"
+                )
+            if recomputed["translated_reference_dbfs"] < ROOM_MIN_CALIBRATION_DBFS:
+                failures.append(
+                    "WAV-derived translated calibration level must be "
+                    f">= {ROOM_MIN_CALIBRATION_DBFS:.1f} dBFS"
+                )
+            if recomputed["source_calibration_reference_correlation"] < ROOM_MIN_CALIBRATION_CORRELATION:
+                failures.append(
+                    "WAV-derived source calibration/reference correlation must be "
+                    f">= {ROOM_MIN_CALIBRATION_CORRELATION:.3f}"
+                )
+            if recomputed["translated_calibration_reference_correlation"] < ROOM_MIN_CALIBRATION_CORRELATION:
+                failures.append(
+                    "WAV-derived translated calibration/reference correlation must be "
+                    f">= {ROOM_MIN_CALIBRATION_CORRELATION:.3f}"
+                )
+            if recomputed["source_calibration_reference_distortion_db"] > ROOM_MAX_CALIBRATION_DISTORTION_DB:
+                failures.append(
+                    "WAV-derived source calibration/reference distortion must be "
+                    f"<= {ROOM_MAX_CALIBRATION_DISTORTION_DB:.1f} dB"
+                )
+            if (
+                recomputed["translated_calibration_reference_distortion_db"]
+                > ROOM_MAX_CALIBRATION_DISTORTION_DB
+            ):
+                failures.append(
+                    "WAV-derived translated calibration/reference distortion must be "
+                    f"<= {ROOM_MAX_CALIBRATION_DISTORTION_DB:.1f} dB"
+                )
+            if recomputed["translated_output_distortion_db"] > ROOM_MAX_TRANSLATED_OUTPUT_DISTORTION_DB:
+                failures.append(
+                    "WAV-derived translated output distortion must be "
+                    f"<= {ROOM_MAX_TRANSLATED_OUTPUT_DISTORTION_DB:.1f} dB"
+                )
+            if recomputed["translated_output_correlation"] < ROOM_MIN_TRANSLATED_OUTPUT_CORRELATION:
+                failures.append(
+                    "WAV-derived translated output correlation must be "
+                    f">= {ROOM_MIN_TRANSLATED_OUTPUT_CORRELATION:.3f}"
+                )
+    if failures:
+        return _fail(spec, "; ".join(failures))
+    return _pass(spec)
+
+
+def _playback_prototype_gate(spec: EvidenceSpec) -> GateResult:
+    report = _load_json(spec.path)
+    prefix = _pass_fail_prefix(spec, report)
+    if prefix:
+        return prefix
+    assert report is not None
+
+    if report.get("fixture_kind") != "fleurs_playback_suppression":
+        return _fail(spec, f"unexpected playback prototype fixture_kind: {report.get('fixture_kind')!r}")
+    claim_gate = _quality_gates(report).get("suppression_claim_is_honest")
+    if not isinstance(claim_gate, dict) or claim_gate.get("value") != PLAYBACK_PROTOTYPE_CLAIM:
+        return _fail(spec, "playback prototype did not preserve the explicit not-true-cancellation claim")
+    return _pass(spec, "prototype playback/ducking fixture passed with honest non-cancellation claim")
+
+
+def _capture_prototype_gate(spec: EvidenceSpec) -> GateResult:
+    report = _load_json(spec.path)
+    prefix = _pass_fail_prefix(spec, report)
+    if prefix:
+        return prefix
+    assert report is not None
+
+    capture = _capture_summary(report)
+    source_kind = capture.get("capture_source_kind") or report.get("capture_source_kind")
+    release_proof = bool(capture.get("release_proof") or _summary(report).get("release_proof"))
+    if report.get("fixture_kind") != "fixture_pcm_capture_replay" or source_kind != "fixture_replay":
+        return _fail(spec, "capture prototype must identify itself as fixture replay")
+    if release_proof:
+        return _fail(spec, "capture prototype must not set release_proof=true")
+    if not _gate_passed(report, "capture_not_release_proof"):
+        return _fail(spec, "capture prototype must pass capture_not_release_proof gate")
+    return _pass(spec, "fixture PCM capture scaffold passed and remained non-release evidence")
+
+
+def release_specs(args: argparse.Namespace) -> list[EvidenceSpec]:
+    return [
+        EvidenceSpec(
+            "live_microphone_capture_runtime",
+            args.live_capture_report,
+            "live microphone capture path with timestamped PCM chunks",
+            "Implement a real microphone capture adapter that proves chunk timing, levels, "
+            "drop/reorder counts, device identity, and sample-rate stability.",
+        ),
+        EvidenceSpec(
+            "causal_diarization_runtime",
+            args.causal_diarization_report,
+            "causal diarization over arriving PCM chunks",
+            "Promote a rolling diarization adapter from fixture smoke to a passing causal runtime report.",
+        ),
+        EvidenceSpec(
+            "real_tse_or_separation_beats_passthrough",
+            args.tse_report,
+            "real target-speaker extraction or separation that beats mixture passthrough",
+            "Replace warning-only separator spikes with a report that passes the mixture-passthrough comparison.",
+        ),
+        EvidenceSpec(
+            "streaming_speech_translation_from_audio",
+            args.streaming_translation_report,
+            "speech translation after accepted diarization and TSE/separation",
+            "Run streaming ASR/translation from causal/non-oracle diarization and accepted speaker-isolated audio.",
+        ),
+        EvidenceSpec(
+            "same_voice_or_fallback_tts_audio_stream",
+            args.voice_report,
+            "same-voice or consent-safe fallback TTS audio stream",
+            "Add a voice clone/TTS benchmark with consent metadata, output audio hashes, level matching, and fallback state.",
+        ),
+        EvidenceSpec(
+            "real_room_playback_suppression_loopback",
+            args.room_suppression_report,
+            "real-room translated playback loopback with source residual measurement",
+            "Qualify a reference-faithful device path, then record a full room check that preserves translated playback while reducing source residual.",
+        ),
+    ]
+
+
+def prototype_specs(args: argparse.Namespace) -> list[EvidenceSpec]:
+    return [
+        EvidenceSpec(
+            "playback_suppression_fixture",
+            args.playback_prototype_report,
+            "synthetic ducking/masking playback fixture",
+            "Keep this as a gain-staging/prototype gate; do not use it as product source-cancellation evidence.",
+            release_blocking=False,
+        ),
+        EvidenceSpec(
+            "fixture_live_capture_scaffold",
+            args.capture_prototype_report,
+            "fixture-backed PCM capture scaffold",
+            "Use this to validate chunk plumbing, then replace it with real microphone evidence.",
+            release_blocking=False,
+        ),
+    ]
+
+
+def evaluate(args: argparse.Namespace) -> tuple[list[GateResult], list[GateResult]]:
+    release_results: list[GateResult] = []
+    for spec in release_specs(args):
+        if spec.name == "live_microphone_capture_runtime":
+            release_results.append(_live_capture_gate(spec))
+        elif spec.name == "causal_diarization_runtime":
+            release_results.append(_causal_diarization_gate(spec))
+        elif spec.name == "real_tse_or_separation_beats_passthrough":
+            release_results.append(_tse_gate(spec))
+        elif spec.name == "streaming_speech_translation_from_audio":
+            release_results.append(_translation_after_tse_gate(spec))
+        elif spec.name == "same_voice_or_fallback_tts_audio_stream":
+            release_results.append(_voice_gate(spec))
+        elif spec.name == "real_room_playback_suppression_loopback":
+            release_results.append(_room_suppression_gate(spec))
+        else:
+            raise AssertionError(f"unhandled release gate: {spec.name}")
+
+    prototype_results: list[GateResult] = []
+    for spec in prototype_specs(args):
+        if spec.name == "playback_suppression_fixture":
+            prototype_results.append(_playback_prototype_gate(spec))
+        elif spec.name == "fixture_live_capture_scaffold":
+            prototype_results.append(_capture_prototype_gate(spec))
+        else:
+            raise AssertionError(f"unhandled prototype gate: {spec.name}")
+    return release_results, prototype_results
+
+
+def build_report(release_results: list[GateResult], prototype_results: list[GateResult]) -> dict[str, Any]:
+    blocking_failures = [gate for gate in release_results if not gate.passed and gate.release_blocking]
+    return {
+        "schema_version": 1,
+        "generated_at_unix": int(time.time()),
+        "summary": {
+            "passed": not blocking_failures,
+            "release_blocking_gate_count": len(release_results),
+            "release_blocking_failure_count": len(blocking_failures),
+            "prototype_evidence_gate_count": len(prototype_results),
+        },
+        "release_blocking_gates": [gate.as_dict() for gate in release_results],
+        "prototype_evidence_gates": [gate.as_dict() for gate in prototype_results],
+        "detractor_loop": {
+            "verdict": (
+                "Do not call this a working realtime translated-audio release until every "
+                "release-blocking gate passes with product-specific real-audio evidence."
+            ),
+            "strongest_current_objection": (
+                "Passing report files are not enough. The gate rejects stubs and prototype "
+                "fixtures unless the report carries product-specific gates and independently "
+                "coherent artifacts. Local host capture evidence is artifact-coherent, not "
+                "tamper-proof provenance."
+            ),
+        },
+    }
+
+
+def write_report(report: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def print_summary(report: dict[str, Any], report_path: Path) -> None:
+    status = "PASS" if report["summary"]["passed"] else "FAIL"
+    print(f"release audio gate {status}")
+    for gate in report["release_blocking_gates"]:
+        gate_status = "PASS" if gate["passed"] else "FAIL"
+        print(f"  [{gate_status}] {gate['name']}: {gate['message']}")
+        if not gate["passed"]:
+            print(f"    next: {gate['next_step']}")
+    for gate in report["prototype_evidence_gates"]:
+        gate_status = "PASS" if gate["passed"] else "FAIL"
+        print(f"  [prototype {gate_status}] {gate['name']}: {gate['message']}")
+    print(f"wrote release audio gate report to {report_path}")
+
+
+def _report(passed: bool, gates: list[dict[str, Any]] | None = None, **extra: Any) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "schema_version": 1,
+        "summary": {
+            "passed": passed,
+            "quality_gates": gates or [],
+        },
+    }
+    payload.update(extra)
+    return payload
+
+
+def _passed_gates(names: set[str]) -> list[dict[str, Any]]:
+    return [{"name": name, "passed": True, "value": True} for name in sorted(names)]
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+
+def _write_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
+    path.write_text(
+        "\n".join(json.dumps(record, sort_keys=True) for record in records) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_unit_pcm16_wav(path: Path, sample_rate_hz: int, frame_count: int) -> None:
+    sample = int(1000).to_bytes(2, byteorder="little", signed=True)
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate_hz)
+        wav.writeframes(sample * frame_count)
+
+
+def _write_pcm16_samples_wav(path: Path, sample_rate_hz: int, samples: list[int]) -> None:
+    frames = bytearray()
+    for sample in samples:
+        clamped = max(-32768, min(32767, int(round(sample))))
+        frames.extend(clamped.to_bytes(2, byteorder="little", signed=True))
+    with wave.open(str(path), "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(sample_rate_hz)
+        wav.writeframes(bytes(frames))
+
+
+def _write_live_capture_fixture_report(path: Path) -> None:
+    sample_rate_hz = 16_000
+    chunk_frames = 8_000
+    chunk_duration_ms = 500.0
+    audio_path = path.parent / "captured.wav"
+    chunks_path = path.parent / "capture_chunks.jsonl"
+    _write_unit_pcm16_wav(audio_path, sample_rate_hz, chunk_frames * 2)
+    records = [
+        {
+            "callback_wall_time_offset_s": 0.0,
+            "chunk_index": 0,
+            "current_time_s": None,
+            "duration_error_ms": 0.0,
+            "duration_ms": chunk_duration_ms,
+            "end_sample": chunk_frames,
+            "frame_count": chunk_frames,
+            "input_adc_time_s": None,
+            "peak_dbfs": -30.0,
+            "rms_dbfs": -40.0,
+            "sha256_float32": "0" * 64,
+            "start_sample": 0,
+            "status": "",
+            "target_duration_ms": chunk_duration_ms,
+        },
+        {
+            "callback_wall_time_offset_s": 0.5,
+            "chunk_index": 1,
+            "current_time_s": None,
+            "duration_error_ms": 0.0,
+            "duration_ms": chunk_duration_ms,
+            "end_sample": chunk_frames * 2,
+            "frame_count": chunk_frames,
+            "input_adc_time_s": None,
+            "peak_dbfs": -30.0,
+            "rms_dbfs": -40.0,
+            "sha256_float32": "1" * 64,
+            "start_sample": chunk_frames,
+            "status": "",
+            "target_duration_ms": chunk_duration_ms,
+        },
+    ]
+    _write_jsonl(chunks_path, records)
+    audio_hash = _sha256_file(audio_path)
+    chunks_hash = _sha256_file(chunks_path)
+    capture_summary = {
+        "adapter_id": EXPECTED_LIVE_CAPTURE_ADAPTER_ID,
+        "artifact_hash_chain_present": True,
+        "backend": EXPECTED_LIVE_CAPTURE_BACKEND,
+        "callback_clock_duration_s": 1.0,
+        "callback_status_count": 0,
+        "callback_statuses": [],
+        "capture_chunks_path": str(chunks_path),
+        "capture_chunks_sha256": chunks_hash,
+        "capture_source_kind": "microphone",
+        "captured_audio_path": str(audio_path),
+        "captured_audio_sha256": audio_hash,
+        "captured_frame_count": chunk_frames * 2,
+        "channel_count": 1,
+        "chunk_count": 2,
+        "chunk_frame_count": chunk_frames,
+        "chunk_hashes_present": True,
+        "chunk_ms": chunk_duration_ms,
+        "device": {
+            "default_samplerate": float(sample_rate_hz),
+            "hostapi": "unit",
+            "max_input_channels": 1,
+            "name": "unit microphone",
+            "requested_device": None,
+        },
+        "dropped_or_reordered_chunk_count": 0,
+        "duration_from_frames_s": 1.0,
+        "duration_s": 1.0,
+        "expected_indices_match": True,
+        "frame_clock_drift_ppm": 0.0,
+        "generator": EXPECTED_LIVE_CAPTURE_GENERATOR,
+        "input_level_dbfs": -40.0,
+        "input_peak_dbfs": -30.0,
+        "max_interarrival_jitter_ms": 0.0,
+        "mean_interarrival_ms": chunk_duration_ms,
+        "p95_interarrival_jitter_ms": 0.0,
+        "pcm_subtype": "PCM_16",
+        "provenance_kind": EXPECTED_LIVE_CAPTURE_PROVENANCE_KIND,
+        "provenance_trust_boundary": EXPECTED_LIVE_CAPTURE_TRUST_BOUNDARY,
+        "release_proof": True,
+        "sample_rate_source": "requested_portaudio_stream",
+        "sample_rates_hz": [sample_rate_hz],
+        "timestamp_monotonic": True,
+        "timestamp_source": "callback_wall_clock_fallback",
+        "wall_duration_s": 1.0,
+    }
+    _write_json(
+        path,
+        _report(
+            True,
+            _passed_gates(LIVE_CAPTURE_REQUIRED_GATES),
+            fixture_kind="live_microphone_capture",
+            capture_source_kind="microphone",
+            benchmarks={
+                "capture": {
+                    "adapter_id": EXPECTED_LIVE_CAPTURE_ADAPTER_ID,
+                    "summary": capture_summary,
+                    "chunks": records,
+                }
+            },
+            prediction_paths={"capture_chunks": str(chunks_path)},
+            artifact_paths={"captured_audio": str(audio_path)},
+            artifact_hashes={"captured_audio": audio_hash, "capture_chunks": chunks_hash},
+        ),
+    )
+
+
+def _write_voice_fixture_report(path: Path, *, forge_hash: bool = False) -> None:
+    sample_rate_hz = 16_000
+    frame_count = 8_000
+    audio_path = path.parent / "fallback-tts.wav"
+    reference_path = path.parent / "fallback-reference.wav"
+    _write_unit_pcm16_wav(audio_path, sample_rate_hz, frame_count)
+    _write_unit_pcm16_wav(reference_path, sample_rate_hz, frame_count)
+    audio_hash = _sha256_file(audio_path)
+    reference_hash = _sha256_file(reference_path)
+    if forge_hash:
+        audio_hash = "0" * 64 if audio_hash != "0" * 64 else "1" * 64
+    segment = {
+        "fixture_id": "unit_voice_fixture",
+        "input_level_dbfs": -24.0,
+        "output_level_error_db": 0.0,
+        "reference_audio_path": str(reference_path),
+        "reference_audio_sha256": reference_hash,
+        "reference_audio_usage": "level_measurement_only",
+        "segment_index": 0,
+        "speaker_id": "speaker_unit",
+        "target_language_code": "en",
+        "translated_text": "Unit fallback voice.",
+        "tts_output_frame_count": frame_count,
+        "tts_output_level_dbfs": -24.0,
+        "tts_output_path": str(audio_path),
+        "tts_output_sha256": audio_hash,
+        "voice_clone_reference_used": False,
+        "voice_clone_status": "fallback_voice",
+        "voice_similarity_claim": "not_claimed",
+    }
+    report = _report(
+        True,
+        _passed_gates(VOICE_REQUIRED_GATES),
+        fixture_kind="fallback_tts_audio_stream",
+        benchmarks={
+            "same_voice_or_fallback_tts": {
+                "adapter_id": "unit_fallback_tts",
+                "segments": [segment],
+                "summary": {
+                    "max_output_level_error_db": 0.0,
+                    "segment_count": 1,
+                    "voice_clone_status": "fallback_voice",
+                    "voice_similarity_claim": "not_claimed",
+                },
+            }
+        },
+        adapter={
+            "voice": {
+                "adapter_id": "unit_fallback_tts",
+                "mode": "fallback_voice",
+                "voice_clone_reference_used": False,
+                "voice_similarity_claim": "not_claimed",
+            }
+        },
+    )
+    report["summary"].update(
+        {
+            "max_output_level_error_db": 0.0,
+            "segment_count": 1,
+            "voice_clone_status": "fallback_voice",
+            "voice_similarity_claim": "not_claimed",
+        }
+    )
+    _write_json(path, report)
+
+
+def _write_room_suppression_fixture_report(
+    path: Path,
+    summary_overrides: dict[str, Any] | None = None,
+) -> None:
+    sample_rate_hz = 16_000
+    frame_count = 16_000
+    prefix = path.stem
+    source_path = path.parent / f"{prefix}-room-source-reference.wav"
+    translated_path = path.parent / f"{prefix}-room-translated-reference.wav"
+    source_recording_path = path.parent / f"{prefix}-source-only-room-recording.wav"
+    translated_recording_path = path.parent / f"{prefix}-translated-only-room-recording.wav"
+    recording_path = path.parent / f"{prefix}-room-loopback-recording.wav"
+    residual_gain = 10.0 ** (-7.0 / 20.0)
+    source_samples: list[int] = []
+    translated_samples: list[int] = []
+    loopback_samples: list[int] = []
+    for index in range(frame_count):
+        t = float(index) / float(sample_rate_hz)
+        source = int(round(9000.0 * math.sin(2.0 * math.pi * 220.0 * t)))
+        translated = int(round(8500.0 * math.sin(2.0 * math.pi * 330.0 * t)))
+        source_samples.append(source)
+        translated_samples.append(translated)
+        loopback_samples.append(int(round(translated + (source * residual_gain))))
+    _write_pcm16_samples_wav(source_path, sample_rate_hz, source_samples)
+    _write_pcm16_samples_wav(translated_path, sample_rate_hz, translated_samples)
+    _write_pcm16_samples_wav(source_recording_path, sample_rate_hz, source_samples)
+    _write_pcm16_samples_wav(translated_recording_path, sample_rate_hz, translated_samples)
+    _write_pcm16_samples_wav(recording_path, sample_rate_hz, loopback_samples)
+    artifact_paths = {
+        "room_loopback_recording": str(recording_path),
+        "source_only_room_recording": str(source_recording_path),
+        "source_reference": str(source_path),
+        "translated_only_room_recording": str(translated_recording_path),
+        "translated_playback_reference": str(translated_path),
+    }
+    artifact_hashes = {
+        key: _sha256_file(Path(value))
+        for key, value in artifact_paths.items()
+    }
+    device_info = {
+        "input_device": {
+            "default": False,
+            "default_samplerate": sample_rate_hz,
+            "hostapi": 0,
+            "hostapi_name": "unit-hostapi",
+            "max_input_channels": 1,
+            "max_output_channels": 0,
+            "name": "unit-input",
+            "requested_device": 1,
+            "resolved_device_index": 1,
+        },
+        "output_device": {
+            "default": False,
+            "default_samplerate": sample_rate_hz,
+            "hostapi": 0,
+            "hostapi_name": "unit-hostapi",
+            "max_input_channels": 0,
+            "max_output_channels": 2,
+            "name": "unit-output",
+            "requested_device": 2,
+            "resolved_device_index": 2,
+        },
+    }
+    fingerprint = _device_path_fingerprint(
+        device_info,
+        sample_rate_hz=sample_rate_hz,
+        input_channels=1,
+        output_channels=2,
+    )
+    recomputed = _recompute_room_metrics({key: Path(value) for key, value in artifact_paths.items()})
+    room_summary = {
+        "device_path_fingerprint": fingerprint,
+        "device_path_identity_recorded": True,
+        "input_channels": 1,
+        "measurement_kind": ROOM_REQUIRED_MEASUREMENT_KIND,
+        "output_channels": 2,
+        "sample_rate_hz": sample_rate_hz,
+        "source_calibration_dbfs": round(recomputed["source_calibration_dbfs"], 3),
+        "source_calibration_reference_correlation": round(
+            recomputed["source_calibration_reference_correlation"],
+            6,
+        ),
+        "source_calibration_reference_distortion_db": round(
+            recomputed["source_calibration_reference_distortion_db"],
+            3,
+        ),
+        "source_residual_dbfs": round(recomputed["source_residual_dbfs"], 3),
+        "source_residual_reduction_db": round(recomputed["source_residual_reduction_db"], 3),
+        "suppression_claim": ROOM_REQUIRED_SUPPRESSION_CLAIM,
+        "translated_audio_is_surrogate": False,
+        "translated_calibration_reference_correlation": round(
+            recomputed["translated_calibration_reference_correlation"],
+            6,
+        ),
+        "translated_calibration_reference_distortion_db": round(
+            recomputed["translated_calibration_reference_distortion_db"],
+            3,
+        ),
+        "translated_output_correlation": round(recomputed["translated_output_correlation"], 6),
+        "translated_output_distortion_db": round(recomputed["translated_output_distortion_db"], 3),
+        "translated_reference_dbfs": round(recomputed["translated_reference_dbfs"], 3),
+    }
+    if summary_overrides:
+        room_summary.update(summary_overrides)
+    _write_json(
+        path,
+        _report(
+            True,
+            _passed_gates(ROOM_SUPPRESSION_REQUIRED_GATES),
+            fixture_kind="real_room_playback_suppression",
+            benchmarks={
+                "room_playback_suppression": {
+                    "adapter_id": "unit_room_loopback",
+                    "device": device_info,
+                    "summary": room_summary,
+                }
+            },
+            artifact_hashes=artifact_hashes,
+            artifact_paths=artifact_paths,
+        ),
+    )
+
+
+def self_test() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        stub = root / "stub.json"
+        failing = root / "failing.json"
+        capture = root / "capture.json"
+        forged_capture = root / "forged-capture.json"
+        fixture_capture = root / "fixture-capture.json"
+        diarization = root / "diarization.json"
+        tse = root / "tse.json"
+        translation = root / "translation.json"
+        voice = root / "voice.json"
+        forged_voice = root / "forged-voice.json"
+        room = root / "room.json"
+        forged_room = root / "forged-room.json"
+        mismatched_room = root / "mismatched-room.json"
+        qualification_room = root / "qualification-room.json"
+        sweep_room = root / "sweep-room.json"
+        route_probe_room = root / "route-probe-room.json"
+        route_sweep_room = root / "route-sweep-room.json"
+        playback = root / "playback.json"
+
+        _write_json(stub, _report(True))
+        _write_json(failing, _report(False))
+        _write_live_capture_fixture_report(capture)
+        _write_json(
+            forged_capture,
+            _report(
+                True,
+                _passed_gates(LIVE_CAPTURE_REQUIRED_GATES),
+                fixture_kind="live_microphone_capture",
+                capture_source_kind="microphone",
+                benchmarks={
+                    "capture": {
+                        "adapter_id": EXPECTED_LIVE_CAPTURE_ADAPTER_ID,
+                        "summary": {
+                            "adapter_id": EXPECTED_LIVE_CAPTURE_ADAPTER_ID,
+                            "backend": EXPECTED_LIVE_CAPTURE_BACKEND,
+                            "capture_source_kind": "microphone",
+                            "generator": EXPECTED_LIVE_CAPTURE_GENERATOR,
+                            "release_proof": True,
+                        },
+                    }
+                },
+            ),
+        )
+        _write_json(
+            fixture_capture,
+            _report(
+                True,
+                _passed_gates({"capture_not_release_proof"}),
+                fixture_kind="fixture_pcm_capture_replay",
+                benchmarks={"capture": {"summary": {"capture_source_kind": "fixture_replay", "release_proof": False}}},
+            ),
+        )
+        _write_json(
+            diarization,
+            _report(
+                True,
+                _passed_gates(CAUSAL_DIARIZATION_REQUIRED_GATES),
+                streaming_mode="raw_pcm_rolling_stateful",
+                summary={
+                    "passed": True,
+                    "quality_gates": _passed_gates(CAUSAL_DIARIZATION_REQUIRED_GATES),
+                    "streaming_metrics": {"causality_ok": True, "max_future_samples_used": 0},
+                },
+            ),
+        )
+        _write_json(
+            tse,
+            _report(
+                True,
+                _passed_gates(
+                    TSE_ORACLE_QUALITY_GATES
+                    | TSE_REAL_MODEL_REQUIRED_GATES
+                    | {"beats_mixture_passthrough"}
+                ),
+            ),
+        )
+        _write_json(
+            translation,
+            _report(
+                True,
+                _passed_gates(TRANSLATION_REQUIRED_GATES),
+                adapter={
+                    "translation": {
+                        "streaming_mode": "causal_diarization_rolling_external_tse_segments",
+                        "segmentation_prior": "causal_diarization",
+                        "diarization_adapter_id": "sortformer_streaming_v1",
+                        "uses_oracle_diarization": False,
+                    }
+                },
+                benchmarks={"diarization": {"adapter_id": "sortformer_streaming_v1"}},
+            ),
+        )
+        _write_voice_fixture_report(voice)
+        _write_voice_fixture_report(forged_voice, forge_hash=True)
+        _write_room_suppression_fixture_report(room)
+        _write_room_suppression_fixture_report(
+            forged_room,
+            summary_overrides={
+                "source_residual_reduction_db": 1.0,
+                "translated_output_correlation": 0.01,
+                "translated_output_distortion_db": 99.0,
+            },
+        )
+        _write_room_suppression_fixture_report(mismatched_room)
+        mismatched_payload = json.loads(mismatched_room.read_text(encoding="utf-8"))
+        mismatched_loopback_path = Path(mismatched_payload["artifact_paths"]["room_loopback_recording"])
+        _write_unit_pcm16_wav(mismatched_loopback_path, 16_000, 16_000)
+        mismatched_payload["artifact_hashes"]["room_loopback_recording"] = _sha256_file(
+            mismatched_loopback_path
+        )
+        _write_json(mismatched_room, mismatched_payload)
+        _write_json(
+            qualification_room,
+            _report(
+                True,
+                _passed_gates(ROOM_SUPPRESSION_REQUIRED_GATES),
+                fixture_kind="real_room_device_qualification",
+                measurement_kind="real_room_device_qualification",
+                release_proof=False,
+                benchmarks={
+                    "room_device_qualification": {
+                        "summary": {
+                            "measurement_kind": "real_room_device_qualification",
+                            "release_proof": False,
+                        }
+                    }
+                },
+            ),
+        )
+        _write_json(
+            sweep_room,
+            _report(
+                True,
+                _passed_gates(ROOM_SUPPRESSION_REQUIRED_GATES),
+                fixture_kind="real_room_device_sweep",
+                measurement_kind="real_room_device_sweep_triage",
+                release_proof=False,
+                benchmarks={
+                    "room_device_sweep": {
+                        "candidate_attempt": None,
+                        "summary": {
+                            "measurement_kind": "real_room_device_sweep_triage",
+                            "release_proof": False,
+                        },
+                    }
+                },
+            ),
+        )
+        _write_json(
+            route_probe_room,
+            _report(
+                True,
+                _passed_gates(ROOM_SUPPRESSION_REQUIRED_GATES),
+                fixture_kind="real_room_route_probe",
+                measurement_kind="real_room_route_probe_triage",
+                release_proof=False,
+                benchmarks={
+                    "room_route_probe": {
+                        "summary": {
+                            "measurement_kind": "real_room_route_probe_triage",
+                            "release_proof": False,
+                        }
+                    }
+                },
+            ),
+        )
+        _write_json(
+            route_sweep_room,
+            _report(
+                True,
+                _passed_gates(ROOM_SUPPRESSION_REQUIRED_GATES),
+                fixture_kind="real_room_route_probe_sweep",
+                measurement_kind="real_room_route_probe_sweep_triage",
+                release_proof=False,
+                benchmarks={
+                    "room_route_probe_sweep": {
+                        "candidate_attempt": None,
+                        "summary": {
+                            "measurement_kind": "real_room_route_probe_sweep_triage",
+                            "release_proof": False,
+                        },
+                    }
+                },
+            ),
+        )
+        _write_json(
+            playback,
+            _report(
+                True,
+                [
+                    {
+                        "name": "suppression_claim_is_honest",
+                        "passed": True,
+                        "value": PLAYBACK_PROTOTYPE_CLAIM,
+                    }
+                ],
+                fixture_kind="fleurs_playback_suppression",
+            ),
+        )
+
+        complete_args = argparse.Namespace(
+            live_capture_report=capture,
+            causal_diarization_report=diarization,
+            tse_report=tse,
+            streaming_translation_report=translation,
+            voice_report=voice,
+            room_suppression_report=room,
+            playback_prototype_report=playback,
+            capture_prototype_report=fixture_capture,
+        )
+        release_results, prototype_results = evaluate(complete_args)
+        report = build_report(release_results, prototype_results)
+        if not report["summary"]["passed"]:
+            raise AssertionError("expected complete evidence set to pass")
+
+        stub_args = argparse.Namespace(
+            live_capture_report=stub,
+            causal_diarization_report=stub,
+            tse_report=stub,
+            streaming_translation_report=stub,
+            voice_report=stub,
+            room_suppression_report=stub,
+            playback_prototype_report=playback,
+            capture_prototype_report=fixture_capture,
+        )
+        release_results, prototype_results = evaluate(stub_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected bare summary.passed stubs to fail")
+
+        forged_voice_args = argparse.Namespace(**vars(complete_args))
+        forged_voice_args.voice_report = forged_voice
+        release_results, prototype_results = evaluate(forged_voice_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected forged voice/TTS artifacts to fail")
+
+        forged_room_args = argparse.Namespace(**vars(complete_args))
+        forged_room_args.room_suppression_report = forged_room
+        release_results, prototype_results = evaluate(forged_room_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected forged room-suppression metrics to fail")
+
+        mismatched_room_args = argparse.Namespace(**vars(complete_args))
+        mismatched_room_args.room_suppression_report = mismatched_room
+        release_results, prototype_results = evaluate(mismatched_room_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected WAV-mismatched room-suppression report to fail")
+
+        qualification_room_args = argparse.Namespace(**vars(complete_args))
+        qualification_room_args.room_suppression_report = qualification_room
+        release_results, prototype_results = evaluate(qualification_room_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected qualification report to fail room suppression gate")
+
+        sweep_room_args = argparse.Namespace(**vars(complete_args))
+        sweep_room_args.room_suppression_report = sweep_room
+        release_results, prototype_results = evaluate(sweep_room_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected device sweep report to fail room suppression gate")
+
+        route_probe_room_args = argparse.Namespace(**vars(complete_args))
+        route_probe_room_args.room_suppression_report = route_probe_room
+        release_results, prototype_results = evaluate(route_probe_room_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected route probe report to fail room suppression gate")
+
+        route_sweep_room_args = argparse.Namespace(**vars(complete_args))
+        route_sweep_room_args.room_suppression_report = route_sweep_room
+        release_results, prototype_results = evaluate(route_sweep_room_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected route probe sweep report to fail room suppression gate")
+
+        oracle_translation = root / "oracle-translation.json"
+        _write_json(
+            oracle_translation,
+            _report(
+                True,
+                _passed_gates(TRANSLATION_REQUIRED_GATES),
+                adapter={
+                    "translation": {
+                        "streaming_mode": "oracle_diarization_rolling_external_tse_segments",
+                        "segmentation_prior": "oracle_diarization",
+                    }
+                },
+                benchmarks={"diarization": {"adapter_id": "oracle_diarization_v1"}},
+            ),
+        )
+        oracle_translation_args = argparse.Namespace(**vars(complete_args))
+        oracle_translation_args.streaming_translation_report = oracle_translation
+        release_results, prototype_results = evaluate(oracle_translation_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected oracle-windowed translation report to fail")
+
+        forged_args = argparse.Namespace(**vars(complete_args))
+        forged_args.live_capture_report = forged_capture
+        release_results, prototype_results = evaluate(forged_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected self-attested live capture report to fail")
+
+        prototype_args = argparse.Namespace(**vars(complete_args))
+        prototype_args.live_capture_report = fixture_capture
+        prototype_args.room_suppression_report = playback
+        release_results, prototype_results = evaluate(prototype_args)
+        report = build_report(release_results, prototype_results)
+        failed = {gate.name for gate in release_results if not gate.passed}
+        if "live_microphone_capture_runtime" not in failed:
+            raise AssertionError("expected fixture capture to fail product capture gate")
+        if "real_room_playback_suppression_loopback" not in failed:
+            raise AssertionError("expected playback prototype to fail room suppression gate")
+
+        failing_args = argparse.Namespace(**vars(complete_args))
+        failing_args.voice_report = failing
+        release_results, prototype_results = evaluate(failing_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected failed release-blocking report to fail")
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Gate product audio-loop release evidence")
+    parser.add_argument("--self-test", action="store_true", help="validate gate helper behavior")
+    parser.add_argument("--json", action="store_true", help="print the full JSON report")
+    parser.add_argument("--report", type=Path, default=DEFAULT_RELEASE_REPORT)
+    parser.add_argument("--live-capture-report", type=Path, default=DEFAULT_LIVE_CAPTURE_REPORT)
+    parser.add_argument("--causal-diarization-report", type=Path, default=DEFAULT_CAUSAL_DIARIZATION_REPORT)
+    parser.add_argument("--tse-report", type=Path, default=DEFAULT_TSE_REPORT)
+    parser.add_argument("--streaming-translation-report", type=Path, default=DEFAULT_STREAMING_TRANSLATION_REPORT)
+    parser.add_argument("--voice-report", type=Path, default=DEFAULT_VOICE_REPORT)
+    parser.add_argument("--room-suppression-report", type=Path, default=DEFAULT_ROOM_SUPPRESSION_REPORT)
+    parser.add_argument("--playback-prototype-report", type=Path, default=DEFAULT_PLAYBACK_PROTOTYPE_REPORT)
+    parser.add_argument("--capture-prototype-report", type=Path, default=DEFAULT_CAPTURE_PROTOTYPE_REPORT)
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv or sys.argv[1:])
+    if args.self_test:
+        self_test()
+        print("release audio gate self-test PASS")
+        return 0
+
+    release_results, prototype_results = evaluate(args)
+    report = build_report(release_results, prototype_results)
+    write_report(report, args.report)
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    else:
+        print_summary(report, args.report)
+    return 0 if report["summary"]["passed"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

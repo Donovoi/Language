@@ -1,12 +1,26 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.models import SessionMode, SessionResponse, SpeakerState
+from app.models import SessionMode, SessionResponse, SourceSuppressionMode, SpeakerState
 
 _CURRENT_STATE_ID = 1
+_SPEAKER_COLUMN_MIGRATIONS = {
+    "input_level_dbfs": "REAL",
+    "output_level_dbfs": "REAL",
+    "overlapping_speaker_ids": "TEXT NOT NULL DEFAULT '[]'",
+    "detected_language_code": "TEXT",
+    "language_confidence": "REAL",
+    "voice_clone_id": "TEXT",
+    "voice_clone_status": "TEXT",
+    "translated_audio_stream_id": "TEXT",
+    "original_voice_suppression_db": "REAL",
+    "playback_latency_ms": "INTEGER",
+    "source_suppression_mode": "TEXT",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +72,18 @@ class SQLiteSessionPersistence:
                     translated_caption,
                     target_language_code,
                     lane_status,
-                    status_message
+                    status_message,
+                    input_level_dbfs,
+                    output_level_dbfs,
+                    overlapping_speaker_ids,
+                    detected_language_code,
+                    language_confidence,
+                    voice_clone_id,
+                    voice_clone_status,
+                    translated_audio_stream_id,
+                    original_voice_suppression_db,
+                    playback_latency_ms,
+                    source_suppression_mode
                 FROM current_speaker_state
                 WHERE state_id = ?
                 ORDER BY order_index ASC
@@ -82,6 +107,20 @@ class SQLiteSessionPersistence:
                 target_language_code=row["target_language_code"],
                 lane_status=row["lane_status"],
                 status_message=row["status_message"],
+                input_level_dbfs=row["input_level_dbfs"],
+                output_level_dbfs=row["output_level_dbfs"],
+                overlapping_speaker_ids=_decode_speaker_ids(row["overlapping_speaker_ids"]),
+                detected_language_code=row["detected_language_code"],
+                language_confidence=row["language_confidence"],
+                voice_clone_id=row["voice_clone_id"],
+                voice_clone_status=row["voice_clone_status"],
+                translated_audio_stream_id=row["translated_audio_stream_id"],
+                original_voice_suppression_db=row["original_voice_suppression_db"],
+                playback_latency_ms=row["playback_latency_ms"],
+                source_suppression_mode=_source_suppression_mode_from_row(
+                    row["source_suppression_mode"],
+                    row["original_voice_suppression_db"],
+                ),
             )
             for row in speaker_rows
         ]
@@ -125,9 +164,20 @@ class SQLiteSessionPersistence:
                     translated_caption,
                     target_language_code,
                     lane_status,
-                    status_message
+                    status_message,
+                    input_level_dbfs,
+                    output_level_dbfs,
+                    overlapping_speaker_ids,
+                    detected_language_code,
+                    language_confidence,
+                    voice_clone_id,
+                    voice_clone_status,
+                    translated_audio_stream_id,
+                    original_voice_suppression_db,
+                    playback_latency_ms,
+                    source_suppression_mode
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -147,6 +197,21 @@ class SQLiteSessionPersistence:
                         speaker.target_language_code,
                         speaker.lane_status.value,
                         speaker.status_message,
+                        speaker.input_level_dbfs,
+                        speaker.output_level_dbfs,
+                        json.dumps(speaker.overlapping_speaker_ids),
+                        speaker.detected_language_code,
+                        speaker.language_confidence,
+                        speaker.voice_clone_id,
+                        speaker.voice_clone_status,
+                        speaker.translated_audio_stream_id,
+                        speaker.original_voice_suppression_db,
+                        speaker.playback_latency_ms,
+                        (
+                            speaker.source_suppression_mode.value
+                            if speaker.source_suppression_mode is not None
+                            else None
+                        ),
                     )
                     for index, speaker in enumerate(session.speakers)
                 ],
@@ -179,14 +244,61 @@ class SQLiteSessionPersistence:
                     target_language_code TEXT,
                     lane_status TEXT NOT NULL,
                     status_message TEXT,
+                    input_level_dbfs REAL,
+                    output_level_dbfs REAL,
+                    overlapping_speaker_ids TEXT NOT NULL DEFAULT '[]',
+                    detected_language_code TEXT,
+                    language_confidence REAL,
+                    voice_clone_id TEXT,
+                    voice_clone_status TEXT,
+                    translated_audio_stream_id TEXT,
+                    original_voice_suppression_db REAL,
+                    playback_latency_ms INTEGER,
+                    source_suppression_mode TEXT,
                     PRIMARY KEY (state_id, order_index),
                     FOREIGN KEY (state_id) REFERENCES current_session_state(state_id) ON DELETE CASCADE
                 );
                 """
             )
+            self._ensure_current_speaker_state_columns(connection)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self._database_path, timeout=30)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys = ON")
         return connection
+
+    def _ensure_current_speaker_state_columns(self, connection: sqlite3.Connection) -> None:
+        existing_columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(current_speaker_state)").fetchall()
+        }
+        for column_name, definition in _SPEAKER_COLUMN_MIGRATIONS.items():
+            if column_name in existing_columns:
+                continue
+            connection.execute(
+                f"ALTER TABLE current_speaker_state ADD COLUMN {column_name} {definition}"
+            )
+
+
+def _decode_speaker_ids(raw_value: str | None) -> list[str]:
+    if raw_value is None:
+        return []
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    return [item for item in parsed if isinstance(item, str)]
+
+
+def _source_suppression_mode_from_row(
+    raw_value: str | None,
+    amount_db: float | None,
+) -> str | None:
+    if raw_value:
+        return raw_value
+    if amount_db is not None and amount_db > 0:
+        return SourceSuppressionMode.OVERLAY_DUCKING.value
+    return None

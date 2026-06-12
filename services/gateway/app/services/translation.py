@@ -126,7 +126,9 @@ class CaptionTranslator:
         requested_target_language = _normalize_language_tag(
             speaker.target_language_code or self._settings.default_target_language_code
         )
-        source_language = _provider_language_code(speaker.language_code)
+        source_language = _provider_language_code(
+            speaker.detected_language_code or speaker.language_code
+        )
         provider_target_language = _provider_language_code(requested_target_language)
 
         if source_language == provider_target_language:
@@ -156,6 +158,7 @@ class CaptionTranslator:
                     "target_language_code": requested_target_language,
                     "lane_status": LaneStatus.ERROR,
                     "status_message": f"Translation provider error: {exc}",
+                    "translated_audio_stream_id": None,
                 }
             )
 

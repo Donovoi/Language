@@ -1,0 +1,312 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-09",
+  "description": "Curated external audio corpora for realtime multi-speaker translation evaluation. This file records acquisition, license, benchmark roles, and detractor notes before any large audio is downloaded.",
+  "policy": {
+    "default_storage": "Downloaded corpus audio must stay under artifacts/audio_eval/external_corpora or another ignored local path.",
+    "commit_rule": "Commit manifests, acquisition notes, hashes, and tiny derived annotations only; do not commit third-party audio unless the source explicitly permits redistribution and the repo has attribution files.",
+    "license_rule": "Use status approved_candidate only when the official source gives clear public benchmark terms. Use review_required for registration, non-commercial, per-clip, YouTube-derived, or custom terms.",
+    "privacy_rule": "Do not use crowd or meeting data for product demos unless the source terms and consent posture allow that use. Keep public-figure and meeting datasets in benchmark-only mode until reviewed."
+  },
+  "role_definitions": {
+    "real_room_meeting": "Real or replayed meeting-room speech with multiple speakers and room acoustics.",
+    "crowd_noise": "Background crowd, applause, chatter, or public-space ambience for capture stress tests.",
+    "diarization": "Speaker turn/segment annotations are available or can be derived from official labels.",
+    "speech_separation": "Mixtures or source references are useful for overlap/separation/TSE evaluation.",
+    "multilingual_asr": "Speech and text labels support language ID, ASR, or translation evaluation.",
+    "source_suppression": "Useful for playback loopback, acoustic echo, noise suppression, or residual-source evaluation.",
+    "voice_reference": "Useful for consent-aware voice similarity or TTS reference experiments."
+  },
+  "corpora": [
+    {
+      "id": "notsofar1-recorded-meetings",
+      "name": "NOTSOFAR-1 Recorded Meeting Dataset",
+      "priority": "p0",
+      "status": "approved_candidate",
+      "license_status": "cc_by_4_0_data",
+      "roles": ["real_room_meeting", "diarization", "multilingual_asr"],
+      "languages": ["en"],
+      "size_notes": "237 recorded meetings, about 6 minutes each, in 30 conference rooms with 4-8 attendees and 35 unique speakers.",
+      "access": "Official challenge repo and Hugging Face subsets; use official download helper and cache under artifacts.",
+      "recommended_first_use": "Create a tiny rolling-PCM diarization fixture from one development meeting with overlap and transient noise.",
+      "why_it_matters": "Closest first public match for the app's noisy distant-meeting capture path.",
+      "detractor_note": "English meeting transcription data is still not multilingual live translation, and public benchmark splits must not be mixed across train/dev/test.",
+      "sources": [
+        {
+          "type": "official_repo",
+          "url": "https://github.com/microsoft/NOTSOFAR1-Challenge",
+          "evidence": "Official repo describes recorded meetings, download helpers, and CC-BY-4.0 data license."
+        },
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2401.08887",
+          "evidence": "NOTSOFAR-1 challenge paper describes distant diarization and ASR benchmark data."
+        }
+      ]
+    },
+    {
+      "id": "ami-meeting-corpus",
+      "name": "AMI Meeting Corpus",
+      "priority": "p0",
+      "status": "approved_candidate",
+      "license_status": "cc_by_4_0_partial_public_release",
+      "roles": ["real_room_meeting", "diarization", "multilingual_asr"],
+      "languages": ["en"],
+      "size_notes": "About 100 hours of meetings with synchronized close-talk and far-field microphones plus transcription and annotations.",
+      "access": "Official registration/download or Hugging Face mirrors; verify attribution and subset naming.",
+      "recommended_first_use": "Use SDM/MDM-style distant mic audio for diarization label stability and overlap recall.",
+      "why_it_matters": "Canonical meeting corpus with rich annotations and multiple microphone perspectives.",
+      "detractor_note": "Mostly structured English meetings, not free-form crowds; only publicly released signals/annotations should be used.",
+      "sources": [
+        {
+          "type": "official_dataset_page",
+          "url": "https://groups.inf.ed.ac.uk/ami/corpus/",
+          "evidence": "Official AMI page describes 100h meetings, synchronized microphones, annotations, and CC-BY-4.0 public release."
+        }
+      ]
+    },
+    {
+      "id": "voxconverse",
+      "name": "VoxConverse",
+      "priority": "p0",
+      "status": "review_required",
+      "license_status": "cc_by_4_0_research_youtube_derived",
+      "roles": ["real_room_meeting", "diarization", "crowd_noise"],
+      "languages": ["en"],
+      "size_notes": "Over 50 hours of multispeaker speech clips extracted from public videos.",
+      "access": "Official VoxConverse download or diarizers-community mirror; retain benchmark-only posture until review.",
+      "recommended_first_use": "Use as a wild diarization stress set after AMI/NOTSOFAR pass.",
+      "why_it_matters": "More in-the-wild overlap, crowd, music, and broadcast variation than clean meeting corpora.",
+      "detractor_note": "YouTube-derived public-figure material is useful for benchmark-only evaluation but not a consent-safe voice-cloning or product-demo source.",
+      "sources": [
+        {
+          "type": "official_repo",
+          "url": "https://github.com/joonson/voxconverse",
+          "evidence": "Official repo states research-purpose CC-BY-4.0 availability and diarization-in-the-wild publication."
+        },
+        {
+          "type": "paper",
+          "url": "https://www.isca-archive.org/interspeech_2020/chung20b_interspeech.html",
+          "evidence": "Interspeech 2020 VoxConverse paper."
+        }
+      ]
+    },
+    {
+      "id": "libricss",
+      "name": "LibriCSS",
+      "priority": "p0",
+      "status": "approved_candidate",
+      "license_status": "derived_open_librispeech_attribution_required",
+      "roles": ["real_room_meeting", "speech_separation", "diarization"],
+      "languages": ["en"],
+      "size_notes": "Continuous far-field replay recordings derived from LibriSpeech with varying overlap ratios.",
+      "access": "Official LibriCSS repository/scripts; cache under artifacts.",
+      "recommended_first_use": "Run rolling diarization and future separation/TSE gates on 10/20/30/40 percent overlap mini-sessions.",
+      "why_it_matters": "Directly targets continuous speech separation with partially overlapped long-form audio.",
+      "detractor_note": "It is replayed LibriSpeech in a room, not spontaneous live crowd interaction.",
+      "sources": [
+        {
+          "type": "paper_page",
+          "url": "https://www.microsoft.com/en-us/research/publication/continuous-speech-separation-dataset-and-analysis/",
+          "evidence": "ICASSP 2020 page describes LibriCSS as far-field replayed LibriSpeech with public dataset/evaluation scripts."
+        },
+        {
+          "type": "official_repo",
+          "url": "https://github.com/chenzhuo1011/libri_css",
+          "evidence": "Official evaluation pipeline and download guidance."
+        }
+      ]
+    },
+    {
+      "id": "librimix",
+      "name": "LibriMix / Libri2Mix / Libri3Mix",
+      "priority": "p0",
+      "status": "approved_candidate",
+      "license_status": "open_source_dataset_generated_from_open_sources",
+      "roles": ["speech_separation", "diarization"],
+      "languages": ["en"],
+      "size_notes": "Two- and three-speaker mixtures with clean and noisy variants; full generation is hundreds of GB.",
+      "access": "Official generation scripts; generate only tiny subsets for local smoke checks.",
+      "recommended_first_use": "Create a 2-speaker and 3-speaker overlap stress fixture for separation and diarization regression.",
+      "why_it_matters": "Best lightweight path for controlled overlap and source-reference scoring.",
+      "detractor_note": "Synthetic mixtures are not room crowds and can overstate separation quality.",
+      "sources": [
+        {
+          "type": "official_repo",
+          "url": "https://github.com/JorisCos/LibriMix",
+          "evidence": "Official repo describes LibriMix as an open source dataset for speech separation with 2/3 speaker generation."
+        },
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2005.11262",
+          "evidence": "LibriMix paper describes open-source generalizable speech separation data."
+        }
+      ]
+    },
+    {
+      "id": "fsd50k-crowd-ambience",
+      "name": "FSD50K / Freesound crowd ambience",
+      "priority": "p0",
+      "status": "review_required",
+      "license_status": "per_clip_creative_commons",
+      "roles": ["crowd_noise", "source_suppression"],
+      "languages": ["unknown"],
+      "size_notes": "51,197 human-labeled Freesound clips across 200 AudioSet classes; includes crowd/applause/chatter-like sound events through ontology labels.",
+      "access": "Use official Zenodo/Freesound metadata; filter to CC0 or CC-BY clips and keep attribution.",
+      "recommended_first_use": "Mix CC0/CC-BY crowd ambience under AMI/NOTSOFAR/LibriCSS snippets for noise robustness gates.",
+      "why_it_matters": "Gives real crowd ambience without pretending it is diarized speech.",
+      "detractor_note": "Use as benchmark-only ambience until per-clip licenses and attribution are checked; not suitable as speaker-ground-truth data.",
+      "sources": [
+        {
+          "type": "official_dataset_list",
+          "url": "https://labs.freesound.org/datasets/",
+          "evidence": "Freesound Labs lists FSD50K as an open human-labeled sound-event dataset with Zenodo download."
+        },
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2010.00475",
+          "evidence": "FSD50K paper describes open human-labeled sound events and AudioSet ontology labels."
+        }
+      ]
+    },
+    {
+      "id": "musan-noise",
+      "name": "MUSAN",
+      "priority": "p0",
+      "status": "approved_candidate",
+      "license_status": "cc_by_4_0",
+      "roles": ["crowd_noise", "source_suppression"],
+      "languages": ["mixed"],
+      "size_notes": "11GB corpus of music, speech, and noise recordings.",
+      "access": "OpenSLR SLR17 download; use noise subset for baseline augmentation.",
+      "recommended_first_use": "Add a deterministic background-noise layer to existing real-speech fixtures.",
+      "why_it_matters": "Simple, well-known noise corpus for capture hygiene and false-positive tests.",
+      "detractor_note": "General noise is not the same as dense live crowd speech.",
+      "sources": [
+        {
+          "type": "official_dataset_page",
+          "url": "https://openslr.org/17/",
+          "evidence": "OpenSLR lists MUSAN as music/speech/noise under CC-BY-4.0."
+        },
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/1510.08484",
+          "evidence": "MUSAN corpus paper describing the music, speech, and noise corpus."
+        }
+      ]
+    },
+    {
+      "id": "mozilla-common-voice",
+      "name": "Mozilla Common Voice",
+      "priority": "p1",
+      "status": "approved_candidate",
+      "license_status": "cc0_1_0",
+      "roles": ["multilingual_asr", "voice_reference"],
+      "languages": ["multilingual"],
+      "size_notes": "Large community speech corpus with many language releases; current Data Collective listing includes CC0 datasets.",
+      "access": "Mozilla Data Collective/Common Voice downloads; keep source language split and datasheet.",
+      "recommended_first_use": "Sample non-English clips to build language-ID and same-volume translation fixtures.",
+      "why_it_matters": "Best permissive multilingual speech source for early LID/ASR smoke tests.",
+      "detractor_note": "Mostly prompted speech, not overlapping crowds; voice-cloning usage still needs explicit consent policy beyond dataset license.",
+      "sources": [
+        {
+          "type": "official_dataset_page",
+          "url": "https://commonvoice.mozilla.org/en/datasets",
+          "evidence": "Mozilla Data Collective lists Common Voice datasets and CC0 licensing."
+        }
+      ]
+    },
+    {
+      "id": "google-fleurs",
+      "name": "FLEURS",
+      "priority": "p1",
+      "status": "approved_candidate",
+      "license_status": "cc_by",
+      "roles": ["multilingual_asr"],
+      "languages": ["102_languages"],
+      "size_notes": "N-way parallel read-speech dataset in 102 languages, about 12 hours per language.",
+      "access": "Hugging Face dataset with language configs; use tiny per-language sampled fixtures.",
+      "recommended_first_use": "Test language ID and ASR/translation routing across short windows.",
+      "why_it_matters": "Covers language breadth that meeting/crowd corpora do not.",
+      "detractor_note": "Read-speech benchmark can hide failures on noisy spontaneous room audio.",
+      "sources": [
+        {
+          "type": "dataset_card",
+          "url": "https://huggingface.co/datasets/google/fleurs",
+          "evidence": "Dataset card describes 102-language FLEURS corpus and CC-BY licensing."
+        },
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2205.12446",
+          "evidence": "FLEURS paper describing the 102-language speech benchmark."
+        }
+      ]
+    },
+    {
+      "id": "alimeeting-m2met",
+      "name": "AliMeeting / M2MeT",
+      "priority": "p1",
+      "status": "review_required",
+      "license_status": "official_download_terms_review_required",
+      "roles": ["real_room_meeting", "diarization", "multilingual_asr"],
+      "languages": ["zh"],
+      "size_notes": "About 120 hours of Mandarin meetings with near-field headset and 8-channel far-field microphone array data.",
+      "access": "Official GitHub/OpenSLR 119/Codalab path; verify dataset terms before automated download.",
+      "recommended_first_use": "Use only after terms review for Mandarin overlap and DiariST-style Chinese-to-English evaluation.",
+      "why_it_matters": "Strong real meeting source for non-English diarization and translation pressure.",
+      "detractor_note": "Terms and split rules need review before benchmark-only use; Mandarin meetings do not cover all multilingual/crowd conditions.",
+      "sources": [
+        {
+          "type": "official_repo",
+          "url": "https://github.com/yufan-aslp/AliMeeting",
+          "evidence": "Official baseline repo links AliMeeting download and M2MeT challenge papers."
+        },
+        {
+          "type": "paper",
+          "url": "https://arxiv.org/abs/2110.07393",
+          "evidence": "M2MeT paper describes the AliMeeting corpus and challenge."
+        }
+      ]
+    },
+    {
+      "id": "ego4d-avd",
+      "name": "Ego4D Audio-Visual Diarization",
+      "priority": "p2",
+      "status": "review_required",
+      "license_status": "custom_terms_acceptance_required",
+      "roles": ["real_room_meeting", "diarization", "crowd_noise"],
+      "languages": ["mixed"],
+      "size_notes": "Large egocentric video/audio dataset with audio-visual conversation tasks.",
+      "access": "Requires license agreement acceptance and targeted task download.",
+      "recommended_first_use": "Review later for egocentric/crowd conversation failure cases, not the first benchmark pack.",
+      "why_it_matters": "Could stress moving-wearer, social, and real-world audio conditions.",
+      "detractor_note": "Custom license, privacy posture, and video modality make it too heavy for the first benchmark-only audio gate.",
+      "sources": [
+        {
+          "type": "official_docs",
+          "url": "https://ego4d-data.org/docs/",
+          "evidence": "Official docs describe Ego4D data, audio availability, and license acceptance requirement."
+        },
+        {
+          "type": "official_benchmark_repo",
+          "url": "https://github.com/EGO4D/audio-visual",
+          "evidence": "Audio-visual diarization benchmark repository."
+        }
+      ]
+    }
+  ],
+  "deferred_or_rejected": [
+    {
+      "id": "audioset-youtube-audio",
+      "reason": "Useful ontology and precomputed features, but raw YouTube audio availability/licensing is unstable. Prefer FSD50K/Freesound CC-filtered clips for committed crowd-noise acquisition."
+    },
+    {
+      "id": "callhome-ldc",
+      "reason": "Common diarization benchmark but LDC licensing makes it unsuitable as a default free/disposable fixture."
+    },
+    {
+      "id": "random-online-crowd-recordings",
+      "reason": "Do not use unless each recording has explicit license, attribution, consent posture, and stable download metadata."
+    }
+  ]
+}

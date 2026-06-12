@@ -1,0 +1,6 @@
+# Optional heavy dependencies for NVIDIA Sortformer diarization adapter experiments.
+# Do not install this in the base audio-eval image.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.11.0+cpu
+torchaudio==2.11.0+cpu
+nemo_toolkit[asr]==2.7.3

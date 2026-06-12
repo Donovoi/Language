@@ -1,6 +1,7 @@
 import '../generated/session_contract.dart';
 
 export '../generated/session_contract.dart' show TranslationLaneStatus;
+export '../generated/session_contract.dart' show SourceSuppressionMode;
 
 class Speaker {
   const Speaker({
@@ -18,6 +19,17 @@ class Speaker {
     this.targetLanguageCode,
     this.laneStatus = TranslationLaneStatus.unspecified,
     this.statusMessage,
+    this.inputLevelDbfs,
+    this.outputLevelDbfs,
+    this.overlappingSpeakerIds = const <String>[],
+    this.detectedLanguageCode,
+    this.languageConfidence,
+    this.voiceCloneId,
+    this.voiceCloneStatus,
+    this.translatedAudioStreamId,
+    this.originalVoiceSuppressionDb,
+    this.playbackLatencyMs,
+    this.sourceSuppressionMode = SourceSuppressionMode.unspecified,
   });
 
   final String speakerId;
@@ -34,6 +46,17 @@ class Speaker {
   final String? targetLanguageCode;
   final TranslationLaneStatus laneStatus;
   final String? statusMessage;
+  final double? inputLevelDbfs;
+  final double? outputLevelDbfs;
+  final List<String> overlappingSpeakerIds;
+  final String? detectedLanguageCode;
+  final double? languageConfidence;
+  final String? voiceCloneId;
+  final String? voiceCloneStatus;
+  final String? translatedAudioStreamId;
+  final double? originalVoiceSuppressionDb;
+  final int? playbackLatencyMs;
+  final SourceSuppressionMode sourceSuppressionMode;
 
   Speaker copyWith({
     String? speakerId,
@@ -50,6 +73,17 @@ class Speaker {
     String? targetLanguageCode,
     TranslationLaneStatus? laneStatus,
     String? statusMessage,
+    double? inputLevelDbfs,
+    double? outputLevelDbfs,
+    List<String>? overlappingSpeakerIds,
+    String? detectedLanguageCode,
+    double? languageConfidence,
+    String? voiceCloneId,
+    String? voiceCloneStatus,
+    String? translatedAudioStreamId,
+    double? originalVoiceSuppressionDb,
+    int? playbackLatencyMs,
+    SourceSuppressionMode? sourceSuppressionMode,
   }) {
     return Speaker(
       speakerId: speakerId ?? this.speakerId,
@@ -66,6 +100,21 @@ class Speaker {
       targetLanguageCode: targetLanguageCode ?? this.targetLanguageCode,
       laneStatus: laneStatus ?? this.laneStatus,
       statusMessage: statusMessage ?? this.statusMessage,
+      inputLevelDbfs: inputLevelDbfs ?? this.inputLevelDbfs,
+      outputLevelDbfs: outputLevelDbfs ?? this.outputLevelDbfs,
+      overlappingSpeakerIds:
+          overlappingSpeakerIds ?? this.overlappingSpeakerIds,
+      detectedLanguageCode: detectedLanguageCode ?? this.detectedLanguageCode,
+      languageConfidence: languageConfidence ?? this.languageConfidence,
+      voiceCloneId: voiceCloneId ?? this.voiceCloneId,
+      voiceCloneStatus: voiceCloneStatus ?? this.voiceCloneStatus,
+      translatedAudioStreamId:
+          translatedAudioStreamId ?? this.translatedAudioStreamId,
+      originalVoiceSuppressionDb:
+          originalVoiceSuppressionDb ?? this.originalVoiceSuppressionDb,
+      playbackLatencyMs: playbackLatencyMs ?? this.playbackLatencyMs,
+      sourceSuppressionMode:
+          sourceSuppressionMode ?? this.sourceSuppressionMode,
     );
   }
 
@@ -89,6 +138,31 @@ class Speaker {
         json[kSpeakerLaneStatusJsonKey] as String?,
       ),
       statusMessage: json[kSpeakerStatusMessageJsonKey] as String?,
+      inputLevelDbfs:
+          (json[kSpeakerInputLevelDbfsJsonKey] as num?)?.toDouble(),
+      outputLevelDbfs:
+          (json[kSpeakerOutputLevelDbfsJsonKey] as num?)?.toDouble(),
+      overlappingSpeakerIds:
+          (json[kSpeakerOverlappingSpeakerIdsJsonKey] as List<dynamic>?)
+                  ?.whereType<String>()
+                  .toList(growable: false) ??
+              const <String>[],
+      detectedLanguageCode:
+          json[kSpeakerDetectedLanguageCodeJsonKey] as String?,
+      languageConfidence:
+          (json[kSpeakerLanguageConfidenceJsonKey] as num?)?.toDouble(),
+      voiceCloneId: json[kSpeakerVoiceCloneIdJsonKey] as String?,
+      voiceCloneStatus: json[kSpeakerVoiceCloneStatusJsonKey] as String?,
+      translatedAudioStreamId:
+          json[kSpeakerTranslatedAudioStreamIdJsonKey] as String?,
+      originalVoiceSuppressionDb:
+          (json[kSpeakerOriginalVoiceSuppressionDbJsonKey] as num?)
+              ?.toDouble(),
+      playbackLatencyMs:
+          (json[kSpeakerPlaybackLatencyMsJsonKey] as num?)?.toInt(),
+      sourceSuppressionMode: SourceSuppressionModePresentation.fromApiValue(
+        json[kSpeakerSourceSuppressionModeJsonKey] as String?,
+      ),
     );
   }
 
@@ -108,6 +182,17 @@ class Speaker {
       kSpeakerTargetLanguageCodeJsonKey: targetLanguageCode,
       kSpeakerLaneStatusJsonKey: laneStatus.apiValue,
       kSpeakerStatusMessageJsonKey: statusMessage,
+      kSpeakerInputLevelDbfsJsonKey: inputLevelDbfs,
+      kSpeakerOutputLevelDbfsJsonKey: outputLevelDbfs,
+      kSpeakerOverlappingSpeakerIdsJsonKey: overlappingSpeakerIds,
+      kSpeakerDetectedLanguageCodeJsonKey: detectedLanguageCode,
+      kSpeakerLanguageConfidenceJsonKey: languageConfidence,
+      kSpeakerVoiceCloneIdJsonKey: voiceCloneId,
+      kSpeakerVoiceCloneStatusJsonKey: voiceCloneStatus,
+      kSpeakerTranslatedAudioStreamIdJsonKey: translatedAudioStreamId,
+      kSpeakerOriginalVoiceSuppressionDbJsonKey: originalVoiceSuppressionDb,
+      kSpeakerPlaybackLatencyMsJsonKey: playbackLatencyMs,
+      kSpeakerSourceSuppressionModeJsonKey: sourceSuppressionMode.apiValue,
     };
   }
 }

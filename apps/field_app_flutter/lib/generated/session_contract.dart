@@ -15,6 +15,17 @@ const String kSpeakerTranslatedCaptionJsonKey = 'translated_caption';
 const String kSpeakerTargetLanguageCodeJsonKey = 'target_language_code';
 const String kSpeakerLaneStatusJsonKey = 'lane_status';
 const String kSpeakerStatusMessageJsonKey = 'status_message';
+const String kSpeakerInputLevelDbfsJsonKey = 'input_level_dbfs';
+const String kSpeakerOutputLevelDbfsJsonKey = 'output_level_dbfs';
+const String kSpeakerOverlappingSpeakerIdsJsonKey = 'overlapping_speaker_ids';
+const String kSpeakerDetectedLanguageCodeJsonKey = 'detected_language_code';
+const String kSpeakerLanguageConfidenceJsonKey = 'language_confidence';
+const String kSpeakerVoiceCloneIdJsonKey = 'voice_clone_id';
+const String kSpeakerVoiceCloneStatusJsonKey = 'voice_clone_status';
+const String kSpeakerTranslatedAudioStreamIdJsonKey = 'translated_audio_stream_id';
+const String kSpeakerOriginalVoiceSuppressionDbJsonKey = 'original_voice_suppression_db';
+const String kSpeakerPlaybackLatencyMsJsonKey = 'playback_latency_ms';
+const String kSpeakerSourceSuppressionModeJsonKey = 'source_suppression_mode';
 
 const List<String> kSpeakerContractFields = <String>[
   kSpeakerIdJsonKey,
@@ -31,6 +42,17 @@ const List<String> kSpeakerContractFields = <String>[
   kSpeakerTargetLanguageCodeJsonKey,
   kSpeakerLaneStatusJsonKey,
   kSpeakerStatusMessageJsonKey,
+  kSpeakerInputLevelDbfsJsonKey,
+  kSpeakerOutputLevelDbfsJsonKey,
+  kSpeakerOverlappingSpeakerIdsJsonKey,
+  kSpeakerDetectedLanguageCodeJsonKey,
+  kSpeakerLanguageConfidenceJsonKey,
+  kSpeakerVoiceCloneIdJsonKey,
+  kSpeakerVoiceCloneStatusJsonKey,
+  kSpeakerTranslatedAudioStreamIdJsonKey,
+  kSpeakerOriginalVoiceSuppressionDbJsonKey,
+  kSpeakerPlaybackLatencyMsJsonKey,
+  kSpeakerSourceSuppressionModeJsonKey,
 ];
 
 const String kSessionStateSessionIdJsonKey = 'session_id';
@@ -55,6 +77,17 @@ const String kSpeakerEventTranslatedCaptionJsonKey = 'translated_caption';
 const String kSpeakerEventTargetLanguageCodeJsonKey = 'target_language_code';
 const String kSpeakerEventLaneStatusJsonKey = 'lane_status';
 const String kSpeakerEventStatusMessageJsonKey = 'status_message';
+const String kSpeakerEventInputLevelDbfsJsonKey = 'input_level_dbfs';
+const String kSpeakerEventOutputLevelDbfsJsonKey = 'output_level_dbfs';
+const String kSpeakerEventOverlappingSpeakerIdsJsonKey = 'overlapping_speaker_ids';
+const String kSpeakerEventDetectedLanguageCodeJsonKey = 'detected_language_code';
+const String kSpeakerEventLanguageConfidenceJsonKey = 'language_confidence';
+const String kSpeakerEventVoiceCloneIdJsonKey = 'voice_clone_id';
+const String kSpeakerEventVoiceCloneStatusJsonKey = 'voice_clone_status';
+const String kSpeakerEventTranslatedAudioStreamIdJsonKey = 'translated_audio_stream_id';
+const String kSpeakerEventOriginalVoiceSuppressionDbJsonKey = 'original_voice_suppression_db';
+const String kSpeakerEventPlaybackLatencyMsJsonKey = 'playback_latency_ms';
+const String kSpeakerEventSourceSuppressionModeJsonKey = 'source_suppression_mode';
 
 const List<String> kSpeakerEventContractFields = <String>[
   kSpeakerEventSpeakerIdJsonKey,
@@ -67,6 +100,17 @@ const List<String> kSpeakerEventContractFields = <String>[
   kSpeakerEventTargetLanguageCodeJsonKey,
   kSpeakerEventLaneStatusJsonKey,
   kSpeakerEventStatusMessageJsonKey,
+  kSpeakerEventInputLevelDbfsJsonKey,
+  kSpeakerEventOutputLevelDbfsJsonKey,
+  kSpeakerEventOverlappingSpeakerIdsJsonKey,
+  kSpeakerEventDetectedLanguageCodeJsonKey,
+  kSpeakerEventLanguageConfidenceJsonKey,
+  kSpeakerEventVoiceCloneIdJsonKey,
+  kSpeakerEventVoiceCloneStatusJsonKey,
+  kSpeakerEventTranslatedAudioStreamIdJsonKey,
+  kSpeakerEventOriginalVoiceSuppressionDbJsonKey,
+  kSpeakerEventPlaybackLatencyMsJsonKey,
+  kSpeakerEventSourceSuppressionModeJsonKey,
 ];
 
 const String kSessionStreamEventEventJsonKey = 'event';
@@ -144,6 +188,30 @@ extension SessionStreamEventTypePresentation on SessionStreamEventType {
     return SessionStreamEventType.values.firstWhere(
       (item) => item.apiValue == value,
       orElse: () => SessionStreamEventType.unknown,
+    );
+  }
+}
+
+enum SourceSuppressionMode {
+  unspecified('SOURCE_SUPPRESSION_MODE_UNSPECIFIED', 'UNSPECIFIED', 'Not set'),
+  unavailable('SOURCE_SUPPRESSION_MODE_UNAVAILABLE', 'UNAVAILABLE', 'Unavailable'),
+  overlayDucking('SOURCE_SUPPRESSION_MODE_OVERLAY_DUCKING', 'OVERLAY_DUCKING', 'Overlay ducking'),
+  headphoneIsolated('SOURCE_SUPPRESSION_MODE_HEADPHONE_ISOLATED', 'HEADPHONE_ISOLATED', 'Headphone isolated'),
+  trueCancellation('SOURCE_SUPPRESSION_MODE_TRUE_CANCELLATION', 'TRUE_CANCELLATION', 'Cancellation measured');
+
+  const SourceSuppressionMode(this.protoName, this.apiValue, this.label);
+
+  final String protoName;
+  final String apiValue;
+  final String label;
+}
+
+extension SourceSuppressionModePresentation on SourceSuppressionMode {
+
+  static SourceSuppressionMode fromApiValue(String? value) {
+    return SourceSuppressionMode.values.firstWhere(
+      (item) => item.apiValue == value,
+      orElse: () => SourceSuppressionMode.unspecified,
     );
   }
 }
