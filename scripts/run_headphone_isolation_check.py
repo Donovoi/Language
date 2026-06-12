@@ -25,7 +25,15 @@ import numpy as np
 DEFAULT_OUTPUT_DIR = Path("artifacts/audio_eval")
 DEFAULT_RUN_ID = "headphone-earpiece-isolation"
 DEFAULT_ADAPTER_ID = "listener_headphone_earpiece_isolation_measurement_v1"
+DEFAULT_TTS_REPORT = DEFAULT_OUTPUT_DIR / "runs/same-voice-tts/voice-clone-report.json"
 DEFAULT_SAMPLE_RATE_HZ = 16000
+DEFAULT_CAPTURE_OUTPUT_CHANNELS = 2
+DEFAULT_CAPTURE_INPUT_CHANNELS = 1
+DEFAULT_GAP_S = 0.35
+DEFAULT_LEAD_S = 0.25
+DEFAULT_TAIL_S = 0.25
+DEFAULT_PLAYBACK_GAIN_DB = -18.0
+DEFAULT_MAX_PEAK_DBFS = -0.1
 DEFAULT_MIN_SOURCE_OPEN_DBFS = -60.0
 DEFAULT_MIN_TRANSLATED_DBFS = -60.0
 DEFAULT_MIN_SOURCE_OPEN_CORRELATION = 0.30
@@ -39,6 +47,12 @@ BENCHMARK_NAME = "headphone_earpiece_isolation"
 MEASUREMENT_KIND = "headphone_earpiece_isolation"
 SUPPRESSION_MODE = "HEADPHONE_ISOLATED"
 SUPPRESSION_CLAIM = "headphone_isolated_not_true_cancellation"
+CAPTURE_BACKEND_EXTERNAL = "external_wav_measurement"
+CAPTURE_BACKEND_PORTAUDIO = "sounddevice_portaudio_guided_playrec"
+CAPTURE_SOURCE_KIND_EXTERNAL = "external_listener_ear_wav_measurement"
+CAPTURE_SOURCE_KIND_PORTAUDIO = "host_guided_listener_ear_playrec_measurement"
+CAPTURE_BACKENDS = {CAPTURE_BACKEND_EXTERNAL, CAPTURE_BACKEND_PORTAUDIO}
+CAPTURE_SOURCE_KINDS = {CAPTURE_SOURCE_KIND_EXTERNAL, CAPTURE_SOURCE_KIND_PORTAUDIO}
 PLACEHOLDER_LABEL_PREFIXES = ("unspecified", "unknown", "todo", "placeholder")
 
 
@@ -52,6 +66,23 @@ def db_to_linear(value: float) -> float:
     return float(10.0 ** (value / 20.0))
 
 
+def import_sounddevice():
+    try:
+        import sounddevice as sd  # type: ignore
+    except ImportError as exc:  # pragma: no cover - exercised on hosts without PortAudio deps.
+        raise RuntimeError(
+            "sounddevice is required for guided host capture. "
+            "Install with: python -m pip install sounddevice numpy"
+        ) from exc
+    return sd
+
+
+def list_devices() -> int:
+    sd = import_sounddevice()
+    print(sd.query_devices())
+    return 0
+
+
 def rms(samples: np.ndarray) -> float:
     if samples.size == 0:
         return 0.0
@@ -60,6 +91,12 @@ def rms(samples: np.ndarray) -> float:
 
 def dbfs(samples: np.ndarray) -> float:
     return linear_to_db(rms(samples))
+
+
+def peak_dbfs(samples: np.ndarray) -> float:
+    if samples.size == 0:
+        return float("-inf")
+    return linear_to_db(float(np.max(np.abs(samples))))
 
 
 def sha256_file(path: Path) -> str:
@@ -73,6 +110,18 @@ def sha256_file(path: Path) -> str:
 def specific_label(value: Any) -> bool:
     text = str(value).strip()
     return bool(text) and not text.lower().startswith(PLACEHOLDER_LABEL_PREFIXES)
+
+
+def parse_device_selector(value: Any) -> int | str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return text
 
 
 def measurement_identity_fingerprint(
@@ -121,6 +170,255 @@ def write_mono_wav(path: Path, samples: np.ndarray, sample_rate_hz: int) -> None
         wav.setsampwidth(2)
         wav.setframerate(sample_rate_hz)
         wav.writeframes(pcm.tobytes())
+
+
+def resample_to_rate(audio: np.ndarray, source_rate_hz: int, target_rate_hz: int) -> np.ndarray:
+    if source_rate_hz == target_rate_hz:
+        return audio.astype(np.float32)
+    if audio.size == 0:
+        return audio.astype(np.float32)
+    source_positions = np.linspace(0.0, 1.0, int(audio.size), endpoint=False)
+    target_size = max(1, int(round(float(audio.size) * float(target_rate_hz) / float(source_rate_hz))))
+    target_positions = np.linspace(0.0, 1.0, target_size, endpoint=False)
+    return np.interp(target_positions, source_positions, audio.astype(np.float64)).astype(np.float32)
+
+
+def apply_playback_gain(samples: np.ndarray, gain_db: float, max_peak_dbfs: float) -> np.ndarray:
+    scaled = np.asarray(samples, dtype=np.float32) * db_to_linear(float(gain_db))
+    peak = float(np.max(np.abs(scaled))) if scaled.size else 0.0
+    limit = db_to_linear(float(max_peak_dbfs))
+    if peak > limit and peak > 0.0:
+        scaled = scaled * (limit / peak)
+    return scaled.astype(np.float32)
+
+
+def add_padding(samples: np.ndarray, sample_rate_hz: int, lead_s: float, tail_s: float) -> np.ndarray:
+    lead = np.zeros(max(0, int(round(float(lead_s) * float(sample_rate_hz)))), dtype=np.float32)
+    tail = np.zeros(max(0, int(round(float(tail_s) * float(sample_rate_hz)))), dtype=np.float32)
+    return np.concatenate([lead, np.asarray(samples, dtype=np.float32), tail]).astype(np.float32)
+
+
+def mono_playback(samples: np.ndarray, channels: int) -> np.ndarray:
+    channel_count = max(1, int(channels))
+    mono = np.asarray(samples, dtype=np.float32).reshape(-1, 1)
+    return np.repeat(mono, channel_count, axis=1).astype(np.float32)
+
+
+def resolve_report_path(report_path: Path, value: Any) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ValueError("expected non-empty artifact path")
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    beside = report_path.parent / path
+    if beside.exists():
+        return beside
+    return path
+
+
+def load_tts_segments(report_path: Path) -> list[dict[str, Any]]:
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    benchmark = report.get("benchmarks", {}).get("same_voice_or_fallback_tts", {})
+    segments = benchmark.get("segments", []) if isinstance(benchmark, dict) else []
+    if not isinstance(segments, list) or not segments:
+        raise ValueError(f"{report_path} does not contain same_voice_or_fallback_tts segments")
+    return [segment for segment in segments if isinstance(segment, dict)]
+
+
+def build_tts_reference_tracks(
+    report_path: Path,
+    sample_rate_hz: int,
+    gap_s: float,
+) -> tuple[np.ndarray, np.ndarray, list[dict[str, Any]]]:
+    source_parts: list[np.ndarray] = []
+    translated_parts: list[np.ndarray] = []
+    gap = np.zeros(max(0, int(round(float(gap_s) * float(sample_rate_hz)))), dtype=np.float32)
+    segment_records: list[dict[str, Any]] = []
+    cursor = 0
+    for index, segment in enumerate(load_tts_segments(report_path)):
+        source_path = resolve_report_path(report_path, segment.get("reference_audio_path"))
+        translated_path = resolve_report_path(report_path, segment.get("tts_output_path"))
+        source_audio, source_rate_hz = read_mono_wav(source_path)
+        translated_audio, translated_rate_hz = read_mono_wav(translated_path)
+        source_audio = resample_to_rate(source_audio, source_rate_hz, sample_rate_hz)
+        translated_audio = resample_to_rate(translated_audio, translated_rate_hz, sample_rate_hz)
+        frame_count = max(int(source_audio.size), int(translated_audio.size))
+        source_window = np.zeros(frame_count, dtype=np.float32)
+        translated_window = np.zeros(frame_count, dtype=np.float32)
+        source_window[: source_audio.size] = source_audio
+        translated_window[: translated_audio.size] = translated_audio
+        source_parts.append(source_window)
+        translated_parts.append(translated_window)
+        source_parts.append(gap)
+        translated_parts.append(gap)
+        segment_records.append(
+            {
+                "segment_index": index,
+                "start_sample": cursor,
+                "end_sample": cursor + frame_count,
+                "source_reference_path": str(source_path),
+                "source_reference_sha256": sha256_file(source_path),
+                "translated_reference_path": str(translated_path),
+                "translated_reference_sha256": sha256_file(translated_path),
+            }
+        )
+        cursor += frame_count + gap.size
+    source_track = np.concatenate(source_parts) if source_parts else np.zeros(0, dtype=np.float32)
+    translated_track = np.concatenate(translated_parts) if translated_parts else np.zeros(0, dtype=np.float32)
+    return source_track.astype(np.float32), translated_track.astype(np.float32), segment_records
+
+
+def limit_track_pair(
+    source_track: np.ndarray,
+    translated_track: np.ndarray,
+    *,
+    sample_rate_hz: int,
+    max_duration_s: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    if max_duration_s <= 0.0:
+        return source_track.astype(np.float32), translated_track.astype(np.float32)
+    max_samples = max(1, int(round(float(max_duration_s) * float(sample_rate_hz))))
+    return source_track[:max_samples].astype(np.float32), translated_track[:max_samples].astype(np.float32)
+
+
+def portaudio_device_identity(device: int | str | None, *, kind: str) -> dict[str, Any]:
+    sd = import_sounddevice()
+    info = sd.query_devices(device, kind=kind)
+    hostapi = sd.query_hostapis(int(info["hostapi"]))
+    return {
+        "default": device is None,
+        "default_samplerate": float(info["default_samplerate"]),
+        "hostapi": int(info["hostapi"]),
+        "hostapi_name": str(hostapi.get("name", "")),
+        "max_input_channels": int(info["max_input_channels"]),
+        "max_output_channels": int(info["max_output_channels"]),
+        "name": str(info["name"]),
+        "requested_device": device,
+    }
+
+
+def measurement_device_fingerprint(
+    *,
+    device_info: dict[str, Any],
+    sample_rate_hz: int,
+    input_channels: int,
+    output_channels: int,
+) -> str:
+    payload = {
+        "device_info": device_info,
+        "input_channels": int(input_channels),
+        "output_channels": int(output_channels),
+        "sample_rate_hz": int(sample_rate_hz),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def record_playback(
+    playback: np.ndarray,
+    *,
+    sample_rate_hz: int,
+    input_device: int | str | None,
+    output_device: int | str | None,
+    input_channels: int,
+) -> tuple[np.ndarray, float]:
+    sd = import_sounddevice()
+    start = time.perf_counter()
+    recording = sd.playrec(
+        playback,
+        samplerate=sample_rate_hz,
+        channels=max(1, int(input_channels)),
+        dtype="float32",
+        device=(input_device, output_device),
+        blocking=True,
+    )
+    elapsed_s = time.perf_counter() - start
+    if getattr(recording, "ndim", 1) > 1:
+        recording = recording.mean(axis=1)
+    return np.asarray(recording, dtype=np.float32), elapsed_s
+
+
+def recording_diagnostics(samples: np.ndarray, sample_rate_hz: int) -> dict[str, Any]:
+    clipped = int(np.count_nonzero(np.abs(samples) >= 0.999))
+    return {
+        "clipped_sample_count": clipped,
+        "duration_s": round(float(samples.size) / float(sample_rate_hz), 6),
+        "peak_dbfs": round(peak_dbfs(samples), 3),
+        "rms_dbfs": round(dbfs(samples), 3),
+    }
+
+
+def wait_for_operator(message: str, *, non_interactive: bool) -> None:
+    print(message)
+    if not non_interactive:
+        input("Press Enter when ready...")
+
+
+def write_capture_failure_report(
+    *,
+    args: argparse.Namespace,
+    run_dir: Path,
+    capture_context: dict[str, Any],
+    artifact_paths: dict[str, str],
+    error: Exception,
+) -> Path:
+    artifact_hashes = {
+        key: sha256_file(Path(value))
+        for key, value in artifact_paths.items()
+        if Path(value).exists()
+    }
+    summary = {
+        "capture_backend": CAPTURE_BACKEND_PORTAUDIO,
+        "capture_error": str(error),
+        "capture_error_type": type(error).__name__,
+        "capture_source_kind": CAPTURE_SOURCE_KIND_PORTAUDIO,
+        "measurement_kind": MEASUREMENT_KIND,
+        "quality_gates": [
+            {
+                "name": "headphone_guided_capture_completed",
+                "passed": False,
+                "threshold": "all three guided host capture steps complete",
+                "value": {
+                    "capture_error": str(error),
+                    "capture_error_type": type(error).__name__,
+                },
+            }
+        ],
+        "release_proof": False,
+        "source_suppression_mode": SUPPRESSION_MODE,
+        "suppression_claim": SUPPRESSION_CLAIM,
+    }
+    report = {
+        "schema_version": 1,
+        "generated_at_unix": int(time.time()),
+        "fixture_kind": FIXTURE_KIND,
+        "measurement_kind": MEASUREMENT_KIND,
+        "output_dir": str(args.output_dir),
+        "release_proof": False,
+        "summary": {
+            "passed": False,
+            "quality_gates": summary["quality_gates"],
+            "release_proof": False,
+        },
+        "benchmarks": {
+            BENCHMARK_NAME: {
+                "adapter_id": args.adapter_id,
+                "summary": summary,
+            }
+        },
+        "artifact_paths": artifact_paths,
+        "artifact_hashes": artifact_hashes,
+        "capture": capture_context,
+        "detractor_loop": {
+            "strongest_objection": (
+                "A failed guided capture cannot satisfy playback source-suppression evidence."
+            ),
+            "verdict": "Use this as route triage only; fix devices/sample rate before release gating.",
+        },
+    }
+    report_path = run_dir / "headphone-isolation-report.json"
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return report_path
 
 
 def projection_gain(target: np.ndarray, reference: np.ndarray) -> float:
@@ -250,6 +548,10 @@ def quality_gates(summary: dict[str, Any], args: argparse.Namespace) -> list[dic
     translated_clone = bool(summary.get("translated_headphone_recording_matches_reference"))
     mode = summary["source_suppression_mode"]
     claim = summary["suppression_claim"]
+    capture_backend = str(summary.get("capture_backend", ""))
+    capture_source_kind = str(summary.get("capture_source_kind", ""))
+    device_identity = bool(summary.get("device_path_identity_recorded"))
+    device_fingerprint = str(summary.get("device_path_fingerprint", ""))
     identity_fingerprint = str(summary.get("measurement_identity_fingerprint", ""))
     release_proof = bool(summary["release_proof"])
     return [
@@ -281,6 +583,24 @@ def quality_gates(summary: dict[str, Any], args: argparse.Namespace) -> list[dic
                 "headphone_device_label": summary.get("headphone_device_label"),
                 "measurement_identity_fingerprint": identity_fingerprint,
                 "measurement_microphone_label": summary.get("measurement_microphone_label"),
+            },
+        },
+        {
+            "name": "headphone_capture_source_declared",
+            "passed": (
+                capture_backend in CAPTURE_BACKENDS
+                and capture_source_kind in CAPTURE_SOURCE_KINDS
+                and (
+                    capture_backend != CAPTURE_BACKEND_PORTAUDIO
+                    or (device_identity and len(device_fingerprint) == 64)
+                )
+            ),
+            "threshold": "capture backend/source declared; guided PortAudio capture includes device fingerprint",
+            "value": {
+                "capture_backend": capture_backend,
+                "capture_source_kind": capture_source_kind,
+                "device_path_fingerprint": device_fingerprint,
+                "device_path_identity_recorded": device_identity,
             },
         },
         {
@@ -422,6 +742,11 @@ def score(args: argparse.Namespace) -> int:
     )
     summary = {
         "all_artifact_hashes_present": all(len(value) == 64 for value in artifact_hashes.values()),
+        "capture_backend": str(getattr(args, "capture_backend", CAPTURE_BACKEND_EXTERNAL)),
+        "capture_source_kind": str(getattr(args, "capture_source_kind", CAPTURE_SOURCE_KIND_EXTERNAL)),
+        "device_path_fingerprint": str(getattr(args, "device_path_fingerprint", "")),
+        "device_path_identity_recorded": bool(getattr(args, "device_path_identity_recorded", False)),
+        "device_info": getattr(args, "device_info", {}),
         "headphone_device_label": headphone_device_label,
         "isolation_fixture_label": isolation_fixture_label,
         "measurement_kind": MEASUREMENT_KIND,
@@ -430,6 +755,7 @@ def score(args: argparse.Namespace) -> int:
         "artifact_frame_counts": frame_counts,
         "min_artifact_duration_s": round(min_artifact_duration_s, 6),
         "procedure_note": str(args.procedure_note),
+        "reference_source_kind": str(getattr(args, "reference_source_kind", "external_wav_pair")),
         "release_proof": True,
         "sample_rate_hz": sample_rate_hz,
         "source_isolated_recording_matches_reference": (
@@ -483,6 +809,7 @@ def score(args: argparse.Namespace) -> int:
         },
         "artifact_paths": artifact_paths,
         "artifact_hashes": artifact_hashes,
+        "capture": getattr(args, "capture_context", {}),
         "detractor_loop": {
             "strongest_objection": (
                 "Headphone isolation is listener-local attenuation, not room-wide cancellation."
@@ -503,6 +830,185 @@ def score(args: argparse.Namespace) -> int:
     )
     print(f"wrote headphone isolation report to {report_path}")
     return 0 if report["summary"]["passed"] or args.score_warning_only else 1
+
+
+def _capture_reference_tracks(args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray, str, list[dict[str, Any]]]:
+    if bool(args.source_reference) != bool(args.translated_playback_reference):
+        raise ValueError("--source-reference and --translated-playback-reference must be provided together")
+    if args.source_reference and args.translated_playback_reference:
+        source, source_rate = read_mono_wav(Path(args.source_reference))
+        translated, translated_rate = read_mono_wav(Path(args.translated_playback_reference))
+        source = resample_to_rate(source, source_rate, int(args.sample_rate_hz))
+        translated = resample_to_rate(translated, translated_rate, int(args.sample_rate_hz))
+        return source, translated, "external_wav_pair", []
+    source, translated, segments = build_tts_reference_tracks(
+        Path(args.tts_report),
+        int(args.sample_rate_hz),
+        float(args.gap_s),
+    )
+    return source, translated, "same_voice_or_fallback_tts_report", segments
+
+
+def capture(args: argparse.Namespace) -> int:
+    for field in ("headphone_device_label", "isolation_fixture_label", "measurement_microphone_label"):
+        if not specific_label(getattr(args, field)):
+            raise ValueError(f"{field.replace('_', '-')} must be specific, not a placeholder")
+
+    measurement_input_device = parse_device_selector(args.measurement_input_device)
+    source_output_device = parse_device_selector(args.source_output_device)
+    headphone_output_device = parse_device_selector(args.headphone_output_device)
+    run_dir = Path(args.output_dir) / "runs" / args.run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    source_raw, translated_raw, reference_source_kind, reference_segments = _capture_reference_tracks(args)
+    source_raw, translated_raw = limit_track_pair(
+        source_raw,
+        translated_raw,
+        sample_rate_hz=int(args.sample_rate_hz),
+        max_duration_s=float(args.max_reference_duration_s),
+    )
+    source_reference = add_padding(
+        apply_playback_gain(source_raw, float(args.playback_gain_db), float(args.max_peak_dbfs)),
+        int(args.sample_rate_hz),
+        float(args.lead_s),
+        float(args.tail_s),
+    )
+    translated_reference = add_padding(
+        apply_playback_gain(translated_raw, float(args.playback_gain_db), float(args.max_peak_dbfs)),
+        int(args.sample_rate_hz),
+        float(args.lead_s),
+        float(args.tail_s),
+    )
+    if min(source_reference.size, translated_reference.size) / float(args.sample_rate_hz) < float(
+        args.min_measurement_duration_s
+    ):
+        raise ValueError("capture reference artifacts are shorter than the minimum measurement duration")
+
+    source_reference_path = run_dir / "source-reference.wav"
+    translated_reference_path = run_dir / "translated-playback-reference.wav"
+    source_open_path = run_dir / "source-open-ear-recording.wav"
+    source_isolated_path = run_dir / "source-isolated-ear-recording.wav"
+    translated_recording_path = run_dir / "translated-headphone-recording.wav"
+    write_mono_wav(source_reference_path, source_reference, int(args.sample_rate_hz))
+    write_mono_wav(translated_reference_path, translated_reference, int(args.sample_rate_hz))
+
+    device_info = {
+        "headphone_output_device": portaudio_device_identity(headphone_output_device, kind="output"),
+        "measurement_input_device": portaudio_device_identity(measurement_input_device, kind="input"),
+        "source_output_device": portaudio_device_identity(source_output_device, kind="output"),
+    }
+    device_fingerprint = measurement_device_fingerprint(
+        device_info=device_info,
+        sample_rate_hz=int(args.sample_rate_hz),
+        input_channels=int(args.input_channels),
+        output_channels=int(args.output_channels),
+    )
+    print(f"measurement device fingerprint: {device_fingerprint}")
+    capture_context: dict[str, Any] = {
+        "backend": CAPTURE_BACKEND_PORTAUDIO,
+        "device_path_fingerprint": device_fingerprint,
+        "device_info": device_info,
+        "reference_segments": reference_segments,
+        "sample_rate_hz": int(args.sample_rate_hz),
+        "input_channels": int(args.input_channels),
+        "output_channels": int(args.output_channels),
+        "playback_gain_db": float(args.playback_gain_db),
+        "lead_s": float(args.lead_s),
+        "tail_s": float(args.tail_s),
+        "reference_source_kind": reference_source_kind,
+        "source_route_control": (
+            "source_open_ear_recording and source_isolated_ear_recording use the same "
+            "source output device, source reference WAV, playback gain, sample rate, and channels"
+        ),
+    }
+
+    source_playback = mono_playback(source_reference, int(args.output_channels))
+    translated_playback = mono_playback(translated_reference, int(args.output_channels))
+    artifact_paths = {
+        "source_reference": str(source_reference_path),
+        "source_open_ear_recording": str(source_open_path),
+        "source_isolated_ear_recording": str(source_isolated_path),
+        "translated_playback_reference": str(translated_reference_path),
+        "translated_headphone_recording": str(translated_recording_path),
+    }
+
+    try:
+        wait_for_operator(
+            "Step 1/3: OPEN-EAR CONTROL. Put the listener-ear microphone in the measurement position, "
+            "leave the headphone/earpiece isolation path off or removed, and route the source output to the original-source speaker.",
+            non_interactive=bool(args.non_interactive),
+        )
+        source_open, elapsed = record_playback(
+            source_playback,
+            sample_rate_hz=int(args.sample_rate_hz),
+            input_device=measurement_input_device,
+            output_device=source_output_device,
+            input_channels=int(args.input_channels),
+        )
+        capture_context["source_open_capture_elapsed_s"] = round(elapsed, 6)
+        capture_context["source_open_recording"] = recording_diagnostics(source_open, int(args.sample_rate_hz))
+        write_mono_wav(source_open_path, source_open, int(args.sample_rate_hz))
+
+        wait_for_operator(
+            "Step 2/3: ISOLATED SOURCE. Keep the source speaker route unchanged, place/enable the "
+            "headphone or earpiece isolation fixture on the same listener-ear microphone, then record the source again.",
+            non_interactive=bool(args.non_interactive),
+        )
+        source_isolated, elapsed = record_playback(
+            source_playback,
+            sample_rate_hz=int(args.sample_rate_hz),
+            input_device=measurement_input_device,
+            output_device=source_output_device,
+            input_channels=int(args.input_channels),
+        )
+        capture_context["source_isolated_capture_elapsed_s"] = round(elapsed, 6)
+        capture_context["source_isolated_recording"] = recording_diagnostics(source_isolated, int(args.sample_rate_hz))
+        write_mono_wav(source_isolated_path, source_isolated, int(args.sample_rate_hz))
+
+        wait_for_operator(
+            "Step 3/3: TRANSLATED HEADPHONE PLAYBACK. Keep the listener-ear measurement fixture in place, "
+            "route output to the headphone/earpiece device, and record the translated playback.",
+            non_interactive=bool(args.non_interactive),
+        )
+        translated_recording, elapsed = record_playback(
+            translated_playback,
+            sample_rate_hz=int(args.sample_rate_hz),
+            input_device=measurement_input_device,
+            output_device=headphone_output_device,
+            input_channels=int(args.input_channels),
+        )
+        capture_context["translated_headphone_capture_elapsed_s"] = round(elapsed, 6)
+        capture_context["translated_headphone_recording"] = recording_diagnostics(
+            translated_recording,
+            int(args.sample_rate_hz),
+        )
+        write_mono_wav(translated_recording_path, translated_recording, int(args.sample_rate_hz))
+    except Exception as exc:
+        report_path = write_capture_failure_report(
+            args=args,
+            run_dir=run_dir,
+            capture_context=capture_context,
+            artifact_paths=artifact_paths,
+            error=exc,
+        )
+        print(f"headphone/earpiece guided capture FAIL: {type(exc).__name__}: {exc}")
+        print(f"wrote headphone isolation failure report to {report_path}")
+        return 0 if args.score_warning_only else 1
+
+    score_args = argparse.Namespace(**vars(args))
+    score_args.adapter_id = args.adapter_id
+    score_args.capture_backend = CAPTURE_BACKEND_PORTAUDIO
+    score_args.capture_context = capture_context
+    score_args.capture_source_kind = CAPTURE_SOURCE_KIND_PORTAUDIO
+    score_args.device_info = device_info
+    score_args.device_path_fingerprint = device_fingerprint
+    score_args.device_path_identity_recorded = True
+    score_args.reference_source_kind = reference_source_kind
+    score_args.source_reference = source_reference_path
+    score_args.source_open_ear_recording = source_open_path
+    score_args.source_isolated_ear_recording = source_isolated_path
+    score_args.translated_playback_reference = translated_reference_path
+    score_args.translated_headphone_recording = translated_recording_path
+    return score(score_args)
 
 
 def self_test() -> int:
@@ -573,6 +1079,7 @@ def self_test() -> int:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Score measured headphone/earpiece source isolation")
     subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers.add_parser("list-devices", help="list PortAudio devices for guided host capture")
     subparsers.add_parser("self-test", help="validate scoring gates without external artifacts")
     score_parser = subparsers.add_parser(
         "score",
@@ -619,15 +1126,79 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     score_parser.add_argument("--max-alignment-lag-ms", type=float, default=DEFAULT_MAX_ALIGNMENT_LAG_MS)
     score_parser.add_argument("--score-warning-only", action="store_true")
+    capture_parser = subparsers.add_parser(
+        "capture",
+        help="guide a host PortAudio measurement and then score the captured WAV artifacts",
+    )
+    capture_parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    capture_parser.add_argument("--run-id", default=DEFAULT_RUN_ID)
+    capture_parser.add_argument("--adapter-id", default=DEFAULT_ADAPTER_ID)
+    capture_parser.add_argument("--tts-report", type=Path, default=DEFAULT_TTS_REPORT)
+    capture_parser.add_argument("--source-reference", type=Path)
+    capture_parser.add_argument("--translated-playback-reference", type=Path)
+    capture_parser.add_argument("--measurement-input-device", required=True)
+    capture_parser.add_argument("--source-output-device", required=True)
+    capture_parser.add_argument("--headphone-output-device", required=True)
+    capture_parser.add_argument("--input-channels", type=int, default=DEFAULT_CAPTURE_INPUT_CHANNELS)
+    capture_parser.add_argument("--output-channels", type=int, default=DEFAULT_CAPTURE_OUTPUT_CHANNELS)
+    capture_parser.add_argument("--sample-rate-hz", type=int, default=DEFAULT_SAMPLE_RATE_HZ)
+    capture_parser.add_argument("--gap-s", type=float, default=DEFAULT_GAP_S)
+    capture_parser.add_argument("--lead-s", type=float, default=DEFAULT_LEAD_S)
+    capture_parser.add_argument("--tail-s", type=float, default=DEFAULT_TAIL_S)
+    capture_parser.add_argument("--playback-gain-db", type=float, default=DEFAULT_PLAYBACK_GAIN_DB)
+    capture_parser.add_argument("--max-peak-dbfs", type=float, default=DEFAULT_MAX_PEAK_DBFS)
+    capture_parser.add_argument("--max-reference-duration-s", type=float, default=8.0)
+    capture_parser.add_argument("--headphone-device-label", required=True)
+    capture_parser.add_argument("--isolation-fixture-label", required=True)
+    capture_parser.add_argument("--measurement-microphone-label", required=True)
+    capture_parser.add_argument(
+        "--min-measurement-duration-s",
+        type=float,
+        default=DEFAULT_MIN_MEASUREMENT_DURATION_S,
+    )
+    capture_parser.add_argument("--procedure-note", default="guided host listener-ear measurement")
+    capture_parser.add_argument("--min-source-open-dbfs", type=float, default=DEFAULT_MIN_SOURCE_OPEN_DBFS)
+    capture_parser.add_argument("--min-translated-dbfs", type=float, default=DEFAULT_MIN_TRANSLATED_DBFS)
+    capture_parser.add_argument(
+        "--min-source-open-correlation",
+        type=float,
+        default=DEFAULT_MIN_SOURCE_OPEN_CORRELATION,
+    )
+    capture_parser.add_argument(
+        "--min-translated-correlation",
+        type=float,
+        default=DEFAULT_MIN_TRANSLATED_CORRELATION,
+    )
+    capture_parser.add_argument(
+        "--min-source-isolation-db",
+        type=float,
+        default=DEFAULT_MIN_SOURCE_ISOLATION_DB,
+    )
+    capture_parser.add_argument(
+        "--max-translated-distortion-db",
+        type=float,
+        default=DEFAULT_MAX_TRANSLATED_DISTORTION_DB,
+    )
+    capture_parser.add_argument("--max-alignment-lag-ms", type=float, default=DEFAULT_MAX_ALIGNMENT_LAG_MS)
+    capture_parser.add_argument("--score-warning-only", action="store_true")
+    capture_parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="print measurement steps without waiting for Enter before each capture",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    if args.command == "list-devices":
+        return list_devices()
     if args.command == "self-test":
         return self_test()
     if args.command == "score":
         return score(args)
+    if args.command == "capture":
+        return capture(args)
     raise AssertionError(f"unhandled command: {args.command}")
 
 

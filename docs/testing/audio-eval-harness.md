@@ -563,13 +563,22 @@ satisfy the true room-cancellation gate.
 
 ```bash
 make headphone-isolation-contract-check
+make headphone-isolation-list-devices
 ```
 
 Windows:
 
 ```powershell
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-contract-check
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-list-devices
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --headphone-device-label "measured headphones" --isolation-fixture-label "sealed listener-ear coupler" --measurement-microphone-label "listener-ear measurement mic"
 ```
+
+The guided capture path uses PortAudio `playrec` for all three takes, records source-open and
+source-isolated with the same source output/reference/gain/sample-rate/channel route, records
+translated playback through the headphone output, and embeds device snapshots, a device-path
+fingerprint, per-take levels, clipping counts, hashes, and the same non-tamper-proof provenance
+boundary as the other host audio evidence.
 
 ## Release Audio Evidence Gate
 
