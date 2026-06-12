@@ -44,7 +44,9 @@ than by inventing a second package version line.
 	- Confirm live microphone evidence has matching WAV/chunk JSONL artifacts that the gate validates.
 	- Confirm prototype-only evidence is listed separately and is not being used to satisfy live
 	  microphone capture, causal diarization, real TSE/separation, streaming speech translation,
-	  same-voice/fallback TTS, or real-room playback/suppression gates.
+	  same-voice/fallback TTS, or playback source-suppression gates.
+	- Confirm headphone/earpiece evidence, if used, is labeled
+	  `headphone_isolated_not_true_cancellation` and is not described as true room cancellation.
 	- Confirm fallback TTS reports contain hashed WAV artifacts, level matching, and no same-voice
 	  claim unless a same-speaker benchmark has passed.
 	- Confirm the gate rejects bare `summary.passed=true` reports and requires product-specific

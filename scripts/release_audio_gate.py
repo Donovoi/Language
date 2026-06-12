@@ -43,6 +43,9 @@ DEFAULT_VOICE_REPORT = DEFAULT_AUDIO_EVAL_DIR / "runs/same-voice-tts/voice-clone
 DEFAULT_ROOM_SUPPRESSION_REPORT = (
     DEFAULT_AUDIO_EVAL_DIR / "runs/real-room-playback-suppression/room-playback-suppression-report.json"
 )
+DEFAULT_HEADPHONE_ISOLATION_REPORT = (
+    DEFAULT_AUDIO_EVAL_DIR / "runs/headphone-earpiece-isolation/headphone-isolation-report.json"
+)
 DEFAULT_PLAYBACK_PROTOTYPE_REPORT = (
     DEFAULT_AUDIO_EVAL_DIR / "runs/fleurs-playback-ducking-suppression/playback-suppression-report.json"
 )
@@ -144,6 +147,45 @@ ROOM_MAX_CALIBRATION_DISTORTION_DB = 12.0
 ROOM_DB_TOLERANCE = 0.075
 ROOM_CORRELATION_TOLERANCE = 0.001
 ROOM_MAX_ALIGNMENT_LAG_MS = 500.0
+HEADPHONE_ISOLATION_REQUIRED_GATES = {
+    "headphone_measurement_release_proof",
+    "headphone_mode_claim_declared",
+    "headphone_claim_not_true_cancellation",
+    "headphone_device_identity_recorded",
+    "isolation_fixture_identity_recorded",
+    "headphone_recordings_duration_floor",
+    "open_ear_source_control_audible",
+    "headphone_source_open_reference_fidelity",
+    "source_isolation_measured",
+    "translated_headphone_output_audible",
+    "translated_headphone_output_not_distorted",
+    "headphone_artifacts_hashed",
+    "headphone_metrics_are_wav_derived",
+    "headphone_recordings_not_reference_clones",
+}
+HEADPHONE_REQUIRED_FIXTURE_KIND = "headphone_earpiece_isolation"
+HEADPHONE_REQUIRED_BENCHMARK_NAME = "headphone_earpiece_isolation"
+HEADPHONE_REQUIRED_MEASUREMENT_KIND = "headphone_earpiece_isolation"
+HEADPHONE_REQUIRED_SUPPRESSION_MODE = "HEADPHONE_ISOLATED"
+HEADPHONE_REQUIRED_SUPPRESSION_CLAIM = "headphone_isolated_not_true_cancellation"
+HEADPHONE_REQUIRED_ARTIFACTS = (
+    "source_reference",
+    "source_open_ear_recording",
+    "source_isolated_ear_recording",
+    "translated_playback_reference",
+    "translated_headphone_recording",
+)
+HEADPHONE_MIN_SOURCE_OPEN_DBFS = -60.0
+HEADPHONE_MIN_TRANSLATED_DBFS = -60.0
+HEADPHONE_MIN_SOURCE_OPEN_CORRELATION = 0.30
+HEADPHONE_MIN_TRANSLATED_CORRELATION = 0.30
+HEADPHONE_MIN_SOURCE_ISOLATION_DB = 12.0
+HEADPHONE_MIN_MEASUREMENT_DURATION_S = 1.0
+HEADPHONE_MAX_TRANSLATED_DISTORTION_DB = 12.0
+HEADPHONE_DB_TOLERANCE = 0.075
+HEADPHONE_CORRELATION_TOLERANCE = 0.001
+HEADPHONE_DURATION_TOLERANCE_S = 0.001
+PLACEHOLDER_LABEL_PREFIXES = ("unspecified", "unknown", "todo", "placeholder")
 
 
 @dataclass(frozen=True)
@@ -299,6 +341,28 @@ def _device_path_fingerprint(
     return hashlib.sha256(data).hexdigest()
 
 
+def _headphone_measurement_identity_fingerprint(
+    summary: dict[str, Any],
+    artifact_hashes: dict[str, Any],
+) -> str:
+    sample_rate_hz = _float_or_none(summary.get("sample_rate_hz"))
+    payload = {
+        "artifact_hashes": {
+            key: str(artifact_hashes.get(key, ""))
+            for key in HEADPHONE_REQUIRED_ARTIFACTS
+        },
+        "headphone_device_label": str(summary.get("headphone_device_label", "")),
+        "isolation_fixture_label": str(summary.get("isolation_fixture_label", "")),
+        "measurement_kind": HEADPHONE_REQUIRED_MEASUREMENT_KIND,
+        "measurement_microphone_label": str(summary.get("measurement_microphone_label", "")),
+        "sample_rate_hz": int(sample_rate_hz) if sample_rate_hz is not None else None,
+        "source_suppression_mode": HEADPHONE_REQUIRED_SUPPRESSION_MODE,
+        "suppression_claim": HEADPHONE_REQUIRED_SUPPRESSION_CLAIM,
+    }
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(data).hexdigest()
+
+
 def _resolve_artifact_path(report_path: Path, value: Any) -> Path | None:
     if not isinstance(value, str) or not value:
         return None
@@ -331,6 +395,11 @@ def _is_sha256(value: Any) -> bool:
         and len(value) == 64
         and all(char in "0123456789abcdef" for char in value.lower())
     )
+
+
+def _specific_measurement_label(value: Any) -> bool:
+    text = str(value).strip()
+    return bool(text) and not text.lower().startswith(PLACEHOLDER_LABEL_PREFIXES)
 
 
 def _float_or_none(value: Any) -> float | None:
@@ -604,8 +673,94 @@ def _recompute_room_metrics(artifact_paths: dict[str, Path]) -> dict[str, float]
     }
 
 
+def _reference_recording_metrics_i16(
+    recording: array.array,
+    reference: array.array,
+    sample_rate_hz: int,
+) -> dict[str, float]:
+    lag_samples = _best_alignment_lag_samples(
+        recording,
+        reference,
+        sample_rate_hz,
+        ROOM_MAX_ALIGNMENT_LAG_MS,
+    )
+    aligned_recording, aligned_reference = _align_numeric_sequences(
+        recording,
+        reference,
+        lag_samples,
+    )
+    gain = abs(_projection_gain_values(aligned_recording, aligned_reference))
+    return {
+        "correlation": _correlation_values(aligned_recording, aligned_reference),
+        "distortion_db": _distortion_db_values(aligned_recording, aligned_reference),
+        "gain_db": _linear_to_db(gain) if gain > 0.0 else float("-inf"),
+        "lag_samples": float(lag_samples),
+        "recording_dbfs": _dbfs_from_rms_i16(_rms_i16(recording)),
+    }
+
+
+def _recompute_headphone_isolation_metrics(artifact_paths: dict[str, Path]) -> dict[str, float]:
+    source_rate, source_reference = _read_mono_pcm16_wav(artifact_paths["source_reference"])
+    source_open_rate, source_open = _read_mono_pcm16_wav(artifact_paths["source_open_ear_recording"])
+    source_isolated_rate, source_isolated = _read_mono_pcm16_wav(
+        artifact_paths["source_isolated_ear_recording"]
+    )
+    translated_rate, translated_reference = _read_mono_pcm16_wav(
+        artifact_paths["translated_playback_reference"]
+    )
+    translated_recording_rate, translated_recording = _read_mono_pcm16_wav(
+        artifact_paths["translated_headphone_recording"]
+    )
+    if len({source_rate, source_open_rate, source_isolated_rate, translated_rate, translated_recording_rate}) != 1:
+        raise ValueError("headphone isolation WAV sample rates must match")
+    min_artifact_duration_s = min(
+        len(source_reference),
+        len(source_open),
+        len(source_isolated),
+        len(translated_reference),
+        len(translated_recording),
+    ) / float(source_rate)
+    source_open_metrics = _reference_recording_metrics_i16(source_open, source_reference, source_rate)
+    source_isolated_metrics = _reference_recording_metrics_i16(
+        source_isolated,
+        source_reference,
+        source_rate,
+    )
+    translated_metrics = _reference_recording_metrics_i16(
+        translated_recording,
+        translated_reference,
+        source_rate,
+    )
+    return {
+        "min_artifact_duration_s": min_artifact_duration_s,
+        "sample_rate_hz": float(source_rate),
+        "source_isolated_gain_db": source_isolated_metrics["gain_db"],
+        "source_isolated_recording_dbfs": source_isolated_metrics["recording_dbfs"],
+        "source_isolated_reference_correlation": source_isolated_metrics["correlation"],
+        "source_isolated_reference_distortion_db": source_isolated_metrics["distortion_db"],
+        "source_isolated_reference_lag_samples": source_isolated_metrics["lag_samples"],
+        "source_isolation_db": source_open_metrics["gain_db"] - source_isolated_metrics["gain_db"],
+        "source_open_gain_db": source_open_metrics["gain_db"],
+        "source_open_recording_dbfs": source_open_metrics["recording_dbfs"],
+        "source_open_reference_correlation": source_open_metrics["correlation"],
+        "source_open_reference_distortion_db": source_open_metrics["distortion_db"],
+        "source_open_reference_lag_samples": source_open_metrics["lag_samples"],
+        "translated_headphone_gain_db": translated_metrics["gain_db"],
+        "translated_headphone_recording_dbfs": translated_metrics["recording_dbfs"],
+        "translated_headphone_reference_correlation": translated_metrics["correlation"],
+        "translated_headphone_reference_distortion_db": translated_metrics["distortion_db"],
+        "translated_headphone_reference_lag_samples": translated_metrics["lag_samples"],
+    }
+
+
 def _room_metric_tolerance(field: str) -> float:
     return ROOM_CORRELATION_TOLERANCE if field.endswith("_correlation") else ROOM_DB_TOLERANCE
+
+
+def _headphone_metric_tolerance(field: str) -> float:
+    if field.endswith("_duration_s"):
+        return HEADPHONE_DURATION_TOLERANCE_S
+    return HEADPHONE_CORRELATION_TOLERANCE if field.endswith("_correlation") else HEADPHONE_DB_TOLERANCE
 
 
 def _int_or_none(value: Any) -> int | None:
@@ -1093,6 +1248,15 @@ def _room_suppression_benchmark(report: dict[str, Any]) -> dict[str, Any]:
     return benchmark if isinstance(benchmark, dict) else {}
 
 
+def _headphone_isolation_summary(report: dict[str, Any]) -> dict[str, Any]:
+    benchmark = report.get("benchmarks", {}).get(HEADPHONE_REQUIRED_BENCHMARK_NAME, {})
+    if isinstance(benchmark, dict):
+        summary = benchmark.get("summary", {})
+        if isinstance(summary, dict):
+            return summary
+    return {}
+
+
 def _room_suppression_gate(spec: EvidenceSpec) -> GateResult:
     report = _load_json(spec.path)
     prefix = _pass_fail_prefix(spec, report)
@@ -1369,6 +1533,293 @@ def _room_suppression_gate(spec: EvidenceSpec) -> GateResult:
     return _pass(spec)
 
 
+def _headphone_isolation_gate(spec: EvidenceSpec) -> GateResult:
+    report = _load_json(spec.path)
+    prefix = _pass_fail_prefix(spec, report)
+    if prefix:
+        return prefix
+    assert report is not None
+
+    prototype = _reject_prototype_fixture(spec, report)
+    if prototype:
+        return prototype
+
+    summary = _headphone_isolation_summary(report)
+    missing = _missing_gates(report, HEADPHONE_ISOLATION_REQUIRED_GATES)
+    failures: list[str] = []
+    if report.get("fixture_kind") != HEADPHONE_REQUIRED_FIXTURE_KIND:
+        failures.append(f"fixture_kind must be {HEADPHONE_REQUIRED_FIXTURE_KIND}, got {report.get('fixture_kind')!r}")
+    if summary.get("measurement_kind") != HEADPHONE_REQUIRED_MEASUREMENT_KIND:
+        failures.append(
+            "headphone_earpiece_isolation.summary.measurement_kind must be "
+            f"{HEADPHONE_REQUIRED_MEASUREMENT_KIND}"
+        )
+    release_proof = bool(report.get("release_proof") and _summary(report).get("release_proof") and summary.get("release_proof"))
+    if not release_proof:
+        failures.append("headphone isolation release_proof must be true")
+    if summary.get("source_suppression_mode") != HEADPHONE_REQUIRED_SUPPRESSION_MODE:
+        failures.append(
+            "headphone_earpiece_isolation.summary.source_suppression_mode must be "
+            f"{HEADPHONE_REQUIRED_SUPPRESSION_MODE}"
+        )
+    if summary.get("suppression_claim") != HEADPHONE_REQUIRED_SUPPRESSION_CLAIM:
+        failures.append(
+            "headphone_earpiece_isolation.summary.suppression_claim must be "
+            f"{HEADPHONE_REQUIRED_SUPPRESSION_CLAIM}"
+        )
+    if summary.get("translated_audio_is_surrogate") is not False:
+        failures.append("headphone_earpiece_isolation.summary.translated_audio_is_surrogate must be false")
+    if not _specific_measurement_label(summary.get("headphone_device_label")):
+        failures.append("headphone_earpiece_isolation.summary.headphone_device_label must be specific, not a placeholder")
+    if not _specific_measurement_label(summary.get("measurement_microphone_label")):
+        failures.append("headphone_earpiece_isolation.summary.measurement_microphone_label must be specific, not a placeholder")
+    if not _specific_measurement_label(summary.get("isolation_fixture_label")):
+        failures.append("headphone_earpiece_isolation.summary.isolation_fixture_label must be specific, not a placeholder")
+    if missing:
+        failures.append(f"missing/passing required headphone-isolation gates: {', '.join(missing)}")
+
+    metric_values = {
+        "sample_rate_hz": _float_or_none(summary.get("sample_rate_hz")),
+        "min_artifact_duration_s": _float_or_none(summary.get("min_artifact_duration_s")),
+        "source_isolated_gain_db": _float_or_none(summary.get("source_isolated_gain_db")),
+        "source_isolated_recording_dbfs": _float_or_none(summary.get("source_isolated_recording_dbfs")),
+        "source_isolated_reference_correlation": _float_or_none(
+            summary.get("source_isolated_reference_correlation")
+        ),
+        "source_isolated_reference_distortion_db": _float_or_none(
+            summary.get("source_isolated_reference_distortion_db")
+        ),
+        "source_isolated_reference_lag_samples": _float_or_none(
+            summary.get("source_isolated_reference_lag_samples")
+        ),
+        "source_isolation_db": _float_or_none(summary.get("source_isolation_db")),
+        "source_open_gain_db": _float_or_none(summary.get("source_open_gain_db")),
+        "source_open_recording_dbfs": _float_or_none(summary.get("source_open_recording_dbfs")),
+        "source_open_reference_correlation": _float_or_none(
+            summary.get("source_open_reference_correlation")
+        ),
+        "source_open_reference_distortion_db": _float_or_none(
+            summary.get("source_open_reference_distortion_db")
+        ),
+        "source_open_reference_lag_samples": _float_or_none(
+            summary.get("source_open_reference_lag_samples")
+        ),
+        "translated_headphone_gain_db": _float_or_none(summary.get("translated_headphone_gain_db")),
+        "translated_headphone_recording_dbfs": _float_or_none(
+            summary.get("translated_headphone_recording_dbfs")
+        ),
+        "translated_headphone_reference_correlation": _float_or_none(
+            summary.get("translated_headphone_reference_correlation")
+        ),
+        "translated_headphone_reference_distortion_db": _float_or_none(
+            summary.get("translated_headphone_reference_distortion_db")
+        ),
+        "translated_headphone_reference_lag_samples": _float_or_none(
+            summary.get("translated_headphone_reference_lag_samples")
+        ),
+    }
+    for field, value in metric_values.items():
+        if value is None:
+            failures.append(f"headphone_earpiece_isolation.summary.{field} must be finite")
+    source_open_level = metric_values["source_open_recording_dbfs"]
+    if source_open_level is not None and source_open_level < HEADPHONE_MIN_SOURCE_OPEN_DBFS:
+        failures.append(
+            "headphone_earpiece_isolation.summary.source_open_recording_dbfs must be "
+            f">= {HEADPHONE_MIN_SOURCE_OPEN_DBFS:.1f}"
+        )
+    source_open_corr = metric_values["source_open_reference_correlation"]
+    if source_open_corr is not None and source_open_corr < HEADPHONE_MIN_SOURCE_OPEN_CORRELATION:
+        failures.append(
+            "headphone_earpiece_isolation.summary.source_open_reference_correlation must be "
+            f">= {HEADPHONE_MIN_SOURCE_OPEN_CORRELATION:.3f}"
+        )
+    isolation = metric_values["source_isolation_db"]
+    if isolation is not None and isolation < HEADPHONE_MIN_SOURCE_ISOLATION_DB:
+        failures.append(
+            "headphone_earpiece_isolation.summary.source_isolation_db must be "
+            f">= {HEADPHONE_MIN_SOURCE_ISOLATION_DB:.1f}"
+        )
+    translated_level = metric_values["translated_headphone_recording_dbfs"]
+    if translated_level is not None and translated_level < HEADPHONE_MIN_TRANSLATED_DBFS:
+        failures.append(
+            "headphone_earpiece_isolation.summary.translated_headphone_recording_dbfs must be "
+            f">= {HEADPHONE_MIN_TRANSLATED_DBFS:.1f}"
+        )
+    translated_corr = metric_values["translated_headphone_reference_correlation"]
+    if translated_corr is not None and translated_corr < HEADPHONE_MIN_TRANSLATED_CORRELATION:
+        failures.append(
+            "headphone_earpiece_isolation.summary.translated_headphone_reference_correlation must be "
+            f">= {HEADPHONE_MIN_TRANSLATED_CORRELATION:.3f}"
+        )
+    translated_distortion = metric_values["translated_headphone_reference_distortion_db"]
+    if translated_distortion is not None and translated_distortion > HEADPHONE_MAX_TRANSLATED_DISTORTION_DB:
+        failures.append(
+            "headphone_earpiece_isolation.summary.translated_headphone_reference_distortion_db must be "
+            f"<= {HEADPHONE_MAX_TRANSLATED_DISTORTION_DB:.1f}"
+        )
+    min_duration = metric_values["min_artifact_duration_s"]
+    if min_duration is not None and min_duration < HEADPHONE_MIN_MEASUREMENT_DURATION_S:
+        failures.append(
+            "headphone_earpiece_isolation.summary.min_artifact_duration_s must be "
+            f">= {HEADPHONE_MIN_MEASUREMENT_DURATION_S:.3f}"
+        )
+
+    artifact_paths = report.get("artifact_paths", {})
+    artifact_hashes = report.get("artifact_hashes", {})
+    resolved_artifacts: dict[str, Path] = {}
+    if not isinstance(artifact_paths, dict) or not isinstance(artifact_hashes, dict):
+        failures.append("headphone report must include artifact_paths and artifact_hashes objects")
+    else:
+        for key in HEADPHONE_REQUIRED_ARTIFACTS:
+            artifact_path = _resolve_artifact_path(spec.path, artifact_paths.get(key))
+            expected_hash = artifact_hashes.get(key)
+            if artifact_path is None or not artifact_path.exists():
+                failures.append(f"headphone artifact {key!r} is missing")
+                continue
+            resolved_artifacts[key] = artifact_path
+            if not _is_sha256(expected_hash):
+                failures.append(f"headphone artifact hash {key!r} is invalid")
+            elif _sha256_file(artifact_path) != expected_hash:
+                failures.append(f"headphone artifact hash {key!r} does not match file")
+            try:
+                with wave.open(str(artifact_path), "rb") as wav:
+                    if wav.getnchannels() != 1:
+                        failures.append(f"{key} WAV must be mono")
+                    if wav.getsampwidth() != 2:
+                        failures.append(f"{key} WAV sample width must be 2 bytes")
+                    if wav.getnframes() <= 0:
+                        failures.append(f"{key} WAV must contain frames")
+                    if wav.getframerate() <= 0:
+                        failures.append(f"{key} WAV sample rate must be positive")
+                    elif wav.getnframes() / float(wav.getframerate()) < HEADPHONE_MIN_MEASUREMENT_DURATION_S:
+                        failures.append(
+                            f"{key} WAV duration must be >= {HEADPHONE_MIN_MEASUREMENT_DURATION_S:.3f}s"
+                        )
+            except (OSError, wave.Error) as exc:
+                failures.append(f"{key} WAV could not be inspected: {exc}")
+        if not failures:
+            if artifact_hashes.get("source_open_ear_recording") == artifact_hashes.get("source_reference"):
+                failures.append("headphone source-open recording must not be byte-identical to reference")
+            if artifact_hashes.get("source_isolated_ear_recording") == artifact_hashes.get("source_reference"):
+                failures.append("headphone source-isolated recording must not be byte-identical to reference")
+            if artifact_hashes.get("translated_headphone_recording") == artifact_hashes.get("translated_playback_reference"):
+                failures.append("headphone translated recording must not be byte-identical to reference")
+        reported_fingerprint = summary.get("measurement_identity_fingerprint")
+        if not _is_sha256(reported_fingerprint):
+            failures.append("headphone_earpiece_isolation.summary.measurement_identity_fingerprint must be a SHA-256 hex string")
+        else:
+            expected_fingerprint = _headphone_measurement_identity_fingerprint(summary, artifact_hashes)
+            if reported_fingerprint != expected_fingerprint:
+                failures.append(
+                    "headphone_earpiece_isolation.summary.measurement_identity_fingerprint does not match labels, sample rate, and artifact hashes"
+                )
+
+    if not failures:
+        try:
+            recomputed = _recompute_headphone_isolation_metrics(resolved_artifacts)
+        except (OSError, ValueError, wave.Error) as exc:
+            failures.append(f"headphone isolation metrics could not be recomputed from WAV artifacts: {exc}")
+        else:
+            for field, recomputed_value in recomputed.items():
+                reported_value = metric_values.get(field)
+                if reported_value is None:
+                    continue
+                tolerance = _headphone_metric_tolerance(field)
+                if abs(reported_value - recomputed_value) > tolerance:
+                    failures.append(
+                        f"headphone_earpiece_isolation.summary.{field}={reported_value:.6g} "
+                        f"does not match WAV-derived {recomputed_value:.6g}"
+                    )
+            if recomputed["source_open_recording_dbfs"] < HEADPHONE_MIN_SOURCE_OPEN_DBFS:
+                failures.append(
+                    "WAV-derived headphone source-open level must be "
+                    f">= {HEADPHONE_MIN_SOURCE_OPEN_DBFS:.1f} dBFS"
+                )
+            if recomputed["source_open_reference_correlation"] < HEADPHONE_MIN_SOURCE_OPEN_CORRELATION:
+                failures.append(
+                    "WAV-derived headphone source-open/reference correlation must be "
+                    f">= {HEADPHONE_MIN_SOURCE_OPEN_CORRELATION:.3f}"
+                )
+            if recomputed["source_isolation_db"] < HEADPHONE_MIN_SOURCE_ISOLATION_DB:
+                failures.append(
+                    "WAV-derived headphone source isolation must be "
+                    f">= {HEADPHONE_MIN_SOURCE_ISOLATION_DB:.1f} dB"
+                )
+            if recomputed["translated_headphone_recording_dbfs"] < HEADPHONE_MIN_TRANSLATED_DBFS:
+                failures.append(
+                    "WAV-derived translated headphone level must be "
+                    f">= {HEADPHONE_MIN_TRANSLATED_DBFS:.1f} dBFS"
+                )
+            if recomputed["translated_headphone_reference_correlation"] < HEADPHONE_MIN_TRANSLATED_CORRELATION:
+                failures.append(
+                    "WAV-derived translated headphone/reference correlation must be "
+                    f">= {HEADPHONE_MIN_TRANSLATED_CORRELATION:.3f}"
+                )
+            if recomputed["translated_headphone_reference_distortion_db"] > HEADPHONE_MAX_TRANSLATED_DISTORTION_DB:
+                failures.append(
+                    "WAV-derived translated headphone/reference distortion must be "
+                    f"<= {HEADPHONE_MAX_TRANSLATED_DISTORTION_DB:.1f} dB"
+                )
+            if recomputed["min_artifact_duration_s"] < HEADPHONE_MIN_MEASUREMENT_DURATION_S:
+                failures.append(
+                    "WAV-derived headphone isolation artifact duration must be "
+                    f">= {HEADPHONE_MIN_MEASUREMENT_DURATION_S:.3f}s"
+                )
+    if failures:
+        return _fail(spec, "; ".join(failures))
+    return _pass(spec, "measured headphone/earpiece isolation evidence present; not true room cancellation")
+
+
+def _playback_source_suppression_gate(
+    spec: EvidenceSpec,
+    headphone_report_path: Path,
+) -> GateResult:
+    room_result = _room_suppression_gate(spec)
+    if room_result.passed:
+        return GateResult(
+            spec.name,
+            True,
+            spec.release_blocking,
+            "true room source-cancellation evidence present",
+            str(spec.path),
+            spec.next_step,
+        )
+    headphone_spec = EvidenceSpec(
+        spec.name,
+        headphone_report_path,
+        "measured headphone/earpiece source isolation at the listener",
+        "Record listener-ear source-open, source-isolated, and translated-playback WAVs, then run scripts/run_headphone_isolation_check.py score.",
+        spec.release_blocking,
+    )
+    headphone_result = _headphone_isolation_gate(headphone_spec)
+    if headphone_result.passed:
+        return GateResult(
+            spec.name,
+            True,
+            spec.release_blocking,
+            (
+                "headphone/earpiece isolation evidence present, explicitly not true room cancellation; "
+                f"room cancellation path did not pass ({room_result.message})"
+            ),
+            str(headphone_report_path),
+            spec.next_step,
+        )
+    return GateResult(
+        spec.name,
+        False,
+        spec.release_blocking,
+        (
+            f"room cancellation path failed: {room_result.message}; "
+            f"headphone isolation path failed: {headphone_result.message}"
+        ),
+        f"{spec.path}; {headphone_report_path}",
+        (
+            "Either qualify a reference-faithful real-room cancellation path, or provide a "
+            "measured headphone-isolation report with listener-ear WAV artifacts."
+        ),
+    )
+
+
 def _playback_prototype_gate(spec: EvidenceSpec) -> GateResult:
     report = _load_json(spec.path)
     prefix = _pass_fail_prefix(spec, report)
@@ -1437,10 +1888,10 @@ def release_specs(args: argparse.Namespace) -> list[EvidenceSpec]:
             "Add a voice clone/TTS benchmark with consent metadata, output audio hashes, level matching, and fallback state.",
         ),
         EvidenceSpec(
-            "real_room_playback_suppression_loopback",
+            "playback_source_suppression_evidence",
             args.room_suppression_report,
-            "real-room translated playback loopback with source residual measurement",
-            "Qualify a reference-faithful device path, then record a full room check that preserves translated playback while reducing source residual.",
+            "real-room source cancellation or measured headphone/earpiece isolation",
+            "Qualify a reference-faithful room path, or provide a measured headphone/earpiece isolation report that proves listener-ear source attenuation and translated playback.",
         ),
     ]
 
@@ -1477,8 +1928,8 @@ def evaluate(args: argparse.Namespace) -> tuple[list[GateResult], list[GateResul
             release_results.append(_translation_after_tse_gate(spec))
         elif spec.name == "same_voice_or_fallback_tts_audio_stream":
             release_results.append(_voice_gate(spec))
-        elif spec.name == "real_room_playback_suppression_loopback":
-            release_results.append(_room_suppression_gate(spec))
+        elif spec.name == "playback_source_suppression_evidence":
+            release_results.append(_playback_source_suppression_gate(spec, args.headphone_isolation_report))
         else:
             raise AssertionError(f"unhandled release gate: {spec.name}")
 
@@ -1888,6 +2339,148 @@ def _write_room_suppression_fixture_report(
     )
 
 
+def _headphone_summary_from_recomputed(
+    recomputed: dict[str, float],
+    *,
+    artifact_hashes: dict[str, str],
+    headphone_device_label: str,
+    isolation_fixture_label: str,
+    measurement_microphone_label: str,
+    release_proof: bool = True,
+    suppression_claim: str = HEADPHONE_REQUIRED_SUPPRESSION_CLAIM,
+    translated_audio_is_surrogate: bool = False,
+) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "all_artifact_hashes_present": all(len(value) == 64 for value in artifact_hashes.values()),
+        "headphone_device_label": headphone_device_label,
+        "isolation_fixture_label": isolation_fixture_label,
+        "measurement_kind": HEADPHONE_REQUIRED_MEASUREMENT_KIND,
+        "measurement_microphone_label": measurement_microphone_label,
+        "release_proof": release_proof,
+        "sample_rate_hz": 16_000,
+        "source_isolated_recording_matches_reference": (
+            artifact_hashes["source_isolated_ear_recording"] == artifact_hashes["source_reference"]
+        ),
+        "source_open_recording_matches_reference": (
+            artifact_hashes["source_open_ear_recording"] == artifact_hashes["source_reference"]
+        ),
+        "source_suppression_mode": HEADPHONE_REQUIRED_SUPPRESSION_MODE,
+        "suppression_claim": suppression_claim,
+        "translated_audio_is_surrogate": translated_audio_is_surrogate,
+        "translated_headphone_recording_matches_reference": (
+            artifact_hashes["translated_headphone_recording"] == artifact_hashes["translated_playback_reference"]
+        ),
+    }
+    for field, value in recomputed.items():
+        if field.endswith("_correlation"):
+            summary[field] = round(value, 6)
+        elif field.endswith("_lag_samples"):
+            summary[field] = value
+        else:
+            summary[field] = round(value, 3)
+    summary["measurement_identity_fingerprint"] = _headphone_measurement_identity_fingerprint(
+        summary,
+        artifact_hashes,
+    )
+    return summary
+
+
+def _write_headphone_isolation_fixture_report(
+    path: Path,
+    *,
+    clone_reference: bool = False,
+    forge_hash: bool = False,
+    no_isolation: bool = False,
+    placeholder_labels: bool = False,
+    release_proof: bool = True,
+    short_duration: bool = False,
+    summary_overrides: dict[str, Any] | None = None,
+) -> None:
+    sample_rate_hz = 16_000
+    frame_count = 800 if short_duration else 16_000
+    prefix = path.stem
+    source_path = path.parent / f"{prefix}-headphone-source-reference.wav"
+    source_open_path = path.parent / f"{prefix}-source-open-ear-recording.wav"
+    source_isolated_path = path.parent / f"{prefix}-source-isolated-ear-recording.wav"
+    translated_path = path.parent / f"{prefix}-headphone-translated-reference.wav"
+    translated_recording_path = path.parent / f"{prefix}-translated-headphone-recording.wav"
+    source_samples: list[int] = []
+    source_open_samples: list[int] = []
+    source_isolated_samples: list[int] = []
+    translated_samples: list[int] = []
+    translated_recording_samples: list[int] = []
+    open_gain = 10.0 ** (-2.0 / 20.0)
+    isolated_gain = open_gain if no_isolation else 10.0 ** (-18.0 / 20.0)
+    translated_gain = 10.0 ** (-3.0 / 20.0)
+    for index in range(frame_count):
+        t = float(index) / float(sample_rate_hz)
+        source = int(round(9000.0 * math.sin(2.0 * math.pi * 220.0 * t)))
+        translated = int(round(8500.0 * math.sin(2.0 * math.pi * 330.0 * t)))
+        source_samples.append(source)
+        source_open_samples.append(source if clone_reference else int(round(source * open_gain)))
+        source_isolated_samples.append(source if clone_reference else int(round(source * isolated_gain)))
+        translated_samples.append(translated)
+        translated_recording_samples.append(
+            translated if clone_reference else int(round(translated * translated_gain))
+        )
+    _write_pcm16_samples_wav(source_path, sample_rate_hz, source_samples)
+    _write_pcm16_samples_wav(source_open_path, sample_rate_hz, source_open_samples)
+    _write_pcm16_samples_wav(source_isolated_path, sample_rate_hz, source_isolated_samples)
+    _write_pcm16_samples_wav(translated_path, sample_rate_hz, translated_samples)
+    _write_pcm16_samples_wav(translated_recording_path, sample_rate_hz, translated_recording_samples)
+    artifact_paths = {
+        "source_reference": str(source_path),
+        "source_open_ear_recording": str(source_open_path),
+        "source_isolated_ear_recording": str(source_isolated_path),
+        "translated_playback_reference": str(translated_path),
+        "translated_headphone_recording": str(translated_recording_path),
+    }
+    artifact_hashes = {
+        key: _sha256_file(Path(value))
+        for key, value in artifact_paths.items()
+    }
+    if forge_hash:
+        original_hash = artifact_hashes["translated_headphone_recording"]
+        artifact_hashes["translated_headphone_recording"] = (
+            "0" * 64 if original_hash != "0" * 64 else "1" * 64
+        )
+    recomputed = _recompute_headphone_isolation_metrics({key: Path(value) for key, value in artifact_paths.items()})
+    headphone_device_label = "unspecified headphones" if placeholder_labels else "unit headphones"
+    isolation_fixture_label = (
+        "unspecified headphone/earpiece fixture" if placeholder_labels else "unit sealed-ear fixture"
+    )
+    measurement_microphone_label = (
+        "unspecified listener-ear microphone" if placeholder_labels else "unit listener-ear microphone"
+    )
+    headphone_summary = _headphone_summary_from_recomputed(
+        recomputed,
+        artifact_hashes=artifact_hashes,
+        headphone_device_label=headphone_device_label,
+        isolation_fixture_label=isolation_fixture_label,
+        measurement_microphone_label=measurement_microphone_label,
+        release_proof=release_proof,
+    )
+    if summary_overrides:
+        headphone_summary.update(summary_overrides)
+    payload = _report(
+        release_proof,
+        _passed_gates(HEADPHONE_ISOLATION_REQUIRED_GATES),
+        fixture_kind=HEADPHONE_REQUIRED_FIXTURE_KIND,
+        measurement_kind=HEADPHONE_REQUIRED_MEASUREMENT_KIND,
+        release_proof=release_proof,
+        benchmarks={
+            HEADPHONE_REQUIRED_BENCHMARK_NAME: {
+                "adapter_id": "unit_headphone_earpiece_isolation",
+                "summary": headphone_summary,
+            }
+        },
+        artifact_hashes=artifact_hashes,
+        artifact_paths=artifact_paths,
+    )
+    payload["summary"]["release_proof"] = release_proof
+    _write_json(path, payload)
+
+
 def self_test() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -1904,6 +2497,13 @@ def self_test() -> None:
         room = root / "room.json"
         forged_room = root / "forged-room.json"
         mismatched_room = root / "mismatched-room.json"
+        headphone = root / "headphone.json"
+        forged_headphone = root / "forged-headphone.json"
+        no_isolation_headphone = root / "no-isolation-headphone.json"
+        clone_headphone = root / "clone-headphone.json"
+        surrogate_headphone = root / "surrogate-headphone.json"
+        placeholder_headphone = root / "placeholder-headphone.json"
+        short_headphone = root / "short-headphone.json"
         qualification_room = root / "qualification-room.json"
         sweep_room = root / "sweep-room.json"
         route_probe_room = root / "route-probe-room.json"
@@ -1995,6 +2595,16 @@ def self_test() -> None:
             },
         )
         _write_room_suppression_fixture_report(mismatched_room)
+        _write_headphone_isolation_fixture_report(headphone)
+        _write_headphone_isolation_fixture_report(forged_headphone, forge_hash=True)
+        _write_headphone_isolation_fixture_report(no_isolation_headphone, no_isolation=True)
+        _write_headphone_isolation_fixture_report(clone_headphone, clone_reference=True)
+        _write_headphone_isolation_fixture_report(
+            surrogate_headphone,
+            summary_overrides={"translated_audio_is_surrogate": True},
+        )
+        _write_headphone_isolation_fixture_report(placeholder_headphone, placeholder_labels=True)
+        _write_headphone_isolation_fixture_report(short_headphone, short_duration=True)
         mismatched_payload = json.loads(mismatched_room.read_text(encoding="utf-8"))
         mismatched_loopback_path = Path(mismatched_payload["artifact_paths"]["room_loopback_recording"])
         _write_unit_pcm16_wav(mismatched_loopback_path, 16_000, 16_000)
@@ -2098,6 +2708,7 @@ def self_test() -> None:
             streaming_translation_report=translation,
             voice_report=voice,
             room_suppression_report=room,
+            headphone_isolation_report=headphone,
             playback_prototype_report=playback,
             capture_prototype_report=fixture_capture,
         )
@@ -2113,6 +2724,7 @@ def self_test() -> None:
             streaming_translation_report=stub,
             voice_report=stub,
             room_suppression_report=stub,
+            headphone_isolation_report=stub,
             playback_prototype_report=playback,
             capture_prototype_report=fixture_capture,
         )
@@ -2130,13 +2742,63 @@ def self_test() -> None:
 
         forged_room_args = argparse.Namespace(**vars(complete_args))
         forged_room_args.room_suppression_report = forged_room
+        forged_room_args.headphone_isolation_report = no_isolation_headphone
         release_results, prototype_results = evaluate(forged_room_args)
         report = build_report(release_results, prototype_results)
         if report["summary"]["passed"]:
             raise AssertionError("expected forged room-suppression metrics to fail")
 
+        headphone_fallback_args = argparse.Namespace(**vars(complete_args))
+        headphone_fallback_args.room_suppression_report = forged_room
+        headphone_fallback_args.headphone_isolation_report = headphone
+        release_results, prototype_results = evaluate(headphone_fallback_args)
+        report = build_report(release_results, prototype_results)
+        if not report["summary"]["passed"]:
+            raise AssertionError("expected measured headphone isolation to satisfy source suppression fallback")
+
+        forged_headphone_args = argparse.Namespace(**vars(complete_args))
+        forged_headphone_args.room_suppression_report = forged_room
+        forged_headphone_args.headphone_isolation_report = forged_headphone
+        release_results, prototype_results = evaluate(forged_headphone_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected forged headphone artifact hashes to fail")
+
+        clone_headphone_args = argparse.Namespace(**vars(complete_args))
+        clone_headphone_args.room_suppression_report = forged_room
+        clone_headphone_args.headphone_isolation_report = clone_headphone
+        release_results, prototype_results = evaluate(clone_headphone_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected byte-identical headphone recordings to fail")
+
+        surrogate_headphone_args = argparse.Namespace(**vars(complete_args))
+        surrogate_headphone_args.room_suppression_report = forged_room
+        surrogate_headphone_args.headphone_isolation_report = surrogate_headphone
+        release_results, prototype_results = evaluate(surrogate_headphone_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected surrogate headphone translated audio to fail")
+
+        placeholder_headphone_args = argparse.Namespace(**vars(complete_args))
+        placeholder_headphone_args.room_suppression_report = forged_room
+        placeholder_headphone_args.headphone_isolation_report = placeholder_headphone
+        release_results, prototype_results = evaluate(placeholder_headphone_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected placeholder headphone measurement identity to fail")
+
+        short_headphone_args = argparse.Namespace(**vars(complete_args))
+        short_headphone_args.room_suppression_report = forged_room
+        short_headphone_args.headphone_isolation_report = short_headphone
+        release_results, prototype_results = evaluate(short_headphone_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected too-short headphone measurement artifacts to fail")
+
         mismatched_room_args = argparse.Namespace(**vars(complete_args))
         mismatched_room_args.room_suppression_report = mismatched_room
+        mismatched_room_args.headphone_isolation_report = no_isolation_headphone
         release_results, prototype_results = evaluate(mismatched_room_args)
         report = build_report(release_results, prototype_results)
         if report["summary"]["passed"]:
@@ -2144,6 +2806,7 @@ def self_test() -> None:
 
         qualification_room_args = argparse.Namespace(**vars(complete_args))
         qualification_room_args.room_suppression_report = qualification_room
+        qualification_room_args.headphone_isolation_report = no_isolation_headphone
         release_results, prototype_results = evaluate(qualification_room_args)
         report = build_report(release_results, prototype_results)
         if report["summary"]["passed"]:
@@ -2151,6 +2814,7 @@ def self_test() -> None:
 
         sweep_room_args = argparse.Namespace(**vars(complete_args))
         sweep_room_args.room_suppression_report = sweep_room
+        sweep_room_args.headphone_isolation_report = no_isolation_headphone
         release_results, prototype_results = evaluate(sweep_room_args)
         report = build_report(release_results, prototype_results)
         if report["summary"]["passed"]:
@@ -2158,6 +2822,7 @@ def self_test() -> None:
 
         route_probe_room_args = argparse.Namespace(**vars(complete_args))
         route_probe_room_args.room_suppression_report = route_probe_room
+        route_probe_room_args.headphone_isolation_report = no_isolation_headphone
         release_results, prototype_results = evaluate(route_probe_room_args)
         report = build_report(release_results, prototype_results)
         if report["summary"]["passed"]:
@@ -2165,6 +2830,7 @@ def self_test() -> None:
 
         route_sweep_room_args = argparse.Namespace(**vars(complete_args))
         route_sweep_room_args.room_suppression_report = route_sweep_room
+        route_sweep_room_args.headphone_isolation_report = no_isolation_headphone
         release_results, prototype_results = evaluate(route_sweep_room_args)
         report = build_report(release_results, prototype_results)
         if report["summary"]["passed"]:
@@ -2202,13 +2868,14 @@ def self_test() -> None:
         prototype_args = argparse.Namespace(**vars(complete_args))
         prototype_args.live_capture_report = fixture_capture
         prototype_args.room_suppression_report = playback
+        prototype_args.headphone_isolation_report = no_isolation_headphone
         release_results, prototype_results = evaluate(prototype_args)
         report = build_report(release_results, prototype_results)
         failed = {gate.name for gate in release_results if not gate.passed}
         if "live_microphone_capture_runtime" not in failed:
             raise AssertionError("expected fixture capture to fail product capture gate")
-        if "real_room_playback_suppression_loopback" not in failed:
-            raise AssertionError("expected playback prototype to fail room suppression gate")
+        if "playback_source_suppression_evidence" not in failed:
+            raise AssertionError("expected playback prototype to fail source suppression evidence gate")
 
         failing_args = argparse.Namespace(**vars(complete_args))
         failing_args.voice_report = failing
@@ -2229,6 +2896,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--streaming-translation-report", type=Path, default=DEFAULT_STREAMING_TRANSLATION_REPORT)
     parser.add_argument("--voice-report", type=Path, default=DEFAULT_VOICE_REPORT)
     parser.add_argument("--room-suppression-report", type=Path, default=DEFAULT_ROOM_SUPPRESSION_REPORT)
+    parser.add_argument("--headphone-isolation-report", type=Path, default=DEFAULT_HEADPHONE_ISOLATION_REPORT)
     parser.add_argument("--playback-prototype-report", type=Path, default=DEFAULT_PLAYBACK_PROTOTYPE_REPORT)
     parser.add_argument("--capture-prototype-report", type=Path, default=DEFAULT_CAPTURE_PROTOTYPE_REPORT)
     return parser.parse_args(argv)

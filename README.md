@@ -117,6 +117,7 @@ make real-room-playback-suppression-sweep-routes
 make real-room-playback-suppression-qualify-device
 make real-room-playback-suppression-sweep-devices
 make real-room-playback-suppression-check
+make headphone-isolation-contract-check
 make audio-eval-purge
 ```
 
@@ -163,6 +164,7 @@ pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-s
 pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-qualify-device
 pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-sweep-devices
 pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-check
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-contract-check
 ```
 
 The June 12, 2026 SoundWire/WASAPI measurements currently fail release: the 48 kHz device
@@ -315,7 +317,9 @@ this host. The current causal Whisper-after-WeSep bridge is driven by non-oracle
 diarization and passes the streaming speech-translation gate with primary-language accuracy 1.0 and
 mean translation token F1 0.206838. Consent-safe neutral fallback TTS now passes with hashed
 eSpeak NG WAVs level-matched to the source speech; same-voice cloning remains a stronger follow-up,
-not a release claim. Product release remains blocked until real-room playback/suppression passes. The gate rejects bare
+not a release claim. Product release remains blocked until playback source-suppression evidence
+passes: either true real-room cancellation or a measured headphone/earpiece mode explicitly labeled
+`headphone_isolated_not_true_cancellation`. The gate rejects bare
 `summary.passed=true` stubs, self-attested live-capture reports without matching WAV/chunk artifacts,
 and prototype evidence such as fixture capture and playback ducking. It does not claim cryptographic
 proof that coherent local capture artifacts could not be forged.

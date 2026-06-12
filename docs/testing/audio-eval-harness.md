@@ -551,6 +551,26 @@ not proof of arbitrary live-human cancellation. The next implementation step sho
 hardware/DSP strategy or add an honest headphones/earpiece fail-open mode; do not lower the release
 threshold or trust self-attested JSON to make this pass.
 
+`scripts/run_headphone_isolation_check.py` is that honest headphone/earpiece path. It scores a
+listener-ear source-open control recording, a source-isolated listener-ear recording, and a translated
+headphone playback recording against their references. The report uses
+`measurement_kind=headphone_earpiece_isolation`, `source_suppression_mode=HEADPHONE_ISOLATED`, and
+`suppression_claim=headphone_isolated_not_true_cancellation`; it can support a private-listener
+release mode only when the release gate recomputes the WAV metrics, hashes, and measurement identity
+fingerprint. The score command requires specific headphone, measurement microphone, and physical
+fixture labels and all submitted WAV artifacts must meet the minimum duration floor. It does not
+satisfy the true room-cancellation gate.
+
+```bash
+make headphone-isolation-contract-check
+```
+
+Windows:
+
+```powershell
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-contract-check
+```
+
 ## Release Audio Evidence Gate
 
 `scripts/release_audio_gate.py` writes `artifacts/release/audio-gate-report.json` and exits nonzero
@@ -569,14 +589,18 @@ pwsh -NoProfile -File scripts/dev_container.ps1 release-audio-gate
 
 Release-blocking gates are live microphone capture, causal diarization, real TSE/separation that beats
 mixture passthrough, streaming speech translation after accepted TSE, same-voice or fallback TTS audio,
-and real-room playback/suppression loopback. Product gates require product-specific evidence fields,
+and playback source-suppression evidence. That final gate accepts either true real-room cancellation
+or measured headphone/earpiece listener isolation that is explicitly marked as not true cancellation.
+Product gates require product-specific evidence fields,
 not just `summary.passed=true`; the streaming translation gate rejects oracle-diarization reports, the
 voice gate verifies hashed fallback WAV artifacts, and the current accepted translation report is the
 causal Sortformer plus Whisper-after-WeSep bridge. The live-capture gate also rejects self-attested
 microphone JSON unless the referenced WAV and chunk JSONL artifacts exist and validate. The room gate
 recomputes the claimed metrics from source-only, translated-only, source-reference, translated-reference,
 and loopback WAV recordings, and it requires audible, reference-faithful calibration recordings before
-a pass can count. It does not claim cryptographic
+a pass can count. The headphone branch separately recomputes source-open, source-isolated, and
+translated-headphone recordings and rejects clone/reference artifacts, forged hashes, surrogate
+translated audio, and mislabeled cancellation claims. It does not claim cryptographic
 provenance for coherent local artifacts. Prototype evidence, including fixture capture and playback
 ducking, is listed separately so it cannot accidentally satisfy a release claim.
 
