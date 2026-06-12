@@ -60,8 +60,9 @@ make release-audio-gate
 The host live-microphone check writes the capture report consumed by the gate. The gate independently
 validates the referenced WAV and chunk JSONL artifacts before accepting that report. On the current
 June 12, 2026 evidence, live capture, causal diarization, real TSE, causal translation, and fallback
-TTS pass; the gate is still expected to fail until real-room playback/suppression has passing
-evidence.
+TTS pass; the gate is still expected to fail until playback source-suppression has passing evidence:
+either true real-room cancellation or a measured headphone/earpiece mode explicitly labeled as not
+true room cancellation.
 
 If the local host also has Flutter stable plus the Android SDK configured, you can add:
 

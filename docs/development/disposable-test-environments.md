@@ -370,11 +370,13 @@ pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-s
 pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-qualify-device
 pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-sweep-devices
 pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-check
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-contract-check
 python scripts/run_real_room_playback_suppression.py probe-route --input-device 1 --output-device 3 --sample-rate-hz 16000 --duration-s 2 --playback-gain-db -18 --score-warning-only
 python scripts/run_real_room_playback_suppression.py sweep-routes --pair 1:3 --pair 17:14 --sample-rate-hz 16000 --sample-rate-hz 48000 --channel-config 1:2 --channel-config 2:2 --max-attempts 8 --playback-gain-db -18 --score-warning-only
 python scripts/run_real_room_playback_suppression.py sweep-devices --pair 12:10 --sample-rate-hz 48000 --max-reference-duration-s 3 --playback-gain-db -18 --score-warning-only
 python scripts/run_real_room_playback_suppression.py qualify-device --input-device 12 --output-device 10 --sample-rate-hz 48000 --playback-gain-db -18 --score-warning-only
 python scripts/run_real_room_playback_suppression.py check --input-device 12 --output-device 10 --sample-rate-hz 48000 --playback-gain-db -18 --score-warning-only
+python scripts/run_headphone_isolation_check.py self-test
 ```
 
 The runner writes ignored evidence under
@@ -411,6 +413,15 @@ Route-probe triage also failed on the current host: MME `1:3` produced
 PortAudio `Invalid number of channels`. Treat this as a host route/processing blocker before trying
 to tune cancellation math.
 
+For an honest private-listener release path, collect headphone/earpiece evidence with
+`scripts/run_headphone_isolation_check.py score`. It requires a source reference, open-ear source
+control recording, isolated-ear source recording, translated playback reference, and translated
+headphone recording, plus specific headphone, listener-ear microphone, and physical fixture labels.
+Placeholder labels and sub-second WAV bundles are rejected by the release gate. The report is written to
+`artifacts/audio_eval/runs/headphone-earpiece-isolation/headphone-isolation-report.json` and is
+accepted by the release gate only as `headphone_isolated_not_true_cancellation`, never as true
+room-wide cancellation.
+
 ## Release Audio Evidence Gate
 
 Use the hard release gate only after the relevant audio-eval reports have been generated:
@@ -430,8 +441,9 @@ failing. Live microphone capture, causal diarization, real target-speaker extrac
 speech translation after accepted TSE are checked separately. On the current June 12, 2026 evidence,
 the WeSep component report passes and the causal Sortformer plus Whisper-after-WeSep bridge satisfies
 the streaming translation gate. Consent-safe fallback TTS also passes with independently verified WAV
-hashes and level matching. The gate still blocks product-release claims until real-room
-playback/suppression has passing evidence.
+hashes and level matching. The gate still blocks product-release claims until playback source
+suppression has passing evidence: either true real-room cancellation or the measured headphone/earpiece
+mode described above.
 Prototype checks are recorded separately, must identify their prototype source kind, and cannot
 satisfy release-blocking gates.
 
