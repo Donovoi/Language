@@ -24,7 +24,9 @@ import numpy as np
 
 DEFAULT_OUTPUT_DIR = Path("artifacts/audio_eval")
 DEFAULT_RUN_ID = "headphone-earpiece-isolation"
+DEFAULT_ROUTE_PROBE_RUN_ID = "headphone-earpiece-route-probe"
 DEFAULT_ADAPTER_ID = "listener_headphone_earpiece_isolation_measurement_v1"
+DEFAULT_ROUTE_PROBE_ADAPTER_ID = "listener_headphone_earpiece_route_probe_v1"
 DEFAULT_TTS_REPORT = DEFAULT_OUTPUT_DIR / "runs/same-voice-tts/voice-clone-report.json"
 DEFAULT_SAMPLE_RATE_HZ = 16000
 DEFAULT_CAPTURE_OUTPUT_CHANNELS = 2
@@ -34,6 +36,10 @@ DEFAULT_LEAD_S = 0.25
 DEFAULT_TAIL_S = 0.25
 DEFAULT_PLAYBACK_GAIN_DB = -18.0
 DEFAULT_MAX_PEAK_DBFS = -0.1
+DEFAULT_ROUTE_PROBE_DURATION_S = 1.0
+DEFAULT_MIN_ROUTE_PROBE_CORRELATION = 0.30
+DEFAULT_MAX_ROUTE_PROBE_DISTORTION_DB = 24.0
+DEFAULT_MAX_ROUTE_PROBE_CLIPPED_SAMPLES = 0
 DEFAULT_MIN_SOURCE_OPEN_DBFS = -60.0
 DEFAULT_MIN_TRANSLATED_DBFS = -60.0
 DEFAULT_MIN_SOURCE_OPEN_CORRELATION = 0.30
@@ -97,6 +103,18 @@ def peak_dbfs(samples: np.ndarray) -> float:
     if samples.size == 0:
         return float("-inf")
     return linear_to_db(float(np.max(np.abs(samples))))
+
+
+def json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(key): json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [json_safe(item) for item in value]
+    if isinstance(value, np.generic):
+        return json_safe(value.item())
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    return value
 
 
 def sha256_file(path: Path) -> str:
@@ -281,6 +299,22 @@ def limit_track_pair(
     return source_track[:max_samples].astype(np.float32), translated_track[:max_samples].astype(np.float32)
 
 
+def build_route_probe_signal(sample_rate_hz: int, duration_s: float) -> np.ndarray:
+    frame_count = max(1, int(round(float(sample_rate_hz) * float(duration_s))))
+    t = np.arange(frame_count, dtype=np.float64) / float(sample_rate_hz)
+    start_hz = 420.0
+    end_hz = min(3600.0, float(sample_rate_hz) * 0.40)
+    slope = (end_hz - start_hz) / max(float(duration_s), 1.0 / float(sample_rate_hz))
+    phase = 2.0 * math.pi * (start_hz * t + 0.5 * slope * t * t)
+    signal = np.sin(phase).astype(np.float32) * 0.35
+    fade_samples = min(frame_count // 2, max(1, int(round(0.025 * float(sample_rate_hz)))))
+    if fade_samples > 1:
+        ramp = np.linspace(0.0, 1.0, fade_samples, dtype=np.float32)
+        signal[:fade_samples] *= ramp
+        signal[-fade_samples:] *= ramp[::-1]
+    return signal.astype(np.float32)
+
+
 def portaudio_device_identity(device: int | str | None, *, kind: str) -> dict[str, Any]:
     sd = import_sounddevice()
     info = sd.query_devices(device, kind=kind)
@@ -290,6 +324,7 @@ def portaudio_device_identity(device: int | str | None, *, kind: str) -> dict[st
         "default_samplerate": float(info["default_samplerate"]),
         "hostapi": int(info["hostapi"]),
         "hostapi_name": str(hostapi.get("name", "")),
+        "index": int(info.get("index", -1)),
         "max_input_channels": int(info["max_input_channels"]),
         "max_output_channels": int(info["max_output_channels"]),
         "name": str(info["name"]),
@@ -345,6 +380,15 @@ def recording_diagnostics(samples: np.ndarray, sample_rate_hz: int) -> dict[str,
         "duration_s": round(float(samples.size) / float(sample_rate_hz), 6),
         "peak_dbfs": round(peak_dbfs(samples), 3),
         "rms_dbfs": round(dbfs(samples), 3),
+    }
+
+
+def portaudio_output_signature(device_info: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "hostapi": device_info.get("hostapi"),
+        "hostapi_name": device_info.get("hostapi_name"),
+        "index": device_info.get("index"),
+        "name": device_info.get("name"),
     }
 
 
@@ -417,8 +461,381 @@ def write_capture_failure_report(
         },
     }
     report_path = run_dir / "headphone-isolation-report.json"
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    report = json_safe(report)
+    report_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
     return report_path
+
+
+def route_probe_gates(summary: dict[str, Any], args: argparse.Namespace) -> list[dict[str, Any]]:
+    def finite_float(name: str) -> float | None:
+        value = summary.get(name)
+        if value is None:
+            return None
+        number = float(value)
+        return number if math.isfinite(number) else None
+
+    def finite_nested_float(route_name: str, field_name: str) -> float | None:
+        recording = summary.get(f"{route_name}_route_recording")
+        if not isinstance(recording, dict):
+            return None
+        value = recording.get(field_name)
+        if value is None:
+            return None
+        number = float(value)
+        return number if math.isfinite(number) else None
+
+    def nested_int(route_name: str, field_name: str) -> int | None:
+        recording = summary.get(f"{route_name}_route_recording")
+        if not isinstance(recording, dict):
+            return None
+        value = recording.get(field_name)
+        if value is None:
+            return None
+        return int(value)
+
+    source_opened = bool(summary.get("source_route_opened"))
+    headphone_opened = bool(summary.get("headphone_route_opened"))
+    source_clone = bool(summary.get("source_route_recording_matches_reference"))
+    headphone_clone = bool(summary.get("headphone_route_recording_matches_reference"))
+    hashes = bool(summary.get("all_artifact_hashes_present"))
+    source_corr = finite_float("source_route_reference_correlation")
+    headphone_corr = finite_float("headphone_route_reference_correlation")
+    source_confidence = finite_float("source_route_reference_confidence")
+    headphone_confidence = finite_float("headphone_route_reference_confidence")
+    source_distortion = finite_float("source_route_reference_distortion_db")
+    headphone_distortion = finite_float("headphone_route_reference_distortion_db")
+    source_level = finite_float("source_route_recording_dbfs")
+    headphone_level = finite_float("headphone_route_recording_dbfs")
+    source_gain = finite_float("source_route_gain_db")
+    headphone_gain = finite_float("headphone_route_gain_db")
+    source_lag = summary.get("source_route_reference_lag_samples")
+    headphone_lag = summary.get("headphone_route_reference_lag_samples")
+    source_peak = finite_nested_float("source", "peak_dbfs")
+    headphone_peak = finite_nested_float("headphone", "peak_dbfs")
+    source_clipped = nested_int("source", "clipped_sample_count")
+    headphone_clipped = nested_int("headphone", "clipped_sample_count")
+    source_info = dict(summary.get("device_info", {}).get("source_output_device", {}))
+    headphone_info = dict(summary.get("device_info", {}).get("headphone_output_device", {}))
+    source_signature = portaudio_output_signature(source_info)
+    headphone_signature = portaudio_output_signature(headphone_info)
+    shared_output_allowed = bool(getattr(args, "allow_shared_output_device", False))
+    outputs_distinct = shared_output_allowed or source_signature != headphone_signature
+    min_corr = float(args.min_route_probe_correlation)
+    max_distortion = float(args.max_route_probe_distortion_db)
+    min_level = float(args.min_route_probe_dbfs)
+    max_clipped = int(getattr(args, "max_route_probe_clipped_samples", DEFAULT_MAX_ROUTE_PROBE_CLIPPED_SAMPLES))
+    return [
+        {
+            "name": "headphone_route_probe_not_release_proof",
+            "passed": summary.get("release_proof") is False,
+            "threshold": "route probes are triage only",
+            "value": summary.get("release_proof"),
+        },
+        {
+            "name": "headphone_route_outputs_distinct",
+            "passed": outputs_distinct,
+            "threshold": "source output and headphone output resolve to distinct PortAudio devices",
+            "value": {
+                "allow_shared_output_device": shared_output_allowed,
+                "headphone_output_signature": headphone_signature,
+                "source_output_signature": source_signature,
+            },
+        },
+        {
+            "name": "headphone_source_route_opened",
+            "passed": source_opened,
+            "threshold": "measurement input and source output can open a duplex stream",
+            "value": summary.get("source_route_error") or source_opened,
+        },
+        {
+            "name": "headphone_output_route_opened",
+            "passed": headphone_opened,
+            "threshold": "measurement input and headphone output can open a duplex stream",
+            "value": summary.get("headphone_route_error") or headphone_opened,
+        },
+        {
+            "name": "headphone_source_route_reference_fidelity",
+            "passed": (
+                source_confidence is not None
+                and source_distortion is not None
+                and source_level is not None
+                and source_confidence >= min_corr
+                and source_distortion <= max_distortion
+                and source_level >= min_level
+            ),
+            "threshold": (
+                f"source route abs(correlation) >= {min_corr:.3f}, distortion <= {max_distortion:.3f} dB, "
+                f"level >= {min_level:.3f} dBFS"
+            ),
+            "value": {
+                "source_route_gain_db": source_gain,
+                "source_route_peak_dbfs": source_peak,
+                "source_route_reference_confidence": source_confidence,
+                "source_route_reference_correlation": source_corr,
+                "source_route_reference_distortion_db": source_distortion,
+                "source_route_reference_lag_samples": source_lag,
+                "source_route_recording_dbfs": source_level,
+            },
+        },
+        {
+            "name": "headphone_output_route_reference_fidelity",
+            "passed": (
+                headphone_confidence is not None
+                and headphone_distortion is not None
+                and headphone_level is not None
+                and headphone_confidence >= min_corr
+                and headphone_distortion <= max_distortion
+                and headphone_level >= min_level
+            ),
+            "threshold": (
+                f"headphone route abs(correlation) >= {min_corr:.3f}, distortion <= {max_distortion:.3f} dB, "
+                f"level >= {min_level:.3f} dBFS"
+            ),
+            "value": {
+                "headphone_route_gain_db": headphone_gain,
+                "headphone_route_peak_dbfs": headphone_peak,
+                "headphone_route_reference_confidence": headphone_confidence,
+                "headphone_route_reference_correlation": headphone_corr,
+                "headphone_route_reference_distortion_db": headphone_distortion,
+                "headphone_route_reference_lag_samples": headphone_lag,
+                "headphone_route_recording_dbfs": headphone_level,
+            },
+        },
+        {
+            "name": "headphone_source_route_not_clipped",
+            "passed": source_clipped is not None and source_clipped <= max_clipped,
+            "threshold": f"source route clipped samples <= {max_clipped}",
+            "value": source_clipped,
+        },
+        {
+            "name": "headphone_output_route_not_clipped",
+            "passed": headphone_clipped is not None and headphone_clipped <= max_clipped,
+            "threshold": f"headphone route clipped samples <= {max_clipped}",
+            "value": headphone_clipped,
+        },
+        {
+            "name": "headphone_route_probe_artifacts_hashed",
+            "passed": hashes,
+            "threshold": "route probe reference and recording artifacts have SHA-256 hashes",
+            "value": hashes,
+        },
+        {
+            "name": "headphone_route_recordings_not_reference_clones",
+            "passed": not (source_clone or headphone_clone),
+            "threshold": "route probe recordings must not be byte-identical to generated references",
+            "value": {
+                "headphone_route_recording_matches_reference": headphone_clone,
+                "source_route_recording_matches_reference": source_clone,
+            },
+        },
+    ]
+
+
+def route_probe(args: argparse.Namespace) -> int:
+    measurement_input_device = parse_device_selector(args.measurement_input_device)
+    source_output_device = parse_device_selector(args.source_output_device)
+    headphone_output_device = parse_device_selector(args.headphone_output_device)
+    run_dir = Path(args.output_dir) / "runs" / args.run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    report_path = run_dir / "headphone-route-probe-report.json"
+    report_path.unlink(missing_ok=True)
+    reference = add_padding(
+        apply_playback_gain(
+            build_route_probe_signal(int(args.sample_rate_hz), float(args.duration_s)),
+            float(args.playback_gain_db),
+            float(args.max_peak_dbfs),
+        ),
+        int(args.sample_rate_hz),
+        float(args.lead_s),
+        float(args.tail_s),
+    )
+    playback = mono_playback(reference, int(args.output_channels))
+    source_reference_path = run_dir / "source-route-probe-reference.wav"
+    headphone_reference_path = run_dir / "headphone-route-probe-reference.wav"
+    source_recording_path = run_dir / "source-route-probe-recording.wav"
+    headphone_recording_path = run_dir / "headphone-route-probe-recording.wav"
+    for path in (
+        headphone_reference_path,
+        headphone_recording_path,
+        source_reference_path,
+        source_recording_path,
+    ):
+        path.unlink(missing_ok=True)
+    write_mono_wav(source_reference_path, reference, int(args.sample_rate_hz))
+    write_mono_wav(headphone_reference_path, reference, int(args.sample_rate_hz))
+
+    device_info = {
+        "headphone_output_device": portaudio_device_identity(headphone_output_device, kind="output"),
+        "measurement_input_device": portaudio_device_identity(measurement_input_device, kind="input"),
+        "source_output_device": portaudio_device_identity(source_output_device, kind="output"),
+    }
+    device_fingerprint = measurement_device_fingerprint(
+        device_info=device_info,
+        sample_rate_hz=int(args.sample_rate_hz),
+        input_channels=int(args.input_channels),
+        output_channels=int(args.output_channels),
+    )
+    summary: dict[str, Any] = {
+        "adapter_id": args.adapter_id,
+        "device_info": device_info,
+        "device_path_fingerprint": device_fingerprint,
+        "device_path_identity_recorded": True,
+        "input_channels": int(args.input_channels),
+        "measurement_kind": "headphone_earpiece_route_probe_triage",
+        "output_channels": int(args.output_channels),
+        "playback_gain_db": float(args.playback_gain_db),
+        "release_proof": False,
+        "sample_rate_hz": int(args.sample_rate_hz),
+        "shared_output_device_allowed": bool(args.allow_shared_output_device),
+    }
+
+    source_recording: np.ndarray | None = None
+    headphone_recording: np.ndarray | None = None
+    try:
+        source_recording, elapsed = record_playback(
+            playback,
+            sample_rate_hz=int(args.sample_rate_hz),
+            input_device=measurement_input_device,
+            output_device=source_output_device,
+            input_channels=int(args.input_channels),
+        )
+        summary["source_route_opened"] = True
+        summary["source_route_elapsed_s"] = round(elapsed, 6)
+        summary["source_route_recording"] = recording_diagnostics(source_recording, int(args.sample_rate_hz))
+        write_mono_wav(source_recording_path, source_recording, int(args.sample_rate_hz))
+    except Exception as exc:
+        summary["source_route_opened"] = False
+        summary["source_route_error"] = str(exc)
+        summary["source_route_error_type"] = type(exc).__name__
+
+    try:
+        headphone_recording, elapsed = record_playback(
+            playback,
+            sample_rate_hz=int(args.sample_rate_hz),
+            input_device=measurement_input_device,
+            output_device=headphone_output_device,
+            input_channels=int(args.input_channels),
+        )
+        summary["headphone_route_opened"] = True
+        summary["headphone_route_elapsed_s"] = round(elapsed, 6)
+        summary["headphone_route_recording"] = recording_diagnostics(
+            headphone_recording,
+            int(args.sample_rate_hz),
+        )
+        write_mono_wav(headphone_recording_path, headphone_recording, int(args.sample_rate_hz))
+    except Exception as exc:
+        summary["headphone_route_opened"] = False
+        summary["headphone_route_error"] = str(exc)
+        summary["headphone_route_error_type"] = type(exc).__name__
+
+    if source_recording is not None:
+        metrics = reference_metrics(
+            source_recording,
+            reference,
+            int(args.sample_rate_hz),
+            float(args.max_alignment_lag_ms),
+        )
+        summary.update(
+            {
+                "source_route_gain_db": metrics["gain_db"],
+                "source_route_recording_dbfs": metrics["recording_dbfs"],
+                "source_route_reference_confidence": round(abs(float(metrics["correlation"])), 6),
+                "source_route_reference_correlation": metrics["correlation"],
+                "source_route_reference_distortion_db": metrics["distortion_db"],
+                "source_route_reference_lag_samples": metrics["lag_samples"],
+            }
+        )
+    if headphone_recording is not None:
+        metrics = reference_metrics(
+            headphone_recording,
+            reference,
+            int(args.sample_rate_hz),
+            float(args.max_alignment_lag_ms),
+        )
+        summary.update(
+            {
+                "headphone_route_gain_db": metrics["gain_db"],
+                "headphone_route_recording_dbfs": metrics["recording_dbfs"],
+                "headphone_route_reference_confidence": round(abs(float(metrics["correlation"])), 6),
+                "headphone_route_reference_correlation": metrics["correlation"],
+                "headphone_route_reference_distortion_db": metrics["distortion_db"],
+                "headphone_route_reference_lag_samples": metrics["lag_samples"],
+            }
+        )
+
+    artifact_paths = {
+        "headphone_route_probe_reference": str(headphone_reference_path),
+        "source_route_probe_reference": str(source_reference_path),
+    }
+    if source_recording_path.exists():
+        artifact_paths["source_route_probe_recording"] = str(source_recording_path)
+    if headphone_recording_path.exists():
+        artifact_paths["headphone_route_probe_recording"] = str(headphone_recording_path)
+    artifact_hashes = {key: sha256_file(Path(value)) for key, value in artifact_paths.items()}
+    expected_artifact_keys = {
+        "headphone_route_probe_recording",
+        "headphone_route_probe_reference",
+        "source_route_probe_recording",
+        "source_route_probe_reference",
+    }
+    missing_artifact_hashes = sorted(expected_artifact_keys.difference(artifact_hashes))
+    summary["missing_artifact_hashes"] = missing_artifact_hashes
+    summary["all_artifact_hashes_present"] = (
+        not missing_artifact_hashes
+        and all(len(artifact_hashes[key]) == 64 for key in expected_artifact_keys)
+    )
+    summary["source_route_recording_matches_reference"] = (
+        artifact_hashes.get("source_route_probe_recording") == artifact_hashes.get("source_route_probe_reference")
+    )
+    summary["headphone_route_recording_matches_reference"] = (
+        artifact_hashes.get("headphone_route_probe_recording")
+        == artifact_hashes.get("headphone_route_probe_reference")
+    )
+    gates = route_probe_gates(summary, args)
+    report = {
+        "schema_version": 1,
+        "generated_at_unix": int(time.time()),
+        "fixture_kind": "headphone_earpiece_route_probe",
+        "measurement_kind": "headphone_earpiece_route_probe_triage",
+        "output_dir": str(args.output_dir),
+        "release_proof": False,
+        "summary": {
+            "passed": all(bool(gate["passed"]) for gate in gates),
+            "quality_gates": gates,
+            "release_proof": False,
+        },
+        "benchmarks": {
+            "headphone_earpiece_route_probe": {
+                "adapter_id": args.adapter_id,
+                "summary": summary,
+            }
+        },
+        "artifact_hashes": artifact_hashes,
+        "artifact_paths": artifact_paths,
+        "detractor_loop": {
+            "strongest_objection": (
+                "This is only a route-opening and reference-fidelity triage check. It does not prove "
+                "headphone source isolation or translated playback quality."
+            ),
+            "verdict": "Use a passing route probe only to choose devices for the full guided capture.",
+        },
+    }
+    report = json_safe(report)
+    report_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    status = "PASS" if report["summary"]["passed"] else "FAIL"
+    print(
+        f"headphone/earpiece route probe {status}: "
+        f"source_opened={summary.get('source_route_opened')}, "
+        f"headphone_opened={summary.get('headphone_route_opened')}"
+    )
+    print(f"wrote headphone route probe report to {report_path}")
+    return 0 if report["summary"]["passed"] or args.score_warning_only else 1
 
 
 def projection_gain(target: np.ndarray, reference: np.ndarray) -> float:
@@ -535,6 +952,23 @@ def reference_metrics(
 
 
 def quality_gates(summary: dict[str, Any], args: argparse.Namespace) -> list[dict[str, Any]]:
+    finite_metric_names = [
+        "source_isolated_gain_db",
+        "source_isolated_recording_dbfs",
+        "source_isolation_db",
+        "source_open_gain_db",
+        "source_open_recording_dbfs",
+        "source_open_reference_correlation",
+        "source_open_reference_distortion_db",
+        "translated_headphone_gain_db",
+        "translated_headphone_recording_dbfs",
+        "translated_headphone_reference_correlation",
+        "translated_headphone_reference_distortion_db",
+    ]
+    finite_metrics = {
+        name: math.isfinite(float(summary.get(name, float("nan"))))
+        for name in finite_metric_names
+    }
     source_open_level = float(summary["source_open_recording_dbfs"])
     translated_level = float(summary["translated_headphone_recording_dbfs"])
     source_open_corr = float(summary["source_open_reference_correlation"])
@@ -560,6 +994,12 @@ def quality_gates(summary: dict[str, Any], args: argparse.Namespace) -> list[dic
             "passed": release_proof,
             "threshold": "measured listener-ear headphone isolation evidence",
             "value": release_proof,
+        },
+        {
+            "name": "headphone_core_metrics_finite",
+            "passed": all(finite_metrics.values()),
+            "threshold": "all release-critical headphone metrics are finite numbers",
+            "value": finite_metrics,
         },
         {
             "name": "headphone_mode_claim_declared",
@@ -821,12 +1261,17 @@ def score(args: argparse.Namespace) -> int:
         },
     }
     report_path = run_dir / "headphone-isolation-report.json"
-    report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    report = json_safe(report)
+    report_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
     status = "PASS" if report["summary"]["passed"] else "FAIL"
+    printed_summary = report["benchmarks"][BENCHMARK_NAME]["summary"]
     print(
         f"headphone/earpiece isolation {status}: "
-        f"isolation_db={summary['source_isolation_db']}, "
-        f"translated_corr={summary['translated_headphone_reference_correlation']}"
+        f"isolation_db={printed_summary['source_isolation_db']}, "
+        f"translated_corr={printed_summary['translated_headphone_reference_correlation']}"
     )
     print(f"wrote headphone isolation report to {report_path}")
     return 0 if report["summary"]["passed"] or args.score_warning_only else 1
@@ -1026,9 +1471,11 @@ def self_test() -> int:
         source_isolated_path = root / "source-isolated.wav"
         translated_path = root / "translated.wav"
         translated_recording_path = root / "translated-recording.wav"
+        silent_source_isolated_path = root / "source-isolated-silent.wav"
         write_mono_wav(source_path, source, sample_rate_hz)
         write_mono_wav(source_open_path, source_open, sample_rate_hz)
         write_mono_wav(source_isolated_path, source_isolated, sample_rate_hz)
+        write_mono_wav(silent_source_isolated_path, np.zeros_like(source), sample_rate_hz)
         write_mono_wav(translated_path, translated, sample_rate_hz)
         write_mono_wav(translated_recording_path, translated_recording, sample_rate_hz)
         args = argparse.Namespace(
@@ -1072,6 +1519,218 @@ def self_test() -> int:
         report = json.loads(report_path.read_text(encoding="utf-8"))
         if bool(report.get("summary", {}).get("passed")):
             raise RuntimeError("expected no-isolation self-test fixture to fail")
+        args.run_id = "silent-isolated-headphone-earpiece-isolation"
+        args.source_isolated_ear_recording = silent_source_isolated_path
+        args.score_warning_only = True
+        result = score(args)
+        if result != 0:
+            raise RuntimeError("warning-only silent-isolated self-test should return 0")
+        report_path = (
+            Path(args.output_dir)
+            / "runs"
+            / args.run_id
+            / "headphone-isolation-report.json"
+        )
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        if bool(report.get("summary", {}).get("passed")):
+            raise RuntimeError("expected silent-isolated self-test fixture to fail")
+        gates = {gate["name"]: gate for gate in report.get("summary", {}).get("quality_gates", [])}
+        if bool(gates["headphone_core_metrics_finite"]["passed"]):
+            raise RuntimeError("expected silent-isolated finite-metrics gate to fail")
+        json.dumps(report, allow_nan=False)
+        route_args = argparse.Namespace(
+            allow_shared_output_device=False,
+            max_route_probe_clipped_samples=DEFAULT_MAX_ROUTE_PROBE_CLIPPED_SAMPLES,
+            max_route_probe_distortion_db=DEFAULT_MAX_ROUTE_PROBE_DISTORTION_DB,
+            min_route_probe_correlation=DEFAULT_MIN_ROUTE_PROBE_CORRELATION,
+            min_route_probe_dbfs=DEFAULT_MIN_SOURCE_OPEN_DBFS,
+        )
+        route_summary = {
+            "all_artifact_hashes_present": True,
+            "device_info": {
+                "headphone_output_device": {
+                    "hostapi": 1,
+                    "hostapi_name": "unit",
+                    "index": 3,
+                    "name": "unit headphone",
+                    "requested_device": 3,
+                },
+                "source_output_device": {
+                    "hostapi": 1,
+                    "hostapi_name": "unit",
+                    "index": 2,
+                    "name": "unit source",
+                    "requested_device": 2,
+                },
+            },
+            "headphone_route_opened": True,
+            "headphone_route_recording": {
+                "clipped_sample_count": 0,
+                "peak_dbfs": -18.0,
+            },
+            "headphone_route_recording_dbfs": -24.0,
+            "headphone_route_recording_matches_reference": False,
+            "headphone_route_reference_confidence": 0.95,
+            "headphone_route_reference_correlation": 0.95,
+            "headphone_route_reference_distortion_db": 3.0,
+            "release_proof": False,
+            "source_route_opened": True,
+            "source_route_recording": {
+                "clipped_sample_count": 0,
+                "peak_dbfs": -18.0,
+            },
+            "source_route_recording_dbfs": -24.0,
+            "source_route_recording_matches_reference": False,
+            "source_route_reference_confidence": 0.95,
+            "source_route_reference_correlation": 0.95,
+            "source_route_reference_distortion_db": 3.0,
+        }
+        if not all(bool(gate["passed"]) for gate in route_probe_gates(route_summary, route_args)):
+            raise RuntimeError("expected route probe gate self-test fixture to pass")
+        route_summary["all_artifact_hashes_present"] = False
+        route_gates = {gate["name"]: gate for gate in route_probe_gates(route_summary, route_args)}
+        if bool(route_gates["headphone_route_probe_artifacts_hashed"]["passed"]):
+            raise RuntimeError("expected route probe missing-artifact self-test fixture to fail")
+        route_summary["all_artifact_hashes_present"] = True
+        route_summary["source_route_recording"]["clipped_sample_count"] = 1
+        route_gates = {gate["name"]: gate for gate in route_probe_gates(route_summary, route_args)}
+        if bool(route_gates["headphone_source_route_not_clipped"]["passed"]):
+            raise RuntimeError("expected route probe clipped-source self-test fixture to fail")
+        route_summary["source_route_recording"]["clipped_sample_count"] = 0
+        route_summary["device_info"]["headphone_output_device"] = dict(
+            route_summary["device_info"]["source_output_device"]
+        )
+        route_gates = {gate["name"]: gate for gate in route_probe_gates(route_summary, route_args)}
+        if bool(route_gates["headphone_route_outputs_distinct"]["passed"]):
+            raise RuntimeError("expected route probe same-output self-test fixture to fail")
+        json.dumps(
+            {"quality_gates": route_probe_gates({"release_proof": False}, route_args)},
+            allow_nan=False,
+        )
+        original_portaudio_device_identity = globals()["portaudio_device_identity"]
+        original_record_playback = globals()["record_playback"]
+
+        def fake_portaudio_device_identity(device: int | str | None, *, kind: str) -> dict[str, Any]:
+            index = int(device) if device is not None and str(device).isdigit() else 99
+            return {
+                "default": device is None,
+                "default_samplerate": float(sample_rate_hz),
+                "hostapi": 1,
+                "hostapi_name": "unit",
+                "index": index,
+                "max_input_channels": 1 if kind == "input" else 0,
+                "max_output_channels": 0 if kind == "input" else 2,
+                "name": f"unit {kind} {index}",
+                "requested_device": device,
+            }
+
+        def fake_silent_record_playback(
+            playback: np.ndarray,
+            *,
+            sample_rate_hz: int,
+            input_device: int | str | None,
+            output_device: int | str | None,
+            input_channels: int,
+        ) -> tuple[np.ndarray, float]:
+            return np.zeros(int(playback.shape[0]), dtype=np.float32), 0.001
+
+        silent_report_path = (
+            root
+            / "route-out"
+            / "runs"
+            / "silent-route"
+            / "headphone-route-probe-report.json"
+        )
+        silent_report_path.parent.mkdir(parents=True, exist_ok=True)
+        silent_report_path.write_text('{"stale": true}\n', encoding="utf-8")
+        globals()["portaudio_device_identity"] = fake_portaudio_device_identity
+        globals()["record_playback"] = fake_silent_record_playback
+        try:
+            silent_result = route_probe(
+                argparse.Namespace(
+                    adapter_id=DEFAULT_ROUTE_PROBE_ADAPTER_ID,
+                    allow_shared_output_device=False,
+                    duration_s=0.05,
+                    headphone_output_device="3",
+                    input_channels=1,
+                    lead_s=0.0,
+                    max_alignment_lag_ms=DEFAULT_MAX_ALIGNMENT_LAG_MS,
+                    max_peak_dbfs=DEFAULT_MAX_PEAK_DBFS,
+                    max_route_probe_clipped_samples=DEFAULT_MAX_ROUTE_PROBE_CLIPPED_SAMPLES,
+                    max_route_probe_distortion_db=DEFAULT_MAX_ROUTE_PROBE_DISTORTION_DB,
+                    measurement_input_device="1",
+                    min_route_probe_correlation=DEFAULT_MIN_ROUTE_PROBE_CORRELATION,
+                    min_route_probe_dbfs=DEFAULT_MIN_SOURCE_OPEN_DBFS,
+                    output_channels=2,
+                    output_dir=root / "route-out",
+                    playback_gain_db=DEFAULT_PLAYBACK_GAIN_DB,
+                    run_id="silent-route",
+                    sample_rate_hz=sample_rate_hz,
+                    score_warning_only=True,
+                    source_output_device="2",
+                    tail_s=0.0,
+                )
+            )
+        finally:
+            globals()["portaudio_device_identity"] = original_portaudio_device_identity
+            globals()["record_playback"] = original_record_playback
+        if silent_result != 0:
+            raise RuntimeError("warning-only silent route probe self-test should return 0")
+        silent_report = json.loads(silent_report_path.read_text(encoding="utf-8"))
+        if silent_report.get("stale"):
+            raise RuntimeError("silent route probe should replace stale reports")
+        if bool(silent_report.get("summary", {}).get("passed")):
+            raise RuntimeError("expected silent route probe self-test fixture to fail")
+        json.dumps(silent_report, allow_nan=False)
+        preflight_report_path = (
+            root
+            / "route-out"
+            / "runs"
+            / "preflight-failure"
+            / "headphone-route-probe-report.json"
+        )
+        preflight_report_path.parent.mkdir(parents=True, exist_ok=True)
+        preflight_report_path.write_text('{"stale": true}\n', encoding="utf-8")
+
+        def fake_failing_portaudio_device_identity(device: int | str | None, *, kind: str) -> dict[str, Any]:
+            raise ValueError("unit preflight failure")
+
+        globals()["portaudio_device_identity"] = fake_failing_portaudio_device_identity
+        try:
+            try:
+                route_probe(
+                    argparse.Namespace(
+                        adapter_id=DEFAULT_ROUTE_PROBE_ADAPTER_ID,
+                        allow_shared_output_device=False,
+                        duration_s=0.05,
+                        headphone_output_device="3",
+                        input_channels=1,
+                        lead_s=0.0,
+                        max_alignment_lag_ms=DEFAULT_MAX_ALIGNMENT_LAG_MS,
+                        max_peak_dbfs=DEFAULT_MAX_PEAK_DBFS,
+                        max_route_probe_clipped_samples=DEFAULT_MAX_ROUTE_PROBE_CLIPPED_SAMPLES,
+                        max_route_probe_distortion_db=DEFAULT_MAX_ROUTE_PROBE_DISTORTION_DB,
+                        measurement_input_device="1",
+                        min_route_probe_correlation=DEFAULT_MIN_ROUTE_PROBE_CORRELATION,
+                        min_route_probe_dbfs=DEFAULT_MIN_SOURCE_OPEN_DBFS,
+                        output_channels=2,
+                        output_dir=root / "route-out",
+                        playback_gain_db=DEFAULT_PLAYBACK_GAIN_DB,
+                        run_id="preflight-failure",
+                        sample_rate_hz=sample_rate_hz,
+                        score_warning_only=True,
+                        source_output_device="2",
+                        tail_s=0.0,
+                    )
+                )
+            except ValueError:
+                pass
+            else:
+                raise RuntimeError("expected route probe preflight self-test fixture to raise")
+        finally:
+            globals()["portaudio_device_identity"] = original_portaudio_device_identity
+        if preflight_report_path.exists():
+            raise RuntimeError("route probe preflight failure should remove stale reports")
     print("headphone/earpiece isolation contract self-test PASS")
     return 0
 
@@ -1186,6 +1845,47 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="print measurement steps without waiting for Enter before each capture",
     )
+    probe_parser = subparsers.add_parser(
+        "probe-route",
+        help="triage whether source/headphone output routes can open and be heard by the measurement input",
+    )
+    probe_parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    probe_parser.add_argument("--run-id", default=DEFAULT_ROUTE_PROBE_RUN_ID)
+    probe_parser.add_argument("--adapter-id", default=DEFAULT_ROUTE_PROBE_ADAPTER_ID)
+    probe_parser.add_argument("--measurement-input-device", required=True)
+    probe_parser.add_argument("--source-output-device", required=True)
+    probe_parser.add_argument("--headphone-output-device", required=True)
+    probe_parser.add_argument("--input-channels", type=int, default=DEFAULT_CAPTURE_INPUT_CHANNELS)
+    probe_parser.add_argument("--output-channels", type=int, default=DEFAULT_CAPTURE_OUTPUT_CHANNELS)
+    probe_parser.add_argument("--sample-rate-hz", type=int, default=DEFAULT_SAMPLE_RATE_HZ)
+    probe_parser.add_argument("--duration-s", type=float, default=DEFAULT_ROUTE_PROBE_DURATION_S)
+    probe_parser.add_argument("--lead-s", type=float, default=DEFAULT_LEAD_S)
+    probe_parser.add_argument("--tail-s", type=float, default=DEFAULT_TAIL_S)
+    probe_parser.add_argument("--playback-gain-db", type=float, default=DEFAULT_PLAYBACK_GAIN_DB)
+    probe_parser.add_argument("--max-peak-dbfs", type=float, default=DEFAULT_MAX_PEAK_DBFS)
+    probe_parser.add_argument("--min-route-probe-dbfs", type=float, default=DEFAULT_MIN_SOURCE_OPEN_DBFS)
+    probe_parser.add_argument(
+        "--min-route-probe-correlation",
+        type=float,
+        default=DEFAULT_MIN_ROUTE_PROBE_CORRELATION,
+    )
+    probe_parser.add_argument(
+        "--max-route-probe-distortion-db",
+        type=float,
+        default=DEFAULT_MAX_ROUTE_PROBE_DISTORTION_DB,
+    )
+    probe_parser.add_argument(
+        "--max-route-probe-clipped-samples",
+        type=int,
+        default=DEFAULT_MAX_ROUTE_PROBE_CLIPPED_SAMPLES,
+    )
+    probe_parser.add_argument("--max-alignment-lag-ms", type=float, default=DEFAULT_MAX_ALIGNMENT_LAG_MS)
+    probe_parser.add_argument(
+        "--allow-shared-output-device",
+        action="store_true",
+        help="allow source and headphone outputs to resolve to the same PortAudio device for explicit multi-channel hardware tests",
+    )
+    probe_parser.add_argument("--score-warning-only", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -1199,6 +1899,8 @@ def main(argv: list[str] | None = None) -> int:
         return score(args)
     if args.command == "capture":
         return capture(args)
+    if args.command == "probe-route":
+        return route_probe(args)
     raise AssertionError(f"unhandled command: {args.command}")
 
 
