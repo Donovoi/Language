@@ -1,0 +1,26 @@
+FROM python:3.12-slim-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash \
+        ca-certificates \
+        ffmpeg \
+        git \
+        libgomp1 \
+        libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY docker/dev/requirements-audio-eval.txt /tmp/requirements-audio-eval.txt
+COPY docker/dev/requirements-audio-eval-speechbrain-sepformer.txt /tmp/requirements-audio-eval-speechbrain-sepformer.txt
+RUN python -m pip install --upgrade pip \
+    && python -m pip install --no-cache-dir -r /tmp/requirements-audio-eval.txt \
+    && python -m pip install --no-cache-dir -r /tmp/requirements-audio-eval-speechbrain-sepformer.txt
+
+WORKDIR /workspace
+
+CMD ["bash"]

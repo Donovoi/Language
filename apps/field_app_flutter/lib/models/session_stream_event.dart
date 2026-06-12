@@ -15,6 +15,17 @@ class SpeakerEventModel {
     this.targetLanguageCode,
     this.laneStatus = TranslationLaneStatus.unspecified,
     this.statusMessage,
+    this.inputLevelDbfs,
+    this.outputLevelDbfs,
+    this.overlappingSpeakerIds,
+    this.detectedLanguageCode,
+    this.languageConfidence,
+    this.voiceCloneId,
+    this.voiceCloneStatus,
+    this.translatedAudioStreamId,
+    this.originalVoiceSuppressionDb,
+    this.playbackLatencyMs,
+    this.sourceSuppressionMode,
   });
 
   final String speakerId;
@@ -27,6 +38,17 @@ class SpeakerEventModel {
   final String? targetLanguageCode;
   final TranslationLaneStatus laneStatus;
   final String? statusMessage;
+  final double? inputLevelDbfs;
+  final double? outputLevelDbfs;
+  final List<String>? overlappingSpeakerIds;
+  final String? detectedLanguageCode;
+  final double? languageConfidence;
+  final String? voiceCloneId;
+  final String? voiceCloneStatus;
+  final String? translatedAudioStreamId;
+  final double? originalVoiceSuppressionDb;
+  final int? playbackLatencyMs;
+  final SourceSuppressionMode? sourceSuppressionMode;
 
   factory SpeakerEventModel.fromJson(Map<String, dynamic> json) {
     return SpeakerEventModel(
@@ -43,6 +65,38 @@ class SpeakerEventModel {
         json[kSpeakerEventLaneStatusJsonKey] as String?,
       ),
       statusMessage: json[kSpeakerEventStatusMessageJsonKey] as String?,
+      inputLevelDbfs:
+          (json[kSpeakerEventInputLevelDbfsJsonKey] as num?)?.toDouble(),
+      outputLevelDbfs:
+          (json[kSpeakerEventOutputLevelDbfsJsonKey] as num?)?.toDouble(),
+      overlappingSpeakerIds:
+          json.containsKey(kSpeakerEventOverlappingSpeakerIdsJsonKey)
+              ? (json[kSpeakerEventOverlappingSpeakerIdsJsonKey]
+                      as List<dynamic>?)
+                  ?.whereType<String>()
+                  .toList(growable: false)
+              : null,
+      detectedLanguageCode:
+          json[kSpeakerEventDetectedLanguageCodeJsonKey] as String?,
+      languageConfidence:
+          (json[kSpeakerEventLanguageConfidenceJsonKey] as num?)?.toDouble(),
+      voiceCloneId: json[kSpeakerEventVoiceCloneIdJsonKey] as String?,
+      voiceCloneStatus:
+          json[kSpeakerEventVoiceCloneStatusJsonKey] as String?,
+      translatedAudioStreamId:
+          json[kSpeakerEventTranslatedAudioStreamIdJsonKey] as String?,
+      originalVoiceSuppressionDb:
+          (json[kSpeakerEventOriginalVoiceSuppressionDbJsonKey] as num?)
+              ?.toDouble(),
+      playbackLatencyMs:
+          (json[kSpeakerEventPlaybackLatencyMsJsonKey] as num?)?.toInt(),
+      sourceSuppressionMode: json.containsKey(
+        kSpeakerEventSourceSuppressionModeJsonKey,
+      )
+          ? SourceSuppressionModePresentation.fromApiValue(
+              json[kSpeakerEventSourceSuppressionModeJsonKey] as String?,
+            )
+          : null,
     );
   }
 }

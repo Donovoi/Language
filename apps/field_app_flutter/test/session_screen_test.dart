@@ -32,6 +32,12 @@ void main() {
     expect(find.text('Primary translation target'), findsOneWidget);
     expect(find.text('Primary lane locked in.'), findsOneWidget);
     expect(find.text("Let's keep the next question short."), findsOneWidget);
+    expect(find.text('-23 dBFS → -23 dBFS'), findsOneWidget);
+    expect(find.text('Voice READY'), findsWidgets);
+    expect(find.text('English voice ready'), findsWidgets);
+    expect(find.text('Overlay target 6 dB'), findsOneWidget);
+    expect(find.text('2 overlapping'), findsWidgets);
+    expect(find.text('280 ms'), findsOneWidget);
     expect(find.byTooltip('Lock speaker Alice'), findsOneWidget);
   });
 

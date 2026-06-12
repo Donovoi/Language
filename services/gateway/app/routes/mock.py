@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.auth import require_write_token
-from app.models import MockSceneResponse, SessionMode
+from app.models import DiarizationPredictionInput, MockSceneResponse, SessionMode, SessionResponse
+from app.services.diarization import apply_diarization_prediction
 from app.services.mock_events import build_mock_scene
 from app.services.mock_live_ingest import (
     MockLiveIngestAlreadyRunningError,
@@ -17,6 +18,25 @@ router = APIRouter(prefix="/v1/mock", tags=["mock"])
 @router.get("/scene", response_model=MockSceneResponse)
 def get_mock_scene(mode: SessionMode = Query(default=SessionMode.FOCUS)) -> MockSceneResponse:
     return build_mock_scene(mode)
+
+
+@router.post(
+    "/diarization",
+    response_model=SessionResponse,
+    dependencies=[Depends(require_write_token)],
+)
+def apply_mock_diarization(
+    prediction: DiarizationPredictionInput,
+    mode: SessionMode | None = Query(default=None),
+    observed_end_s: float | None = Query(default=None, ge=0.0),
+    store: SessionStore = Depends(get_session_store),
+) -> SessionResponse:
+    return apply_diarization_prediction(
+        prediction,
+        store,
+        mode=mode,
+        observed_end_s=observed_end_s,
+    )
 
 
 @router.get("/live-ingest", response_model=MockLiveIngestStatus)

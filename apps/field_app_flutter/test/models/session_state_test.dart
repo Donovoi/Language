@@ -89,9 +89,14 @@ void main() {
     expect(speaker.laneStatus, TranslationLaneStatus.unspecified);
     expect(speaker.translatedCaption, isNull);
     expect(speaker.targetLanguageCode, isNull);
+    expect(speaker.overlappingSpeakerIds, isEmpty);
+    expect(speaker.inputLevelDbfs, isNull);
+    expect(speaker.voiceCloneStatus, isNull);
+    expect(speaker.translatedAudioStreamId, isNull);
+    expect(speaker.sourceSuppressionMode, SourceSuppressionMode.unspecified);
   });
 
-  test('Speaker.fromJson parses translation lane fields', () {
+  test('Speaker.fromJson parses translation and realtime audio fields', () {
     final speaker = Speaker.fromJson(<String, dynamic>{
       'speaker_id': 'speaker-a',
       'display_name': 'Alice',
@@ -103,6 +108,17 @@ void main() {
       'target_language_code': 'en',
       'lane_status': 'READY',
       'status_message': 'Translation live.',
+      'input_level_dbfs': -19.5,
+      'output_level_dbfs': -19,
+      'overlapping_speaker_ids': <String>['speaker-b'],
+      'detected_language_code': 'es',
+      'language_confidence': 0.94,
+      'voice_clone_id': 'voice-a',
+      'voice_clone_status': 'READY',
+      'translated_audio_stream_id': 'mix-a-en',
+      'original_voice_suppression_db': 6,
+      'playback_latency_ms': 310,
+      'source_suppression_mode': 'OVERLAY_DUCKING',
     });
 
     expect(speaker.sourceCaption, 'Hola');
@@ -110,5 +126,16 @@ void main() {
     expect(speaker.targetLanguageCode, 'en');
     expect(speaker.laneStatus, TranslationLaneStatus.ready);
     expect(speaker.statusMessage, 'Translation live.');
+    expect(speaker.inputLevelDbfs, -19.5);
+    expect(speaker.outputLevelDbfs, -19);
+    expect(speaker.overlappingSpeakerIds, <String>['speaker-b']);
+    expect(speaker.detectedLanguageCode, 'es');
+    expect(speaker.languageConfidence, 0.94);
+    expect(speaker.voiceCloneId, 'voice-a');
+    expect(speaker.voiceCloneStatus, 'READY');
+    expect(speaker.translatedAudioStreamId, 'mix-a-en');
+    expect(speaker.originalVoiceSuppressionDb, 6);
+    expect(speaker.playbackLatencyMs, 310);
+    expect(speaker.sourceSuppressionMode, SourceSuppressionMode.overlayDucking);
   });
 }

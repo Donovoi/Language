@@ -268,6 +268,17 @@ class SessionStore:
                 target_language_code=speaker.target_language_code,
                 lane_status=speaker.lane_status,
                 status_message=speaker.status_message,
+                input_level_dbfs=speaker.input_level_dbfs,
+                output_level_dbfs=speaker.output_level_dbfs,
+                overlapping_speaker_ids=speaker.overlapping_speaker_ids,
+                detected_language_code=speaker.detected_language_code,
+                language_confidence=speaker.language_confidence,
+                voice_clone_id=speaker.voice_clone_id,
+                voice_clone_status=speaker.voice_clone_status,
+                translated_audio_stream_id=speaker.translated_audio_stream_id,
+                original_voice_suppression_db=speaker.original_voice_suppression_db,
+                playback_latency_ms=speaker.playback_latency_ms,
+                source_suppression_mode=speaker.source_suppression_mode,
             )
 
         return None

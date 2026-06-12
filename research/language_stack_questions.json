@@ -1,0 +1,237 @@
+{
+  "schema_version": 1,
+  "app_goal": "Realtime multi-speaker speech-to-English translation with same-voice, same-volume playback and source-voice suppression.",
+  "evidence_standard": {
+    "preferred": [
+      "peer-reviewed conference or journal papers",
+      "official benchmark papers",
+      "model cards or official implementation docs for runnable candidates"
+    ],
+    "allowed_with_label": [
+      "arXiv preprints",
+      "technical reports",
+      "vendor model cards",
+      "blog posts used only for lead discovery"
+    ],
+    "required_for_decision": [
+      "at least one primary source per candidate",
+      "explicit latency and hardware assumptions",
+      "known failure modes and detractor concerns",
+      "a disposable benchmark or smoke-test plan"
+    ]
+  },
+  "detractor_loop": {
+    "purpose": "Force every attractive candidate through a skeptic pass before it becomes implementation work.",
+    "required_questions": [
+      "What practical assumption would make this recommendation fail in a real noisy room?",
+      "What part of the result is from a peer-reviewed source, and what part is only a preprint, vendor claim, or demo?",
+      "What latency, hardware, licensing, privacy, or safety constraint could make the option unusable?",
+      "What benchmark would disprove the recommendation quickly and cheaply?",
+      "What fallback should the app use when the candidate fails open?"
+    ],
+    "minimum_output": [
+      "one strongest objection",
+      "one cheapest falsifying benchmark",
+      "one fallback path",
+      "one condition that would reverse the decision"
+    ]
+  },
+  "questions": [
+    {
+      "id": "capture-vad-noise-front-end",
+      "decision": "Choose the live capture, VAD, denoising, and level-estimation front end.",
+      "implementation_surface": "future capture service plus crates/audio_core loudness metadata",
+      "robin_task": "Find the best current real-time microphone capture, VAD, denoising, and loudness-estimation approach for noisy rooms with multiple speakers and overlapping speech.",
+      "queries": [
+        "real-time speech enhancement noise suppression voice activity detection noisy multi speaker rooms 2025 peer reviewed",
+        "streaming VAD speech enhancement real-time factor noisy conversational speech benchmark",
+        "speech loudness normalization dBFS LUFS perceived volume matching real-time speech playback"
+      ],
+      "metrics": [
+        "real-time factor",
+        "frame latency",
+        "false speech/non-speech rate",
+        "PESQ/STOI or DNSMOS",
+        "input and output dBFS/LUFS error"
+      ],
+      "benchmark_fixture": "synthetic room clips with calibrated speech/noise levels and at least one live microphone smoke test",
+      "acceptance_gate": "Candidate must estimate speech presence and input level without blocking the downstream diarization path.",
+      "detractor_focus": "Reject candidates that only work on clean close-talk speech or require calibration too fragile for a moving room."
+    },
+    {
+      "id": "overlap-diarization-speaker-tracking",
+      "decision": "Choose the online diarization and speaker-tracking path for overlapping speakers.",
+      "implementation_surface": "gateway diarization adapter, proto speaker events, Flutter speaker lanes",
+      "robin_task": "Compare streaming diarization methods for overlapping speakers, especially online Sortformer, EEND-family systems, pyannote-derived pipelines, and speaker-attributed ASR options.",
+      "queries": [
+        "streaming speaker diarization overlapping speech Sortformer EEND Interspeech 2025",
+        "online speaker diarization overlapping conversational speech DER JER benchmark",
+        "speaker attributed ASR diarization overlapping speech streaming benchmark"
+      ],
+      "metrics": [
+        "DER",
+        "JER",
+        "speaker-label stability across chunks",
+        "overlap recall",
+        "latency",
+        "maximum simultaneous speakers"
+      ],
+      "benchmark_fixture": "AMI or AliMeeting-style overlapping clips plus a local two-person overlap fixture",
+      "acceptance_gate": "Candidate must produce stable speaker ids and overlapping_speaker_ids compatible with the current session contract.",
+      "detractor_focus": "Challenge any claim that speaker labels stay stable under overlap, speaker re-entry, unknown speaker count, and low-latency chunks."
+    },
+    {
+      "id": "speech-separation-target-extraction",
+      "decision": "Choose blind separation or target-speaker extraction for overlapping speech before ASR/TTS.",
+      "implementation_surface": "future Rust/Python audio separation module and gateway audio metadata",
+      "robin_task": "Find efficient speech separation or target-speaker extraction models that can run with low latency and preserve ASR-relevant intelligibility in reverberant noisy rooms.",
+      "queries": [
+        "real-time neural speech separation overlapping speakers low latency ICLR 2025 TIGER TF-GridNet",
+        "target speaker extraction streaming speech separation real-time benchmark 2025",
+        "tiny real-time neural speech separation hearable devices TF-MLPNet 2025"
+      ],
+      "metrics": [
+        "SI-SDR improvement",
+        "WER after separation",
+        "real-time factor",
+        "chunk size",
+        "GPU/CPU memory",
+        "artifacts under reverberation"
+      ],
+      "benchmark_fixture": "LibriCSS/LibriMix-style mixtures plus captured two-speaker local mixtures",
+      "acceptance_gate": "Candidate must improve downstream ASR or diarization enough to justify added latency.",
+      "detractor_focus": "Treat separation as optional until it proves downstream ASR or diarization gains exceed added artifacts and delay."
+    },
+    {
+      "id": "language-id-asr-translation",
+      "decision": "Choose language identification, streaming ASR, and into-English translation architecture.",
+      "implementation_surface": "gateway translation/audio provider adapters and proto detected_language fields",
+      "robin_task": "Compare multilingual ASR plus translation approaches for source-language detection and low-latency English output, including Whisper-family, SeamlessM4T, and current streaming speech translation systems.",
+      "queries": [
+        "multilingual streaming ASR language identification speech translation into English benchmark 2025",
+        "Whisper multilingual speech recognition language identification limitations noisy speech peer reviewed",
+        "SeamlessM4T speech to text translation robustness background noise speaker variation Nature 2025"
+      ],
+      "metrics": [
+        "language-id accuracy",
+        "WER/CER",
+        "BLEU/chrF/COMET",
+        "partial-result latency",
+        "robustness under noise and overlap"
+      ],
+      "benchmark_fixture": "FLEURS/CoVoST2 plus local mixed-language room clips",
+      "acceptance_gate": "Candidate must expose language confidence and translated text early enough for same-turn playback.",
+      "detractor_focus": "Punish models that look strong offline but cannot stream partials, recover from wrong language ID, or handle code-switching."
+    },
+    {
+      "id": "cascade-vs-direct-s2st",
+      "decision": "Decide whether the product runtime should be cascaded ASR+MT+TTS, direct speech-to-speech, or a hybrid.",
+      "implementation_surface": "gateway orchestration and future audio stream contracts",
+      "robin_task": "Evaluate direct speech-to-speech translation versus cascaded ASR, text translation, and voice-conditioned TTS for a realtime same-voice English playback app.",
+      "queries": [
+        "direct speech to speech translation versus cascaded ASR MT TTS latency quality 2025",
+        "streaming speech translation speaker diarization overlapping speech DiariST ICASSP 2024",
+        "multimodal language model direct speech-to-speech translation streaming vocoder 2025"
+      ],
+      "metrics": [
+        "end-to-end latency",
+        "translation quality",
+        "voice similarity preservation",
+        "controllability",
+        "failure debuggability",
+        "provider availability"
+      ],
+      "benchmark_fixture": "one cascaded baseline and one direct/hybrid baseline on identical multilingual room clips",
+      "acceptance_gate": "Decision record must justify why the chosen architecture best preserves real-time behavior and same-voice output.",
+      "detractor_focus": "Assume direct S2ST demos hide debuggability, voice-clone control, and source-suppression integration costs until proven otherwise."
+    },
+    {
+      "id": "voice-clone-tts-conversion",
+      "decision": "Choose the same-speaker English output strategy.",
+      "implementation_surface": "gateway voice-clone/TTS adapter, translated_audio_stream_id, voice_clone_status",
+      "robin_task": "Compare zero-shot voice cloning, voice conversion, and speaker-conditioned TTS for fast English output that matches source speaker identity without unsafe persistence.",
+      "queries": [
+        "zero shot voice cloning TTS few seconds reference speaker similarity MOS 2025 peer reviewed",
+        "streaming voice conversion target speaker extraction voice cloning low latency 2025",
+        "speaker adaptive text to speech denoising diffusion GAN zero-shot Scientific Reports 2025"
+      ],
+      "metrics": [
+        "speaker similarity",
+        "MOS or DNSMOS",
+        "time to first audio",
+        "real-time factor",
+        "reference audio length",
+        "cross-language voice transfer quality"
+      ],
+      "benchmark_fixture": "short consented speaker references with generated English prompts and blind similarity scoring",
+      "acceptance_gate": "Candidate must support ephemeral references, visible readiness states, and fallback voice behavior.",
+      "detractor_focus": "Reject voice cloning paths that cannot prove consent-safe reference handling, bounded latency, and acceptable cross-language speaker similarity."
+    },
+    {
+      "id": "playback-mixing-volume-matching",
+      "decision": "Choose the translated playback mixer and loudness-matching strategy.",
+      "implementation_surface": "crates/audio_core, Flutter playback controls, future platform audio output",
+      "robin_task": "Find practical low-latency speech mixing, gain staging, loudness matching, and clipping prevention methods for translated speech playback at the source speaker's perceived volume.",
+      "queries": [
+        "real-time speech loudness matching dBFS LUFS playback mixer low latency",
+        "speech audio gain normalization clipping prevention conversational playback",
+        "perceived loudness matching speech synthesis original speaker volume"
+      ],
+      "metrics": [
+        "LUFS or dBFS target error",
+        "clipping rate",
+        "time to first playable frame",
+        "mix intelligibility",
+        "operator override behavior"
+      ],
+      "benchmark_fixture": "fixed loudness source clips with translated playback rendered at matching levels",
+      "acceptance_gate": "Candidate must map to input_level_dbfs and output_level_dbfs without unstable gain jumps.",
+      "detractor_focus": "Challenge perceived-volume claims with clipping, distance changes, whisper/shout extremes, and multi-speaker simultaneous playback."
+    },
+    {
+      "id": "source-voice-suppression",
+      "decision": "Choose the original-source suppression or cancellation approach.",
+      "implementation_surface": "future DSP module, gateway suppression metadata, Flutter diagnostics",
+      "robin_task": "Compare source-voice suppression, echo cancellation, target speech suppression, and translated playback masking approaches for real-time use without corrupting translated output.",
+      "queries": [
+        "real-time speech source suppression target speaker cancellation overlapping speech 2025",
+        "acoustic echo cancellation translated speech playback microphone suppression low latency",
+        "speech enhancement target speech removal source separation cancellation benchmark"
+      ],
+      "metrics": [
+        "suppression dB",
+        "residual source intelligibility",
+        "translated output distortion",
+        "latency",
+        "feedback and echo robustness"
+      ],
+      "benchmark_fixture": "same-room capture/playback loop with known source and translated reference tracks",
+      "acceptance_gate": "Candidate must report original_voice_suppression_db and fail open when cancellation is unreliable.",
+      "detractor_focus": "Assume single-device source-voice cancellation is physically limited; require a masking/fail-open fallback and hardware assumptions."
+    },
+    {
+      "id": "evaluation-deployment-baseline",
+      "decision": "Choose the end-to-end benchmark suite and target hardware profile.",
+      "implementation_surface": "docker/dev, scripts, CI, docs/testing",
+      "robin_task": "Define a benchmark suite that measures the whole realtime loop from capture to English playback across overlapping speakers, language changes, volume changes, and noisy rooms.",
+      "queries": [
+        "benchmark realtime speech translation diarization overlapping speakers latency evaluation",
+        "LibriCSS AMI AliMeeting CHiME FLEURS CoVoST2 speech translation diarization evaluation",
+        "edge deployment speech translation diarization TTS real-time GPU CPU benchmark"
+      ],
+      "metrics": [
+        "end-to-end latency",
+        "DER/JER",
+        "WER/CER",
+        "BLEU/chrF/COMET",
+        "speaker similarity",
+        "suppression dB",
+        "real-time factor",
+        "memory and power"
+      ],
+      "benchmark_fixture": "a versioned local fixture pack plus optional public benchmark subsets",
+      "acceptance_gate": "Every provider/model integration must add a disposable smoke check and at least one benchmark fixture.",
+      "detractor_focus": "Reject benchmark suites that only measure isolated model quality and ignore end-to-end latency, privacy, source suppression, and degraded-room failure."
+    }
+  ]
+}

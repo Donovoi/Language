@@ -1,13 +1,17 @@
 # SMART Implementation Plan
 
-_Last reviewed: 2026-05-01_
+_Last reviewed: 2026-05-31_
 
 This plan translates the current repository state into a finish roadmap with specific, measurable,
 achievable, realistic, and time-bound tasks.
 
+The original product goal is the north star: listen to multiple potentially overlapping speakers,
+detect their languages, translate to English, synthesize the English in the same speaker voice at the
+same perceived volume, and suppress the original source voice.
+
 ## Current baseline
 
-As of 2026-04-29, the repository already supports a **runnable local mock demo**:
+As of 2026-05-31, the repository supports a **runnable local mock demo**:
 
 - `make check` passes end to end
 - `make smoke-local-demo` verifies the local gateway demo path
@@ -30,6 +34,11 @@ As of 2026-04-29, the repository already supports a **runnable local mock demo**
 - Local SDK/bootstrap flow is automated by `scripts/bootstrap_dev.sh`
 - Gateway config, minimal auth, structured request logging, and SQLite session recovery are all in place
 - a configurable LibreTranslate-compatible gateway adapter can provide real translated captions without Flutter client changes
+- the shared gateway/Flutter contract now carries product-loop audio metadata: detected language
+  confidence, input/output dBFS levels, overlapping speaker ids, voice clone status, translated-audio
+  stream ids, playback latency, and source-voice suppression diagnostics
+- the mock scene and live-ingest path simulate overlapping speakers, volume-matched translated audio,
+  same-voice readiness, and original-voice suppression diagnostics through the real SSE/session contract
 - cross-stack integration smoke coverage and an internal beta runbook are in place
 - release prep now covers internal-beta packaging, manifest/checksum output, and smoke instructions
 
@@ -39,7 +48,8 @@ The system is still missing several capabilities needed for a realistic, durable
 
 - deeper generated/shared-contract runtime use across every runtime (Rust transport bindings now exist, the gateway now reuses Rust prioritization at runtime, and fuller runtime migration is still pending)
 - broader direct Rust reuse from Python/Flutter runtime paths beyond prioritization
-- real audio capture, diarization, and TTS for a true field-ready workflow
+- live audio capture, overlapping-speaker diarization/separation, provider-backed voice clone/TTS,
+  and source-voice suppression DSP for a true field-ready workflow
 - production-grade auth/roles, metrics, and deployment hardening beyond the current minimal local/beta layer
 
 ## Finish lines
@@ -53,17 +63,17 @@ A fresh machine can bootstrap the repo, run the gateway and Flutter app locally,
 changes, reset, live SSE updates, and speaker lock/unlock without code changes.
 
 ### Finish line B — Internal end-to-end prototype
-**Status:** Complete on 2026-04-29 for the mock/live-simulated path.
+**Status:** Complete on 2026-05-31 for the product-shaped mock/live-simulated path.
 
-The gateway can ingest a stream of realistic speaker/transcript updates, persist session state, and keep
-Flutter synchronized across reconnects. This is the first milestone that feels like a usable internal
-prototype rather than a mock shell.
+The gateway can ingest a stream of realistic speaker/transcript/audio-metadata updates, persist
+session state, and keep Flutter synchronized across reconnects. This is the first milestone that feels
+like a usable internal prototype rather than a caption-only shell.
 
 ### Finish line C — Beta candidate
 **Status:** In progress.
 
-The system has a real translation pipeline, minimal auth/observability, and reproducible release
-artifacts for controlled external testing.
+The system has a real translation pipeline, product-shaped translated-audio metadata,
+minimal auth/observability, and reproducible release artifacts for controlled external testing.
 
 ## Assumptions
 
@@ -379,19 +389,45 @@ These are important, but they should not block the next finish line:
 
 1. direct Rust reuse/bridge in Python or Flutter runtime paths
 2. audio capture and diarization integration
-3. TTS / translated-audio output and mix metadata
-4. richer operator actions (mute, batch lock, history/timeline)
-5. stronger auth/roles and multi-user coordination
-6. production-grade observability and scaling
-7. signed mobile/desktop distribution and store submission
+3. provider-backed voice cloning, English TTS output streams, and volume-matched playback
+4. source-voice suppression/noise-cancellation DSP
+5. richer operator actions (mute, batch lock, history/timeline)
+6. stronger auth/roles and multi-user coordination
+7. production-grade observability and scaling
+8. signed mobile/desktop distribution and store submission
+
+## Research gate for real audio work
+
+Real audio model and provider decisions should now go through the Robin research gate before runtime
+integration. Generate a pack from `research/language_stack_questions.json`, verify the important
+claims against primary sources, write a decision record, and pair the selected option with a
+disposable benchmark or smoke check.
+
+The current seed areas are:
+
+1. capture, VAD, denoising, and level estimation
+2. overlapping-speaker diarization and speaker tracking
+3. speech separation or target-speaker extraction
+4. language ID, ASR, and into-English translation
+5. cascaded versus direct speech-to-speech architecture
+6. same-voice TTS or voice conversion
+7. playback mixing and volume matching
+8. source-voice suppression
+9. end-to-end evaluation and deployment baseline
+
+The first decision records are in `docs/research/decisions/`, and the current research-backed
+implementation backlog is in `docs/research/research-backed-implementation-backlog.md`.
 
 ## Recommended execution order
 
 If we continue immediately, the best order is:
 
-1. bridge the Rust prioritization authority directly into runtime call paths
-2. cut and smoke an internal beta candidate using the release-prep path
-3. plan the next wave for audio capture, diarization, and TTS
+1. run the Robin research gate for live capture plus overlapping-speaker diarization/separation
+2. build a disposable benchmark for the selected capture/diarization/separation path
+3. run the Robin research gate for same-voice English voice-clone/TTS or voice conversion
+4. wire one provider-backed English audio stream behind the existing speaker audio fields
+5. prototype source-voice suppression against captured audio
+6. cut and smoke an internal beta candidate using the product-shaped live-ingest path
 
 ## Success summary
 
@@ -399,4 +435,5 @@ We should consider the current phase complete when:
 
 - generated/shared contract handling no longer depends on hand-maintained strings in the active gateway/Flutter paths
 - Rust authority is reused directly where it materially reduces mirrored logic
+- mock/live-ingest data exercises the same metadata fields expected from the real audio loop
 - internal release artifacts can be built and smoke-tested without source edits

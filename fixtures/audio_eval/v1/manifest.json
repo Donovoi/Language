@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "fixture_set_id": "audio-eval-v1",
+  "sample_rate_hz": 16000,
+  "description": "Deterministic synthetic fixtures for validating audio evaluation plumbing before model-specific benchmarks.",
+  "fixtures": [
+    {
+      "id": "two_speaker_overlap_en_es",
+      "description": "Two human speakers at different levels overlap for diarization and source-separation smoke checks.",
+      "duration_s": 6.0,
+      "background_noise_dbfs": -48.0,
+      "segments": [
+        {
+          "speaker_id": "speaker_a",
+          "source_kind": "human",
+          "language_code": "en",
+          "voice_profile": "low_warm",
+          "text": "The clinic opens at nine and the forms are on the desk.",
+          "start_s": 0.4,
+          "end_s": 3.8,
+          "level_dbfs": -24.0,
+          "tone_hz": 185.0
+        },
+        {
+          "speaker_id": "speaker_b",
+          "source_kind": "human",
+          "language_code": "es",
+          "voice_profile": "bright_fast",
+          "text": "Necesito confirmar la direccion antes de salir.",
+          "start_s": 2.0,
+          "end_s": 5.2,
+          "level_dbfs": -30.0,
+          "tone_hz": 255.0
+        }
+      ]
+    },
+    {
+      "id": "language_switch_quiet_loud",
+      "description": "One speaker changes source language and volume, forcing the harness to retain per-segment language and level truth.",
+      "duration_s": 7.0,
+      "background_noise_dbfs": -50.0,
+      "segments": [
+        {
+          "speaker_id": "speaker_c",
+          "source_kind": "human",
+          "language_code": "fr",
+          "voice_profile": "soft_mid",
+          "text": "Je parle doucement parce que la piece est calme.",
+          "start_s": 0.5,
+          "end_s": 2.4,
+          "level_dbfs": -36.0,
+          "tone_hz": 215.0
+        },
+        {
+          "speaker_id": "speaker_c",
+          "source_kind": "human",
+          "language_code": "ja",
+          "voice_profile": "soft_mid",
+          "text": "Ato de motto ookiku hanashimasu.",
+          "start_s": 3.0,
+          "end_s": 5.6,
+          "level_dbfs": -18.0,
+          "tone_hz": 220.0
+        }
+      ]
+    },
+    {
+      "id": "same_room_playback_loopback",
+      "description": "A source speaker, translated playback leakage, and a quiet bystander test overlay and echo-accounting paths.",
+      "duration_s": 6.5,
+      "background_noise_dbfs": -46.0,
+      "segments": [
+        {
+          "speaker_id": "speaker_d",
+          "source_kind": "human",
+          "language_code": "de",
+          "voice_profile": "steady_baritone",
+          "text": "Bitte pruefen Sie die Verbindung vor dem Start.",
+          "start_s": 0.6,
+          "end_s": 3.2,
+          "level_dbfs": -26.0,
+          "tone_hz": 170.0
+        },
+        {
+          "speaker_id": "translated_playback",
+          "source_kind": "playback",
+          "language_code": "en",
+          "voice_profile": "speaker_d_clone_candidate",
+          "text": "Please check the connection before we start.",
+          "start_s": 1.25,
+          "end_s": 3.75,
+          "level_dbfs": -22.0,
+          "tone_hz": 175.0
+        },
+        {
+          "speaker_id": "speaker_e",
+          "source_kind": "human",
+          "language_code": "it",
+          "voice_profile": "quiet_tenor",
+          "text": "Posso aspettare finche avete finito.",
+          "start_s": 2.7,
+          "end_s": 5.0,
+          "level_dbfs": -33.0,
+          "tone_hz": 305.0
+        }
+      ]
+    }
+  ]
+}

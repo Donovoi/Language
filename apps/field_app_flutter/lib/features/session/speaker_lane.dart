@@ -21,17 +21,36 @@ class SpeakerLane extends StatelessWidget {
     final translatedCaption = speaker.translatedCaption;
     final sourceCaption = speaker.sourceCaption;
     final statusMessage = speaker.statusMessage;
-    final targetLanguage = speaker.targetLanguageCode ?? speaker.languageCode;
-    final languageSummary = targetLanguage == speaker.languageCode
-        ? '${speaker.languageCode} • ${speaker.active ? 'Active' : 'Idle'}'
-        : '${speaker.languageCode} → $targetLanguage • ${speaker.active ? 'Active' : 'Idle'}';
+    final sourceLanguage = speaker.detectedLanguageCode ?? speaker.languageCode;
+    final targetLanguage = speaker.targetLanguageCode ?? 'en';
+    final confidenceLabel = speaker.languageConfidence == null
+        ? null
+        : '${(speaker.languageConfidence! * 100).round()}%';
+    final languageSummary = targetLanguage == sourceLanguage
+        ? '$sourceLanguage${confidenceLabel == null ? '' : ' $confidenceLabel'}'
+            ' • ${speaker.active ? 'Active' : 'Idle'}'
+        : '$sourceLanguage → $targetLanguage'
+            '${confidenceLabel == null ? '' : ' $confidenceLabel'}'
+            ' • ${speaker.active ? 'Active' : 'Idle'}';
     final statusColor = _statusColor(context, speaker.laneStatus);
+    final volumeLabel = _volumeLabel(
+      speaker.inputLevelDbfs,
+      speaker.outputLevelDbfs,
+    );
+    final suppressionLabel = _suppressionLabel(
+      speaker.sourceSuppressionMode,
+      speaker.originalVoiceSuppressionDb,
+    );
+    final latencyLabel = speaker.playbackLatencyMs == null ||
+            speaker.playbackLatencyMs == 0
+        ? null
+        : '${speaker.playbackLatencyMs} ms';
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: colorScheme.surface,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(
           color: isTopSpeaker ? colorScheme.primary : colorScheme.outlineVariant,
           width: isTopSpeaker ? 2 : 1,
@@ -125,6 +144,44 @@ class SpeakerLane extends StatelessWidget {
                         ),
                   ),
                 ],
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: <Widget>[
+                    if (volumeLabel != null)
+                      _MetricChip(
+                        icon: Icons.graphic_eq,
+                        label: volumeLabel,
+                      ),
+                    if (speaker.voiceCloneStatus != null)
+                      _MetricChip(
+                        icon: Icons.record_voice_over,
+                        label: 'Voice ${speaker.voiceCloneStatus}',
+                      ),
+                    if (speaker.translatedAudioStreamId != null)
+                      const _MetricChip(
+                        icon: Icons.volume_up,
+                        label: 'English voice ready',
+                      ),
+                    if (suppressionLabel != null)
+                      _MetricChip(
+                        icon: Icons.tune,
+                        label: suppressionLabel,
+                      ),
+                    if (speaker.overlappingSpeakerIds.isNotEmpty)
+                      _MetricChip(
+                        icon: Icons.groups,
+                        label:
+                            '${speaker.overlappingSpeakerIds.length + 1} overlapping',
+                      ),
+                    if (latencyLabel != null)
+                      _MetricChip(
+                        icon: Icons.speed,
+                        label: latencyLabel,
+                      ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -151,5 +208,78 @@ class SpeakerLane extends StatelessWidget {
       case TranslationLaneStatus.error:
         return colorScheme.error;
     }
+  }
+
+  String? _volumeLabel(double? inputLevelDbfs, double? outputLevelDbfs) {
+    if (inputLevelDbfs == null && outputLevelDbfs == null) {
+      return null;
+    }
+    final input = inputLevelDbfs == null ? '--' : '${inputLevelDbfs.round()}';
+    final output =
+        outputLevelDbfs == null ? '--' : '${outputLevelDbfs.round()}';
+    return '$input dBFS → $output dBFS';
+  }
+
+  String? _suppressionLabel(
+    SourceSuppressionMode mode,
+    double? amountDb,
+  ) {
+    final amountLabel = amountDb == null || amountDb <= 0
+        ? null
+        : '${amountDb.round()} dB';
+    switch (mode) {
+      case SourceSuppressionMode.unspecified:
+        return amountLabel == null ? null : 'Overlay target $amountLabel';
+      case SourceSuppressionMode.unavailable:
+        return 'Suppression unavailable';
+      case SourceSuppressionMode.overlayDucking:
+        return amountLabel == null
+            ? 'Overlay ducking'
+            : 'Overlay target $amountLabel';
+      case SourceSuppressionMode.headphoneIsolated:
+        return amountLabel == null
+            ? 'Headphone isolated'
+            : 'Headphone isolated $amountLabel';
+      case SourceSuppressionMode.trueCancellation:
+        return amountLabel == null
+            ? 'Cancellation measured'
+            : 'Cancellation measured $amountLabel';
+    }
+  }
+}
+
+class _MetricChip extends StatelessWidget {
+  const _MetricChip({
+    required this.icon,
+    required this.label,
+  });
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          Icon(icon, size: 14, color: colorScheme.onSurfaceVariant),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                ),
+          ),
+        ],
+      ),
+    );
   }
 }

@@ -93,6 +93,19 @@ The target language comes from `speaker.target_language_code` when supplied, oth
 request still succeeds but the affected speaker lane is returned as `lane_status: "ERROR"` with a
 provider error in `status_message`.
 
+Speaker states may also carry product-loop audio metadata:
+
+- `input_level_dbfs` and `output_level_dbfs` preserve the observed source volume and target English playback volume
+- `overlapping_speaker_ids` records other active speakers in the same overlap window
+- `detected_language_code` and `language_confidence` report language detection results; translation uses `detected_language_code` when present
+- `voice_clone_id` and `voice_clone_status` report whether same-voice English playback is ready
+- `translated_audio_stream_id` identifies the translated English audio stream or chunk when available
+- `original_voice_suppression_db` reports a measured or target overlay-reduction diagnostic; it is not evidence that the source was removed
+- `source_suppression_mode` carries the claim boundary: `UNAVAILABLE`, `OVERLAY_DUCKING`,
+  `HEADPHONE_ISOLATED`, or `TRUE_CANCELLATION`; only `TRUE_CANCELLATION` may be backed by the
+  real-room release gate
+- `playback_latency_ms` reports the latest translation/playback latency budget for the lane
+
 ### `PUT /v1/speakers/{speaker_id}/lock`
 Locks a single speaker in the current session, reranks the session, and returns the updated snapshot.
 
@@ -122,9 +135,55 @@ The gateway now keeps a single current-session snapshot in SQLite instead of pro
 On startup, the gateway restores the last saved session. If no database row exists yet, it seeds the
 store with the deterministic `FOCUS` mock scene so reset/demo flows keep behaving the same way.
 
+### `POST /v1/ingest/diarization`
+Imports one runtime diarization prediction record into the current persisted speaker lanes and returns
+the ranked session. This is the non-mock adapter boundary for rolling PCM diarizers and future capture
+services. The request body is the same JSON shape emitted by the audio-eval scripts, not a filesystem
+path.
+
+Query parameters:
+
+- `mode=FOCUS|CROWD|LOCKED|UNSPECIFIED` optionally chooses the session mode used for reranking.
+- `observed_end_s=<seconds>` optionally treats the prediction as a prefix ending at that time.
+
+The import fills only diarization-owned lane fields: model speaker ids, active state, lane status,
+last-observed timestamps, priority, and `overlapping_speaker_ids`. Language ID, captions,
+translation, voice clone, playback, and suppression diagnostics stay empty until downstream adapters fill
+them.
+
 ### `GET /v1/mock/scene`
 Builds a deterministic mock scene for `FOCUS`, `CROWD`, or `LOCKED` mode.
 The response includes the ranked session plus the supported modes list.
+
+### `POST /v1/mock/diarization`
+Imports one diarization prediction record into the current persisted speaker lanes and returns the
+ranked session. This is a dev/mock alias for `/v1/ingest/diarization`, kept so older smoke and
+fixture workflows do not need to move in lockstep with runtime adapter work.
+
+Query parameters:
+
+- `mode=FOCUS|CROWD|LOCKED|UNSPECIFIED` optionally chooses the session mode used for reranking.
+- `observed_end_s=<seconds>` optionally treats the prediction as a prefix ending at that time.
+
+Example body:
+
+```json
+{
+  "schema_version": 1,
+  "fixture_id": "librispeech_two_speaker_overlap",
+  "adapter_id": "pyannote-community-1-real-speech",
+  "segments": [
+    {"speaker_id": "SPEAKER_00", "start_s": 0.4, "end_s": 7.8, "confidence": 1.0},
+    {"speaker_id": "SPEAKER_01", "start_s": 2.0, "end_s": 6.1, "confidence": 1.0}
+  ],
+  "model_layer_latency_ms": {"diarization": 672.6}
+}
+```
+
+The import fills only diarization-owned lane fields: model speaker ids, active state, lane status,
+last-observed timestamps, priority, and `overlapping_speaker_ids`. Language ID, captions,
+translation, voice clone, playback, and suppression diagnostics stay empty until downstream adapters fill
+them.
 
 ### `GET /v1/mock/live-ingest`
 Returns the status of the simulated live ingest runner.
@@ -145,6 +204,7 @@ Behavior:
 
 - resets the current session through the existing session store
 - replays a scripted `briefing` scenario with more than 20 timed updates across Alice, Bruno, and Carmen
+- includes overlapping-speaker ids, detected language confidence, input/output dBFS levels, voice-clone status, translated-audio stream ids, overlay-reduction diagnostics, and latency fields
 - uses the same store mutation APIs as the rest of the gateway, so existing SSE subscribers receive the updates without any client refresh
 - when the translation adapter is enabled, `READY` caption beats in the script are translated through the configured provider before they are persisted and broadcast
 - when the translation adapter is disabled or unconfigured, the script keeps its built-in mock translated captions so the local demo still works offline
