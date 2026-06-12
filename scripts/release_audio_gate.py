@@ -152,6 +152,7 @@ HEADPHONE_ISOLATION_REQUIRED_GATES = {
     "headphone_mode_claim_declared",
     "headphone_claim_not_true_cancellation",
     "headphone_device_identity_recorded",
+    "headphone_capture_source_declared",
     "isolation_fixture_identity_recorded",
     "headphone_recordings_duration_floor",
     "open_ear_source_control_audible",
@@ -168,6 +169,16 @@ HEADPHONE_REQUIRED_BENCHMARK_NAME = "headphone_earpiece_isolation"
 HEADPHONE_REQUIRED_MEASUREMENT_KIND = "headphone_earpiece_isolation"
 HEADPHONE_REQUIRED_SUPPRESSION_MODE = "HEADPHONE_ISOLATED"
 HEADPHONE_REQUIRED_SUPPRESSION_CLAIM = "headphone_isolated_not_true_cancellation"
+HEADPHONE_CAPTURE_BACKENDS = {"external_wav_measurement", "sounddevice_portaudio_guided_playrec"}
+HEADPHONE_CAPTURE_SOURCE_KINDS = {
+    "external_listener_ear_wav_measurement",
+    "host_guided_listener_ear_playrec_measurement",
+}
+HEADPHONE_CAPTURE_SOURCE_PAIRS = {
+    "external_wav_measurement": "external_listener_ear_wav_measurement",
+    "sounddevice_portaudio_guided_playrec": "host_guided_listener_ear_playrec_measurement",
+}
+HEADPHONE_GUIDED_CAPTURE_BACKEND = "sounddevice_portaudio_guided_playrec"
 HEADPHONE_REQUIRED_ARTIFACTS = (
     "source_reference",
     "source_open_ear_recording",
@@ -358,6 +369,21 @@ def _headphone_measurement_identity_fingerprint(
         "sample_rate_hz": int(sample_rate_hz) if sample_rate_hz is not None else None,
         "source_suppression_mode": HEADPHONE_REQUIRED_SUPPRESSION_MODE,
         "suppression_claim": HEADPHONE_REQUIRED_SUPPRESSION_CLAIM,
+    }
+    data = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+    return hashlib.sha256(data).hexdigest()
+
+
+def _headphone_guided_device_fingerprint(summary: dict[str, Any]) -> str:
+    device_info = summary.get("device_info")
+    sample_rate_hz = _float_or_none(summary.get("sample_rate_hz"))
+    capture = summary.get("capture")
+    capture = capture if isinstance(capture, dict) else {}
+    payload = {
+        "device_info": device_info,
+        "input_channels": int(_float_or_none(capture.get("input_channels")) or 1),
+        "output_channels": int(_float_or_none(capture.get("output_channels")) or 2),
+        "sample_rate_hz": int(sample_rate_hz) if sample_rate_hz is not None else None,
     }
     data = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
     return hashlib.sha256(data).hexdigest()
@@ -1575,6 +1601,34 @@ def _headphone_isolation_gate(spec: EvidenceSpec) -> GateResult:
         failures.append("headphone_earpiece_isolation.summary.measurement_microphone_label must be specific, not a placeholder")
     if not _specific_measurement_label(summary.get("isolation_fixture_label")):
         failures.append("headphone_earpiece_isolation.summary.isolation_fixture_label must be specific, not a placeholder")
+    capture_backend = summary.get("capture_backend")
+    capture_source_kind = summary.get("capture_source_kind")
+    if capture_backend not in HEADPHONE_CAPTURE_BACKENDS:
+        failures.append("headphone_earpiece_isolation.summary.capture_backend must be declared")
+    if capture_source_kind not in HEADPHONE_CAPTURE_SOURCE_KINDS:
+        failures.append("headphone_earpiece_isolation.summary.capture_source_kind must be declared")
+    if (
+        capture_backend in HEADPHONE_CAPTURE_SOURCE_PAIRS
+        and capture_source_kind != HEADPHONE_CAPTURE_SOURCE_PAIRS[capture_backend]
+    ):
+        failures.append("headphone_earpiece_isolation.summary.capture_backend and capture_source_kind must be a valid pair")
+    if capture_backend == HEADPHONE_GUIDED_CAPTURE_BACKEND:
+        if summary.get("device_path_identity_recorded") is not True:
+            failures.append("headphone_earpiece_isolation.summary.device_path_identity_recorded must be true for guided capture")
+        if not _is_sha256(summary.get("device_path_fingerprint")):
+            failures.append("headphone_earpiece_isolation.summary.device_path_fingerprint must be a SHA-256 hex string for guided capture")
+        device_info = summary.get("device_info")
+        if not isinstance(device_info, dict):
+            failures.append("headphone_earpiece_isolation.summary.device_info must be recorded for guided capture")
+        else:
+            for key in ("measurement_input_device", "source_output_device", "headphone_output_device"):
+                device = device_info.get(key)
+                if not isinstance(device, dict) or not device.get("name") or device.get("hostapi_name") is None:
+                    failures.append(f"headphone_earpiece_isolation.summary.device_info.{key} must include name and hostapi_name")
+        if _is_sha256(summary.get("device_path_fingerprint")):
+            expected_device_fingerprint = _headphone_guided_device_fingerprint(summary)
+            if summary.get("device_path_fingerprint") != expected_device_fingerprint:
+                failures.append("headphone_earpiece_isolation.summary.device_path_fingerprint does not match guided device info and capture channels")
     if missing:
         failures.append(f"missing/passing required headphone-isolation gates: {', '.join(missing)}")
 
@@ -2352,6 +2406,11 @@ def _headphone_summary_from_recomputed(
 ) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "all_artifact_hashes_present": all(len(value) == 64 for value in artifact_hashes.values()),
+        "capture_backend": "external_wav_measurement",
+        "capture_source_kind": "external_listener_ear_wav_measurement",
+        "device_path_fingerprint": "",
+        "device_path_identity_recorded": False,
+        "device_info": {},
         "headphone_device_label": headphone_device_label,
         "isolation_fixture_label": isolation_fixture_label,
         "measurement_kind": HEADPHONE_REQUIRED_MEASUREMENT_KIND,
@@ -2390,6 +2449,9 @@ def _write_headphone_isolation_fixture_report(
     *,
     clone_reference: bool = False,
     forge_hash: bool = False,
+    guided_capture: bool = False,
+    hybrid_capture_source: bool = False,
+    mismatch_guided_fingerprint: bool = False,
     no_isolation: bool = False,
     placeholder_labels: bool = False,
     release_proof: bool = True,
@@ -2460,6 +2522,61 @@ def _write_headphone_isolation_fixture_report(
         measurement_microphone_label=measurement_microphone_label,
         release_proof=release_proof,
     )
+    if guided_capture:
+        device_info = {
+            "headphone_output_device": {
+                "default": False,
+                "default_samplerate": sample_rate_hz,
+                "hostapi": 0,
+                "hostapi_name": "unit-hostapi",
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+                "name": "unit-headphones",
+                "requested_device": 3,
+            },
+            "measurement_input_device": {
+                "default": False,
+                "default_samplerate": sample_rate_hz,
+                "hostapi": 0,
+                "hostapi_name": "unit-hostapi",
+                "max_input_channels": 1,
+                "max_output_channels": 0,
+                "name": "unit-ear-mic",
+                "requested_device": 1,
+            },
+            "source_output_device": {
+                "default": False,
+                "default_samplerate": sample_rate_hz,
+                "hostapi": 0,
+                "hostapi_name": "unit-hostapi",
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+                "name": "unit-source-speaker",
+                "requested_device": 2,
+            },
+        }
+        capture = {
+            "input_channels": 1,
+            "output_channels": 2,
+            "sample_rate_hz": sample_rate_hz,
+        }
+        headphone_summary.update(
+            {
+                "capture_backend": HEADPHONE_GUIDED_CAPTURE_BACKEND,
+                "capture_source_kind": "host_guided_listener_ear_playrec_measurement",
+                "capture": capture,
+                "device_info": device_info,
+                "device_path_identity_recorded": True,
+            }
+        )
+        headphone_summary["device_path_fingerprint"] = _headphone_guided_device_fingerprint(
+            headphone_summary
+        )
+        if mismatch_guided_fingerprint:
+            headphone_summary["device_path_fingerprint"] = "0" * 64
+    if hybrid_capture_source:
+        headphone_summary["capture_backend"] = "external_wav_measurement"
+        headphone_summary["capture_source_kind"] = "host_guided_listener_ear_playrec_measurement"
     if summary_overrides:
         headphone_summary.update(summary_overrides)
     payload = _report(
@@ -2504,6 +2621,9 @@ def self_test() -> None:
         surrogate_headphone = root / "surrogate-headphone.json"
         placeholder_headphone = root / "placeholder-headphone.json"
         short_headphone = root / "short-headphone.json"
+        guided_headphone = root / "guided-headphone.json"
+        mismatched_guided_headphone = root / "mismatched-guided-headphone.json"
+        hybrid_capture_headphone = root / "hybrid-capture-headphone.json"
         qualification_room = root / "qualification-room.json"
         sweep_room = root / "sweep-room.json"
         route_probe_room = root / "route-probe-room.json"
@@ -2605,6 +2725,13 @@ def self_test() -> None:
         )
         _write_headphone_isolation_fixture_report(placeholder_headphone, placeholder_labels=True)
         _write_headphone_isolation_fixture_report(short_headphone, short_duration=True)
+        _write_headphone_isolation_fixture_report(guided_headphone, guided_capture=True)
+        _write_headphone_isolation_fixture_report(
+            mismatched_guided_headphone,
+            guided_capture=True,
+            mismatch_guided_fingerprint=True,
+        )
+        _write_headphone_isolation_fixture_report(hybrid_capture_headphone, hybrid_capture_source=True)
         mismatched_payload = json.loads(mismatched_room.read_text(encoding="utf-8"))
         mismatched_loopback_path = Path(mismatched_payload["artifact_paths"]["room_loopback_recording"])
         _write_unit_pcm16_wav(mismatched_loopback_path, 16_000, 16_000)
@@ -2756,6 +2883,14 @@ def self_test() -> None:
         if not report["summary"]["passed"]:
             raise AssertionError("expected measured headphone isolation to satisfy source suppression fallback")
 
+        guided_headphone_args = argparse.Namespace(**vars(complete_args))
+        guided_headphone_args.room_suppression_report = forged_room
+        guided_headphone_args.headphone_isolation_report = guided_headphone
+        release_results, prototype_results = evaluate(guided_headphone_args)
+        report = build_report(release_results, prototype_results)
+        if not report["summary"]["passed"]:
+            raise AssertionError("expected guided headphone isolation with matching device fingerprint to pass")
+
         forged_headphone_args = argparse.Namespace(**vars(complete_args))
         forged_headphone_args.room_suppression_report = forged_room
         forged_headphone_args.headphone_isolation_report = forged_headphone
@@ -2795,6 +2930,22 @@ def self_test() -> None:
         report = build_report(release_results, prototype_results)
         if report["summary"]["passed"]:
             raise AssertionError("expected too-short headphone measurement artifacts to fail")
+
+        mismatched_guided_headphone_args = argparse.Namespace(**vars(complete_args))
+        mismatched_guided_headphone_args.room_suppression_report = forged_room
+        mismatched_guided_headphone_args.headphone_isolation_report = mismatched_guided_headphone
+        release_results, prototype_results = evaluate(mismatched_guided_headphone_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected mismatched guided headphone device fingerprint to fail")
+
+        hybrid_capture_headphone_args = argparse.Namespace(**vars(complete_args))
+        hybrid_capture_headphone_args.room_suppression_report = forged_room
+        hybrid_capture_headphone_args.headphone_isolation_report = hybrid_capture_headphone
+        release_results, prototype_results = evaluate(hybrid_capture_headphone_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected hybrid headphone capture backend/source metadata to fail")
 
         mismatched_room_args = argparse.Namespace(**vars(complete_args))
         mismatched_room_args.room_suppression_report = mismatched_room

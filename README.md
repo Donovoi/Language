@@ -118,6 +118,7 @@ make real-room-playback-suppression-qualify-device
 make real-room-playback-suppression-sweep-devices
 make real-room-playback-suppression-check
 make headphone-isolation-contract-check
+make headphone-isolation-list-devices
 make audio-eval-purge
 ```
 
@@ -165,6 +166,7 @@ pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-q
 pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-sweep-devices
 pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-check
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-contract-check
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-list-devices
 ```
 
 The June 12, 2026 SoundWire/WASAPI measurements currently fail release: the 48 kHz device
@@ -180,6 +182,14 @@ Run `probe-route` before speech qualification when the route is uncertain. It wr
 `artifacts/audio_eval/runs/real-room-route-probe/route-probe-report.json` with
 `release_proof=false`, a chirp sentinel reference, recording hashes, matched confidence, lag, gain,
 clipping, and route errors. A passing route probe is only a prerequisite diagnostic.
+For the private-listener fallback path, use the guided headphone/earpiece capture after listing
+devices. It records the open-ear source control, isolated source, and translated headphone playback
+with explicit PortAudio device identities, then feeds those WAVs into the release-gated scorer:
+
+```powershell
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --headphone-device-label "measured headphones" --isolation-fixture-label "sealed listener-ear coupler" --measurement-microphone-label "listener-ear measurement mic"
+```
+
 Use `sweep-routes` when the host route itself is uncertain. It writes
 `artifacts/audio_eval/runs/real-room-route-probe-sweep/route-probe-sweep-report.json` with
 `release_proof=false`, every attempted device/sample-rate/input-channel/output-channel route, failed
