@@ -524,9 +524,10 @@ and sub-second WAV bundles are rejected by the release gate. The report is writt
 accepted by the release gate only as `headphone_isolated_not_true_cancellation`, never as true
 room-wide cancellation.
 If host routing remains unreliable, `headphone-isolation-prepare-manual` writes
-`artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-manifest.json` plus the
-source and translated reference WAVs. Record the three listener-ear takes with a phone, USB mic, or
-external recorder; `headphone-isolation-play-manual` can optionally play the
+`artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-manifest.json`,
+`manual-recording-checklist.md`, plus the source and translated reference WAVs. Record the three
+listener-ear takes with a phone, USB mic, or external recorder; `headphone-isolation-play-manual` can
+optionally play the
 manifest references through the source and headphone outputs and writes a non-release
 `manual-playback-log.json`. The playback helper requires explicit source/headphone output devices
 unless `--output-device` or `--allow-default-output` is passed deliberately. Export 16-bit PCM WAV at

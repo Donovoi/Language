@@ -694,10 +694,11 @@ Route sweeps are still triage only. Their reports include `summary.failure_summa
 source and headphones, was too quiet, clipped, or heard audio that did not match the generated
 reference because of processing or routing mismatch.
 When PortAudio routing is the blocker, `headphone-isolation-prepare-manual` creates non-release
-reference WAVs and `manual-recording-manifest.json` for a phone/USB mic/external recorder flow. The
-manual kit remains `release_proof=false`; use `headphone-isolation-score-manual` after collecting
-real listener-ear, 16-bit PCM WAV recordings trimmed within the 500 ms release alignment window
-to write the release-gated `headphone-isolation-report.json`. The optional
+reference WAVs, `manual-recording-manifest.json`, and `manual-recording-checklist.md` for a
+phone/USB mic/external recorder flow. The manual kit remains `release_proof=false`; use
+`headphone-isolation-score-manual` after collecting real listener-ear, 16-bit PCM WAV recordings
+trimmed within the 500 ms release alignment window to write the release-gated
+`headphone-isolation-report.json`. The optional
 `headphone-isolation-play-manual` host helper plays the manifest references through selected outputs
 and writes `manual-playback-log.json` with `release_proof=false`; it is recording assistance only.
 It requires explicit source/headphone output devices unless `--output-device` or

@@ -30,6 +30,7 @@ DEFAULT_ROUTE_PROBE_SWEEP_RUN_ID = "headphone-earpiece-route-probe-sweep"
 DEFAULT_VIRTUAL_LAB_RUN_ID = "headphone-earpiece-virtual-lab"
 DEFAULT_MANUAL_KIT_RUN_ID = "headphone-earpiece-manual-kit"
 DEFAULT_MANUAL_STATUS_REPORT = "manual-recording-status.json"
+DEFAULT_MANUAL_CHECKLIST = "manual-recording-checklist.md"
 DEFAULT_MANUAL_PLAYBACK_LOG = "manual-playback-log.json"
 DEFAULT_MANUAL_IMPORT_LOG = "manual-import-log.json"
 DEFAULT_ADAPTER_ID = "listener_headphone_earpiece_isolation_measurement_v1"
@@ -2295,6 +2296,138 @@ def _capture_reference_tracks(args: argparse.Namespace) -> tuple[np.ndarray, np.
     return source, translated, "same_voice_or_fallback_tts_report", segments
 
 
+def _powershell_quote(value: Any) -> str:
+    text = str(value)
+    return "'" + text.replace("'", "''") + "'"
+
+
+def write_manual_recording_checklist(
+    *,
+    checklist_path: Path,
+    manifest_path: Path,
+    manifest: dict[str, Any],
+) -> None:
+    expected_recordings = manifest.get("expected_recording_paths")
+    expected_recordings = expected_recordings if isinstance(expected_recordings, dict) else {}
+    artifact_paths = manifest.get("artifact_paths")
+    artifact_paths = artifact_paths if isinstance(artifact_paths, dict) else {}
+    quality_bar = manifest.get("quality_bar")
+    quality_bar = quality_bar if isinstance(quality_bar, dict) else {}
+    sample_rate_hz = manifest.get("sample_rate_hz")
+    max_alignment_lag_ms = quality_bar.get("max_alignment_lag_ms", DEFAULT_MAX_ALIGNMENT_LAG_MS)
+    min_source_isolation_db = quality_bar.get("min_source_isolation_db", DEFAULT_MIN_SOURCE_ISOLATION_DB)
+    min_artifact_duration_s = manifest.get("min_artifact_duration_s")
+    score_report_path = manifest.get("score_report_path")
+    manifest_arg = _powershell_quote(manifest_path)
+    score_report_arg = _powershell_quote(score_report_path)
+    lines = [
+        "# Headphone/Earpiece Manual Recording Checklist",
+        "",
+        "This checklist is generated from the manual recording kit. It is operator guidance only.",
+        "The kit and this checklist are not release evidence; only the scored listener-ear WAV report can satisfy the release gate.",
+        "",
+        "## Hardware Setup",
+        "",
+        "1. Use laptop speakers or another non-headphone speaker as the original source output.",
+        "2. Use the headset or earpiece under test as the translated headphone output.",
+        "3. Put a separate recorder or microphone at the listener-ear point inside or flush with the headphone earcup.",
+        "4. Keep the source speaker, measurement mic, and headphone seal fixed between matching takes.",
+        "5. Disable spatial audio, audio enhancements, AGC, noise suppression, echo cancellation, and communications ducking.",
+        "",
+        "## Kit Settings",
+        "",
+        f"- Manifest: `{manifest_path}`",
+        f"- Sample rate: `{sample_rate_hz}` Hz",
+        f"- Minimum take duration: `{min_artifact_duration_s}` seconds",
+        f"- Maximum release alignment lag: `{max_alignment_lag_ms}` ms",
+        f"- Required source isolation: `{min_source_isolation_db}` dB or better",
+        "",
+        "## Takes",
+        "",
+        "| Take | Play This Reference | Record To This WAV | Physical Setup |",
+        "| --- | --- | --- | --- |",
+    ]
+    for step in manifest.get("recording_steps", []):
+        if not isinstance(step, dict):
+            continue
+        lines.append(
+            "| "
+            f"`{step.get('name')}` | "
+            f"`{step.get('play')}` | "
+            f"`{step.get('record_to')}` | "
+            f"{step.get('instruction')} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Recording Rules",
+            "",
+            f"- Export each take as mono 16-bit PCM WAV at `{sample_rate_hz}` Hz.",
+            f"- Trim pre-roll so the played reference begins within `{max_alignment_lag_ms}` ms of the recording start.",
+            "- Do not denoise, normalize, compress, or otherwise repair the recordings.",
+            "- Repeat clipped or distorted takes instead of editing them.",
+            "- The Bluetooth headset microphone is not enough unless it is physically at the listener-ear point.",
+            "",
+            "## Optional Repo Playback Helper",
+            "",
+            "Use this only if the repo should play the references while an external recorder is rolling:",
+            "",
+            "```powershell",
+            f"pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-play-manual --manifest {manifest_arg} --source-output-device SOURCE_OUTPUT_DEVICE --headphone-output-device HEADPHONE_OUTPUT_DEVICE",
+            "```",
+            "",
+            "For a dry run without playback:",
+            "",
+            "```powershell",
+            f"pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-play-manual --manifest {manifest_arg} --dry-run --source-output-device SOURCE_OUTPUT_DEVICE --headphone-output-device HEADPHONE_OUTPUT_DEVICE",
+            "```",
+            "",
+            "## Import External Recorder Files",
+            "",
+            "If the recorder exports different filenames, import them into the manifest paths:",
+            "",
+            "```powershell",
+            f"pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-import-manual --manifest {manifest_arg} --source-open-ear-recording RAW_SOURCE_OPEN.wav --source-isolated-ear-recording RAW_SOURCE_ISOLATED.wav --translated-headphone-recording RAW_TRANSLATED.wav --allow-downmix",
+            "```",
+            "",
+            "Expected manifest recording paths:",
+            "",
+            f"- Source open-ear: `{expected_recordings.get('source_open_ear_recording')}`",
+            f"- Source isolated-ear: `{expected_recordings.get('source_isolated_ear_recording')}`",
+            f"- Translated headphone: `{expected_recordings.get('translated_headphone_recording')}`",
+            "",
+            "Reference files:",
+            "",
+            f"- Source reference: `{artifact_paths.get('source_reference')}`",
+            f"- Translated playback reference: `{artifact_paths.get('translated_playback_reference')}`",
+            "",
+            "## Check And Score",
+            "",
+            "Run the doctor with concrete hardware labels:",
+            "",
+            "```powershell",
+            f"pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-check-manual --manifest {manifest_arg} --headphone-device-label \"REPLACE_WITH_HEADPHONE_MODEL\" --isolation-fixture-label \"REPLACE_WITH_EARCUP_AND_MIC_POSITION\" --measurement-microphone-label \"REPLACE_WITH_MIC_MODEL_AND_POSITION\"",
+            "```",
+            "",
+            "Then score the release-gated report with the same labels:",
+            "",
+            "```powershell",
+            f"pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-score-manual --manifest {manifest_arg} --headphone-device-label \"REPLACE_WITH_HEADPHONE_MODEL\" --isolation-fixture-label \"REPLACE_WITH_EARCUP_AND_MIC_POSITION\" --measurement-microphone-label \"REPLACE_WITH_MIC_MODEL_AND_POSITION\"",
+            "```",
+            "",
+            f"Score report path: `{score_report_path}`",
+            "",
+            "Finally rerun the hard gate:",
+            "",
+            "```powershell",
+            f"python scripts/release_audio_gate.py --json --headphone-isolation-report {score_report_arg}",
+            "```",
+            "",
+        ]
+    )
+    checklist_path.write_text("\n".join(str(line) for line in lines), encoding="utf-8")
+
+
 def prepare_manual_kit(args: argparse.Namespace) -> int:
     run_dir = Path(args.output_dir) / "runs" / args.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -2332,6 +2465,7 @@ def prepare_manual_kit(args: argparse.Namespace) -> int:
     source_isolated_path = run_dir / "source-isolated-ear-recording.wav"
     translated_recording_path = run_dir / "translated-headphone-recording.wav"
     manifest_path = run_dir / "manual-recording-manifest.json"
+    checklist_path = run_dir / DEFAULT_MANUAL_CHECKLIST
     write_mono_wav(source_reference_path, source_reference, int(args.sample_rate_hz))
     write_mono_wav(translated_reference_path, translated_reference, int(args.sample_rate_hz))
     artifact_hashes = {
@@ -2416,6 +2550,7 @@ def prepare_manual_kit(args: argparse.Namespace) -> int:
         ],
         "score_command": score_args,
         "score_report_path": str(Path(args.output_dir) / "runs" / args.score_run_id / "headphone-isolation-report.json"),
+        "operator_checklist_path": str(checklist_path),
         "quality_bar": {
             "min_source_open_dbfs": DEFAULT_MIN_SOURCE_OPEN_DBFS,
             "min_translated_dbfs": DEFAULT_MIN_TRANSLATED_DBFS,
@@ -2435,6 +2570,11 @@ def prepare_manual_kit(args: argparse.Namespace) -> int:
         },
     }
     manifest = json_safe(manifest)
+    write_manual_recording_checklist(
+        checklist_path=checklist_path,
+        manifest_path=manifest_path,
+        manifest=manifest,
+    )
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",
@@ -2446,6 +2586,7 @@ def prepare_manual_kit(args: argparse.Namespace) -> int:
     print(f"wrote source reference to {source_reference_path}")
     print(f"wrote translated reference to {translated_reference_path}")
     print(f"wrote manual recording manifest to {manifest_path}")
+    print(f"wrote manual recording checklist to {checklist_path}")
     return 0
 
 
@@ -3622,8 +3763,46 @@ def self_test() -> int:
                 raise RuntimeError(f"manual recording kit missing {key}")
         if "score-manual" not in manual_manifest.get("score_command", []):
             raise RuntimeError("manual recording kit should include a score-manual command")
-        if not manual_manifest.get("expected_recording_paths", {}).get("source_open_ear_recording"):
+        expected_recording_paths = manual_manifest.get("expected_recording_paths", {})
+        if not expected_recording_paths.get("source_open_ear_recording"):
             raise RuntimeError("manual recording kit should name expected recording paths")
+        manual_checklist_path = manual_manifest_path.parent / DEFAULT_MANUAL_CHECKLIST
+        if manual_manifest.get("operator_checklist_path") != str(manual_checklist_path):
+            raise RuntimeError("manual recording kit should reference the generated checklist")
+        if not manual_checklist_path.exists():
+            raise RuntimeError("manual recording kit should write an operator checklist")
+        manual_checklist = manual_checklist_path.read_text(encoding="utf-8")
+        artifact_paths = manual_manifest.get("artifact_paths", {})
+        score_report_path = manual_manifest.get("score_report_path")
+        manual_manifest_arg = _powershell_quote(manual_manifest_path)
+        score_report_arg = _powershell_quote(score_report_path)
+        for expected_text in (
+            "Headphone/Earpiece Manual Recording Checklist",
+            "not release evidence",
+            "source_open_ear_recording",
+            "source_isolated_ear_recording",
+            "translated_headphone_recording",
+            f"headphone-isolation-play-manual --manifest {manual_manifest_arg}",
+            f"headphone-isolation-import-manual --manifest {manual_manifest_arg}",
+            f"headphone-isolation-check-manual --manifest {manual_manifest_arg}",
+            f"headphone-isolation-score-manual --manifest {manual_manifest_arg}",
+            f"release_audio_gate.py --json --headphone-isolation-report {score_report_arg}",
+            str(score_report_path),
+        ):
+            if expected_text not in manual_checklist:
+                raise RuntimeError(f"manual recording checklist missing {expected_text!r}")
+        for key in (
+            "source_open_ear_recording",
+            "source_isolated_ear_recording",
+            "translated_headphone_recording",
+        ):
+            expected_path = expected_recording_paths.get(key)
+            if not expected_path or str(expected_path) not in manual_checklist:
+                raise RuntimeError(f"manual recording checklist missing expected path for {key}")
+        for key in ("source_reference", "translated_playback_reference"):
+            expected_path = artifact_paths.get(key)
+            if not expected_path or str(expected_path) not in manual_checklist:
+                raise RuntimeError(f"manual recording checklist missing artifact path for {key}")
         playback_dry_run_result = play_manual_references(
             argparse.Namespace(
                 countdown_s=0.0,
