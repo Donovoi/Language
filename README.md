@@ -122,6 +122,7 @@ make headphone-isolation-list-devices
 HEADPHONE_ISOLATION_SWEEP_ROUTES_ARGS='--triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only' make headphone-isolation-sweep-routes
 HEADPHONE_ISOLATION_PROBE_ROUTE_ARGS='--measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2' make headphone-isolation-probe-route
 HEADPHONE_ISOLATION_PREPARE_MANUAL_ARGS='--sample-rate-hz 48000 --playback-gain-db -18' make headphone-isolation-prepare-manual
+HEADPHONE_ISOLATION_IMPORT_MANUAL_ARGS='--source-open-ear-recording RAW_SOURCE_OPEN.wav --source-isolated-ear-recording RAW_SOURCE_ISOLATED.wav --translated-headphone-recording RAW_TRANSLATED.wav --allow-downmix' make headphone-isolation-import-manual
 HEADPHONE_ISOLATION_CHECK_MANUAL_ARGS='--score-warning-only' make headphone-isolation-check-manual
 make headphone-isolation-virtual-lab
 make audio-eval-purge
@@ -175,6 +176,7 @@ pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-list-devices
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-sweep-routes --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-prepare-manual --sample-rate-hz 48000 --playback-gain-db -18
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-import-manual --source-open-ear-recording RAW_SOURCE_OPEN.wav --source-isolated-ear-recording RAW_SOURCE_ISOLATED.wav --translated-headphone-recording RAW_TRANSLATED.wav --allow-downmix
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-check-manual --score-warning-only
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-virtual-lab
 ```
@@ -238,8 +240,12 @@ WAVs named in that manifest with a phone/USB mic. The optional
 and headphone outputs while the external recorder is rolling; it requires explicit output devices
 unless you deliberately pass `--output-device` or `--allow-default-output`. Its
 `manual-playback-log.json` is `release_proof=false` and is not release evidence. Export the
-recordings as mono 16-bit PCM WAV at the kit sample rate, trim pre-roll so playback starts within
-500 ms of recording start, then run
+recordings as 16-bit PCM WAV at the kit sample rate, trim pre-roll so playback starts within
+500 ms of recording start, then either place them at the manifest's expected filenames or run
+`headphone-isolation-import-manual` with the three raw recorder WAV paths. The importer can
+explicitly downmix stereo WAV exports with `--allow-downmix`, writes `manual-import-log.json` with
+`release_proof=false`, rejects reference clones/duplicate takes, and does not do loudness
+normalization, denoising, clipping repair, or score-optimized trimming. Then run
 `headphone-isolation-check-manual` before scoring. It writes
 `manual-recording-status.json` and exits nonzero until the manifest, reference WAVs, and three
 recordings are ready and specific score labels have been supplied. Use `--score-warning-only` before
