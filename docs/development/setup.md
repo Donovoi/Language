@@ -61,9 +61,18 @@ The smoke flow will:
 make smoke-local-demo
 ```
 
+Windows hosts without `make`, Bash, or WSL can run the same gateway smoke baseline with:
+
+```powershell
+pwsh -NoProfile -File scripts/smoke_local_demo.ps1
+```
+
 The smoke script uses non-mutating `mode=FOCUS` preview requests for the session and SSE checks so the result stays deterministic even if the in-memory session was changed earlier during local testing.
 
-If you need a non-default bind address, override `GATEWAY_HOST` and `GATEWAY_PORT` for both the smoke target and `make gateway-run`.
+If you need a non-default bind address, override `GATEWAY_HOST` and `GATEWAY_PORT` for both the
+smoke target and gateway run command. The PowerShell smoke honors the same `GATEWAY_HOST`,
+`GATEWAY_PORT`, `GATEWAY_PYTHON`, `REQUEST_TIMEOUT_SECONDS`, and `SMOKE_START_TIMEOUT_SECONDS`
+environment variables as the Bash smoke, and also exposes matching command parameters.
 
 ```bash
 GATEWAY_HOST=127.0.0.1 GATEWAY_PORT=8010 make smoke-local-demo

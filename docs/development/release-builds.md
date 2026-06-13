@@ -49,6 +49,15 @@ make gateway-package
 make source-bundle
 ```
 
+On Windows hosts without `make`, Bash, or WSL, use the native host smoke equivalent:
+
+```powershell
+pwsh -NoProfile -File scripts/smoke_local_demo.ps1
+```
+
+It honors the same `GATEWAY_HOST`, `GATEWAY_PORT`, `GATEWAY_PYTHON`, `REQUEST_TIMEOUT_SECONDS`, and
+`SMOKE_START_TIMEOUT_SECONDS` environment overrides as `make smoke-local-demo`.
+
 For a release that claims the full realtime audio product goal, add the strict evidence gate after
 the relevant audio-eval reports have been generated:
 

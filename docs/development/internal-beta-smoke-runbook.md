@@ -45,6 +45,15 @@ cd <repository-root>
 make smoke-local-demo
 ```
 
+Windows hosts without `make`, Bash, or WSL can run the equivalent native smoke command:
+
+```powershell
+pwsh -NoProfile -File scripts/smoke_local_demo.ps1
+```
+
+It honors the same `GATEWAY_HOST`, `GATEWAY_PORT`, `GATEWAY_PYTHON`, `REQUEST_TIMEOUT_SECONDS`, and
+`SMOKE_START_TIMEOUT_SECONDS` environment overrides as the Make/Bash path.
+
 That should verify:
 
 - `GET /health`
