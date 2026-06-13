@@ -12,7 +12,8 @@ This runbook separates two useful but different activities:
 Use this when changing scorer logic, artifact handling, reports, or release-gate rejection behavior:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-virtual-lab
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action virtual-lab -Python $env:LANGUAGE_PYTHON
 python scripts/release_audio_gate.py --headphone-isolation-report artifacts/audio_eval/runs/headphone-earpiece-virtual-lab/headphone-virtual-lab-report.json --json *> artifacts/audio_eval/runs/headphone-earpiece-virtual-lab/release-gate-virtual-rejection.json
 if ($LASTEXITCODE -eq 0) { throw "expected release gate to reject the virtual listener-ear report" }
 "release gate rejected the virtual listener-ear report as expected"
@@ -65,7 +66,8 @@ The microphone must capture three states from the same listener-ear position:
 Device numbers can shift. Always list devices first:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-list-devices
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action list-devices -Python $env:LANGUAGE_PYTHON
 ```
 
 On the current host snapshot, likely candidates were:
@@ -79,6 +81,23 @@ For final evidence, prefer a measurement mic physically inside/at the earcup. Us
 for route triage unless it is physically positioned at the listener-ear point. The `17` examples below
 are the current-host improvised path with the laptop mic array; replace `17` and the microphone label
 with the real USB/lav/recorder input when you have that hardware.
+
+## Windows Host-Local Wrapper
+
+For Windows physical-audio work, prefer the host-local wrapper because Docker cannot reliably expose
+Bluetooth/WASAPI/USB audio routes. The wrapper creates `.venv-audio-local/`, installs `numpy`, and
+installs `sounddevice` only for commands that touch host devices:
+
+```powershell
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action self-test -Python $env:LANGUAGE_PYTHON
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action list-devices -Python $env:LANGUAGE_PYTHON
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action prepare-manual -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --playback-gain-db -18
+```
+
+Use `-RecreateVenv` if dependency installation gets into a bad state. A passing virtual lab or route
+probe is still not release evidence; the release gate needs a physical listener-ear recording scored
+by `score-manual` or `capture`.
 
 ## Hardware Setup Checklist
 
@@ -124,7 +143,8 @@ Sweep uncertain routes first. This command is expected to produce a triage repor
 evidence, and `--score-warning-only` is acceptable here because the goal is to preserve diagnostics:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-sweep-routes --triple 17:14:16 --sample-rate-hz 48000 --channel-config 1:2 --playback-gain-db -18 --score-warning-only
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action sweep-routes -Python $env:LANGUAGE_PYTHON --triple 17:14:16 --sample-rate-hz 48000 --channel-config 1:2 --playback-gain-db -18 --score-warning-only
 ```
 
 Use the sweep's `candidate_attempt` only to choose the next single route. Then probe that exact route.
@@ -140,7 +160,8 @@ source, try another host API/device triple, or use a USB/wired listener-ear mic.
 count failed quality gates such as same-device source/headphone routing.
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device 17 --source-output-device 14 --headphone-output-device 16 --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --playback-gain-db -18
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action probe-route -Python $env:LANGUAGE_PYTHON --measurement-input-device 17 --source-output-device 14 --headphone-output-device 16 --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --playback-gain-db -18
 ```
 
 If it fails:
@@ -154,8 +175,9 @@ If Bluetooth, PortAudio, or Windows processing keeps the guided route from passi
 manual external-recorder path instead of lowering thresholds:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-prepare-manual --sample-rate-hz 48000 --playback-gain-db -18
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-check-manual --score-warning-only
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action prepare-manual -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --playback-gain-db -18
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action check-manual -Python $env:LANGUAGE_PYTHON --score-warning-only
 ```
 
 This writes release-derived playback references, a JSON manifest, and a human-readable recording
@@ -170,7 +192,8 @@ checklist under
 Optionally dry-run the manifest playback plan before touching the recorder:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-play-manual --dry-run --source-output-device 14 --headphone-output-device 16
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action play-manual -Python $env:LANGUAGE_PYTHON --dry-run --source-output-device 14 --headphone-output-device 16
 ```
 
 For a minimal hardware setup, use:
@@ -203,7 +226,8 @@ If you want the repo to play the references instead of using an external media p
 phone/USB recorder for each prompted take and run:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-play-manual --source-output-device 14 --headphone-output-device 16
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action play-manual -Python $env:LANGUAGE_PYTHON --source-output-device 14 --headphone-output-device 16
 ```
 
 The playback helper requires explicit source/headphone output devices, or one deliberate
@@ -217,7 +241,8 @@ If your recorder exports arbitrary filenames, import them into the manifest's ex
 checking or scoring:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-import-manual --source-open-ear-recording RAW_SOURCE_OPEN.wav --source-isolated-ear-recording RAW_SOURCE_ISOLATED.wav --translated-headphone-recording RAW_TRANSLATED.wav --allow-downmix
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action import-manual -Python $env:LANGUAGE_PYTHON --source-open-ear-recording RAW_SOURCE_OPEN.wav --source-isolated-ear-recording RAW_SOURCE_ISOLATED.wav --translated-headphone-recording RAW_TRANSLATED.wav --allow-downmix
 ```
 
 `--allow-downmix` is only a channel-format policy for stereo recorder exports. The importer does not
@@ -233,27 +258,39 @@ listener-ear recordings meet the minimum duration, and the score labels are no l
 `artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.json`:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-check-manual --headphone-device-label "Sony WH-1000XM6 over-ear headphones" --isolation-fixture-label "WH-1000XM6 left earcup sealed over listener-ear microphone" --measurement-microphone-label "USB lavalier microphone capsule flush with left earcup listener-ear position"
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+$headphoneLabel = "REPLACE_WITH_HEADPHONE_MODEL"
+$fixtureLabel = "REPLACE_WITH_EARCUP_AND_MIC_POSITION"
+$microphoneLabel = "REPLACE_WITH_MIC_MODEL_AND_POSITION"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action check-manual -Python $env:LANGUAGE_PYTHON --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel
 ```
 
 Only score the real recordings after this command reports ready. The manifest-driven scorer reuses
 the reference and recording paths from the kit and writes the release-gated headphone isolation report:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-score-manual --headphone-device-label "Sony WH-1000XM6 over-ear headphones" --isolation-fixture-label "WH-1000XM6 left earcup sealed over listener-ear microphone" --measurement-microphone-label "USB lavalier microphone capsule flush with left earcup listener-ear position"
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+$headphoneLabel = "REPLACE_WITH_HEADPHONE_MODEL"
+$fixtureLabel = "REPLACE_WITH_EARCUP_AND_MIC_POSITION"
+$microphoneLabel = "REPLACE_WITH_MIC_MODEL_AND_POSITION"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action score-manual -Python $env:LANGUAGE_PYTHON --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel
 ```
 
 The manual kit itself is not release evidence: it has `release_proof=false`. Only the scored report at
 `artifacts/audio_eval/runs/headphone-earpiece-isolation/headphone-isolation-report.json` can satisfy
-the release gate, and only if its WAV-derived metrics pass. Replace every `placeholder REPLACE_WITH_*`
-label with specific hardware and fixture text before treating the score as release evidence. Use the
+the release gate, and only if its WAV-derived metrics pass. Replace every `REPLACE_WITH_*` variable
+value with specific hardware and fixture text before treating the score as release evidence. Use the
 lower-level `headphone-isolation-score` command only when intentionally overriding manifest paths or
 thresholds for diagnosis.
 
 After the probe passes, run guided capture:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device 17 --source-output-device 14 --headphone-output-device 16 --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --playback-gain-db -18 --headphone-device-label "Sony WH-1000XM6 over-ear headphones" --isolation-fixture-label "WH-1000XM6 left earcup sealed over built-in laptop microphone array" --measurement-microphone-label "built-in laptop microphone array used as improvised listener-ear microphone"
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+$headphoneLabel = "REPLACE_WITH_HEADPHONE_MODEL"
+$fixtureLabel = "REPLACE_WITH_EARCUP_AND_MIC_POSITION"
+$microphoneLabel = "REPLACE_WITH_MIC_MODEL_AND_POSITION"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action capture -Python $env:LANGUAGE_PYTHON --measurement-input-device 17 --source-output-device 14 --headphone-output-device 16 --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --playback-gain-db -18 --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel
 ```
 
 Then run the release gate:

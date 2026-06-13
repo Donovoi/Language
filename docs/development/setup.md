@@ -76,16 +76,32 @@ pwsh -NoProfile -File scripts/check_local.ps1
 Pass `-SkipFlutter` only for a partial host run when Flutter is not installed. The plain command
 refreshes `services/gateway/.venv` like `make check`; pass `-UseExistingGatewayVenv` only when you
 deliberately want a faster reuse run. The gateway currently supports Python `>=3.11,<3.14`; pass
-`-Python <path-to-supported-python>` if the host's default `python` is outside that range.
+`-Python $env:LANGUAGE_PYTHON` after setting it to a supported interpreter path if the host's default
+`python` is outside that range.
 For local source and gateway package artifacts on Windows:
 
 ```powershell
-pwsh -NoProfile -File scripts/package_local.ps1 -Python <path-to-supported-python>
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+pwsh -NoProfile -File scripts/package_local.ps1 -Python $env:LANGUAGE_PYTHON
 ```
 
 That command refreshes `services/gateway/.venv` and rebuilds `services/gateway/dist/`; use
 `-Action source-bundle` for source archives only. It writes a scope-specific local artifact handoff
 manifest and `SHA256SUMS.txt` under `dist/local-release-artifacts/`.
+
+For Windows host-audio headphone/earpiece isolation work, use the local wrapper instead of Docker so
+PortAudio can see Bluetooth, WASAPI, USB, and built-in microphone devices directly:
+
+```powershell
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action self-test -Python $env:LANGUAGE_PYTHON
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action virtual-lab -Python $env:LANGUAGE_PYTHON
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action prepare-manual -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --playback-gain-db -18
+```
+
+The wrapper creates `.venv-audio-local/` and installs only the packages needed for the selected
+action. Device-listing, route-probe, sweep, capture, and manual-playback actions also install
+`sounddevice`; pure manifest/scoring actions need only `numpy`.
 
 The smoke script uses non-mutating `mode=FOCUS` preview requests for the session and SSE checks so the result stays deterministic even if the in-memory session was changed earlier during local testing.
 
