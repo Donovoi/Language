@@ -97,11 +97,12 @@ Use `-SkipFlutter` only for partial host validation when Flutter is not installe
 replacement for `make check`. The plain command refreshes `services/gateway/.venv` like the Make
 target; pass `-UseExistingGatewayVenv` only when you deliberately want to reuse the current venv.
 The gateway currently supports Python `>=3.11,<3.14`; if `python` points elsewhere, pass
-`-Python <path-to-python-3.11-through-3.13>`.
+`-Python $env:LANGUAGE_PYTHON` after setting it to a supported interpreter path.
 Windows local source and gateway package artifacts can be built with:
 
 ```powershell
-pwsh -NoProfile -File scripts/package_local.ps1 -Python <path-to-python-3.11-through-3.13>
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+pwsh -NoProfile -File scripts/package_local.ps1 -Python $env:LANGUAGE_PYTHON
 ```
 
 That command deletes and recreates `services/gateway/dist/` and refreshes
@@ -220,15 +221,30 @@ pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-same-voice-candidate-
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-same-voice-candidate-check --manifest artifacts/audio_eval/runs/same-voice-candidate/same-voice-candidate-manifest.json
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-speechbrain-voice-similarity-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-speechbrain-voice-similarity-check --candidate-report artifacts/audio_eval/runs/same-voice-candidate/voice-clone-report.json --score-warning-only
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-contract-check
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-list-devices
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-sweep-routes --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-prepare-manual --sample-rate-hz 48000 --playback-gain-db -18
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-import-manual --source-open-ear-recording RAW_SOURCE_OPEN.wav --source-isolated-ear-recording RAW_SOURCE_ISOLATED.wav --translated-headphone-recording RAW_TRANSLATED.wav --allow-downmix
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-check-manual --score-warning-only
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-virtual-lab
 ```
+
+For the private-listener headphone/earpiece fallback on Windows, prefer the host-local wrapper because
+PortAudio and Bluetooth devices need direct access to the Windows audio stack:
+
+```powershell
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+$headphoneLabel = "REPLACE_WITH_HEADPHONE_MODEL"
+$fixtureLabel = "REPLACE_WITH_EARCUP_AND_MIC_POSITION"
+$microphoneLabel = "REPLACE_WITH_MIC_MODEL_AND_POSITION"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action self-test -Python $env:LANGUAGE_PYTHON
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action list-devices -Python $env:LANGUAGE_PYTHON
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action sweep-routes -Python $env:LANGUAGE_PYTHON --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action probe-route -Python $env:LANGUAGE_PYTHON --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action prepare-manual -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --playback-gain-db -18
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action import-manual -Python $env:LANGUAGE_PYTHON --source-open-ear-recording RAW_SOURCE_OPEN.wav --source-isolated-ear-recording RAW_SOURCE_ISOLATED.wav --translated-headphone-recording RAW_TRANSLATED.wav --allow-downmix
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action check-manual -Python $env:LANGUAGE_PYTHON --score-warning-only
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action score-manual -Python $env:LANGUAGE_PYTHON --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action virtual-lab -Python $env:LANGUAGE_PYTHON
+```
+
+The wrapper creates `.venv-audio-local/`, installs `numpy`, and installs `sounddevice` only for
+actions that touch host audio devices. Pass `-RecreateVenv` when you want to rebuild that small
+environment from scratch.
 
 The June 12, 2026 SoundWire/WASAPI measurements currently fail release: the 48 kHz device
 qualification recorded audible calibration but failed reference fidelity
@@ -260,7 +276,8 @@ identities, then feeds those WAVs into the release-gated scorer:
 Development-only virtual listener-ear lab:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-virtual-lab
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action virtual-lab -Python $env:LANGUAGE_PYTHON
 python scripts/release_audio_gate.py --headphone-isolation-report artifacts/audio_eval/runs/headphone-earpiece-virtual-lab/headphone-virtual-lab-report.json --json *> artifacts/audio_eval/runs/headphone-earpiece-virtual-lab/release-gate-virtual-rejection.json
 if ($LASTEXITCODE -eq 0) { throw "expected release gate to reject the virtual listener-ear report" }
 "release gate rejected the virtual listener-ear report as expected"
@@ -270,9 +287,13 @@ The virtual lab should pass its own scorer gates and fail the release gate. For 
 evidence, use real device indexes from `headphone-isolation-list-devices`, then run:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-sweep-routes --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --headphone-device-label "placeholder REPLACE_WITH_HEADPHONE_MODEL" --isolation-fixture-label "placeholder REPLACE_WITH_EARCUP_AND_MIC_POSITION" --measurement-microphone-label "placeholder REPLACE_WITH_MIC_MODEL_AND_POSITION"
+$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
+$headphoneLabel = "REPLACE_WITH_HEADPHONE_MODEL"
+$fixtureLabel = "REPLACE_WITH_EARCUP_AND_MIC_POSITION"
+$microphoneLabel = "REPLACE_WITH_MIC_MODEL_AND_POSITION"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action sweep-routes -Python $env:LANGUAGE_PYTHON --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action probe-route -Python $env:LANGUAGE_PYTHON --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action capture -Python $env:LANGUAGE_PYTHON --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel
 ```
 
 If you let `sweep-routes` try multiple sample rates or channel configs, copy the winning
