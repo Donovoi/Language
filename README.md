@@ -122,6 +122,7 @@ make headphone-isolation-list-devices
 HEADPHONE_ISOLATION_SWEEP_ROUTES_ARGS='--triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only' make headphone-isolation-sweep-routes
 HEADPHONE_ISOLATION_PROBE_ROUTE_ARGS='--measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2' make headphone-isolation-probe-route
 HEADPHONE_ISOLATION_PREPARE_MANUAL_ARGS='--sample-rate-hz 48000 --playback-gain-db -18' make headphone-isolation-prepare-manual
+HEADPHONE_ISOLATION_CHECK_MANUAL_ARGS='--score-warning-only' make headphone-isolation-check-manual
 make headphone-isolation-virtual-lab
 make audio-eval-purge
 ```
@@ -174,6 +175,7 @@ pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-list-devices
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-sweep-routes --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-prepare-manual --sample-rate-hz 48000 --playback-gain-db -18
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-check-manual --score-warning-only
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-virtual-lab
 ```
 
@@ -232,8 +234,12 @@ instead. It writes `source-reference.wav`, `translated-playback-reference.wav`, 
 `manual-recording-manifest.json` under
 `artifacts/audio_eval/runs/headphone-earpiece-manual-kit/`; record the three expected listener-ear
 WAVs named in that manifest with a phone/USB mic, export mono 16-bit PCM WAV at the kit sample rate,
-trim pre-roll so playback starts within 500 ms of recording start, then run `headphone-isolation-score`
-with specific headphone, microphone, and earcup-position labels.
+trim pre-roll so playback starts within 500 ms of recording start, then run
+`headphone-isolation-check-manual` before scoring. It writes
+`manual-recording-status.json` and exits nonzero until the manifest, reference WAVs, and three
+recordings are ready and specific score labels have been supplied. Use `--score-warning-only` before
+recording if you only want a status report. After it reports score-ready, run
+`headphone-isolation-score` with the same headphone, microphone, and earcup-position labels.
 
 The virtual lab is development evidence only: it writes
 `artifacts/audio_eval/runs/headphone-earpiece-virtual-lab/headphone-virtual-lab-report.json` with
