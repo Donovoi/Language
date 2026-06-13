@@ -681,13 +681,14 @@ pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-prepare-manu
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-check-manual --score-warning-only
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-sweep-routes --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --headphone-device-label "placeholder REPLACE_WITH_HEADPHONE_MODEL" --isolation-fixture-label "placeholder REPLACE_WITH_EARCUP_AND_MIC_POSITION" --measurement-microphone-label "placeholder REPLACE_WITH_MIC_MODEL_AND_POSITION"
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --preflight-report artifacts/audio_eval/runs/headphone-earpiece-preflight/headphone-preflight-report.json --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --headphone-device-label "placeholder REPLACE_WITH_HEADPHONE_MODEL" --isolation-fixture-label "placeholder REPLACE_WITH_EARCUP_AND_MIC_POSITION" --measurement-microphone-label "placeholder REPLACE_WITH_MIC_MODEL_AND_POSITION"
 ```
 
-The guided capture path uses PortAudio `playrec` for all three takes, records source-open and
-source-isolated with the same source output/reference/gain/sample-rate/channel route, records
-translated playback through the headphone output, and embeds device snapshots, a device-path
-fingerprint, per-take levels, clipping counts, hashes, and the same non-tamper-proof provenance
+The guided capture path uses PortAudio `playrec` for all three takes, requires a selected-route
+preflight report, records source-open and source-isolated with the same source output/reference/gain/
+sample-rate/channel route, records translated playback through the headphone output, and embeds
+device snapshots, a device-path fingerprint, per-take levels, clipping counts, hashes, and the same
+non-tamper-proof provenance
 boundary as the other host audio evidence.
 Route sweeps are still triage only. Their reports include `summary.failure_summary` and per-attempt
 `diagnosis` entries so operators can tell whether the route failed to open, used the same output for

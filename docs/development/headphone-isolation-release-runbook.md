@@ -49,9 +49,9 @@ Acceptable measurement setups:
 - Good: an external recorder/phone records WAVs at the listener-ear point, then
   `scripts/run_headphone_isolation_check.py score-manual` validates the manifest and scores those
   WAV files.
-- Improvised: place one headphone earcup over the laptop microphone array so the laptop mic acts as
-  the listener-ear mic. This can be tried with the current hardware but is not as trustworthy as a
-  real mic inside the earcup.
+- Triage only: place one headphone earcup over the laptop microphone array to check route behavior.
+  The built-in laptop mic path does not unlock guided capture or release evidence; use a real
+  listener-ear mic/recorder for scored release proof.
 
 The microphone must capture three states from the same listener-ear position:
 
@@ -69,7 +69,8 @@ Device numbers can shift. Always list devices first:
 $env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action list-devices -Python $env:LANGUAGE_PYTHON
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --confirm-physical-listener-ear-input
+# If the report finds a capture-ready external listener-ear input, run its generated
+# confirm_physical_input_preflight command. It includes --selected-route.
 ```
 
 On the current host snapshot, likely candidates were:
@@ -88,6 +89,8 @@ The preflight command does not play or record audio. It writes
 `headphone-preflight-report.md` with a device inventory fingerprint, likely input/output roles,
 route candidates, and a recommendation to try guided capture after physical input confirmation or
 switch to the manual external recorder path. It always remains `release_proof=false`.
+Guided host `capture` requires the generated `--preflight-report` binding so the scored PortAudio
+evidence is tied to the selected, physically confirmed route.
 
 ## Windows Host-Local Wrapper
 
@@ -100,7 +103,7 @@ $env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action self-test -Python $env:LANGUAGE_PYTHON
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action list-devices -Python $env:LANGUAGE_PYTHON
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --confirm-physical-listener-ear-input
+# Follow the generated confirm/capture commands only when preflight reports a capture-ready route.
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action prepare-manual -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --playback-gain-db -18
 ```
 
@@ -114,9 +117,8 @@ Before running the physical commands:
 
 1. Pair or connect the WH-1000XM6 headphones and confirm Windows is using the stereo headphone output,
    not a hands-free/headset call profile, for translated playback.
-2. Use a separate measurement input for release evidence: a USB/lavalier mic at the earcup is best. If
-   you only have the laptop mic array, place one headphone earcup directly over the laptop mic opening
-   and keep that placement unchanged for the isolated-source and translated-playback takes.
+2. Use a separate measurement input for release evidence: a USB/lavalier mic at the earcup is best.
+   If you only have the laptop mic array, use it for `route_probe_triage_only`, not final capture.
 3. Do not use the WH-1000XM6 headset microphone as release evidence unless the mic is physically
    positioned at the listener-ear acoustic point. The headset mic mostly hears the room and Windows
    voice processing, so it is useful for route triage but not final isolation proof.
@@ -131,10 +133,9 @@ Before running the physical commands:
 7. Keep the room quiet during the short probe and capture takes. Do not move the mic, source speaker,
    or headphone seal between the matching source-open and source-isolated takes.
 8. Run `preflight` before `sweep-routes` or `probe-route`. If you are using the laptop mic array,
-   place one headphone earcup directly over the laptop mic opening, keep that position fixed, and
-   rerun preflight with `--confirm-physical-listener-ear-input` before guided capture. If preflight
-   still recommends `manual_external_recorder_preferred` or `manual_external_recorder_required`, use
-   the manual kit unless you have a specific route-triage reason to keep testing guided capture.
+   place one headphone earcup directly over the laptop mic opening and use the generated
+   `route_probe_triage_only` command only. If preflight does not report a capture-ready route, use
+   the manual kit or connect a real listener-ear input before guided capture.
 
 When a sweep or probe fails, use the diagnosis before changing hardware:
 
@@ -297,14 +298,15 @@ value with specific hardware and fixture text before treating the score as relea
 lower-level `headphone-isolation-score` command only when intentionally overriding manifest paths or
 thresholds for diagnosis.
 
-After the probe passes, run guided capture:
+After preflight reports a capture-ready selected route and the probe passes, run guided capture with
+the generated preflight report:
 
 ```powershell
 $env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
 $headphoneLabel = "REPLACE_WITH_HEADPHONE_MODEL"
 $fixtureLabel = "REPLACE_WITH_EARCUP_AND_MIC_POSITION"
 $microphoneLabel = "REPLACE_WITH_MIC_MODEL_AND_POSITION"
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action capture -Python $env:LANGUAGE_PYTHON --measurement-input-device 17 --source-output-device 14 --headphone-output-device 16 --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --playback-gain-db -18 --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action capture -Python $env:LANGUAGE_PYTHON --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --preflight-report artifacts/audio_eval/runs/headphone-earpiece-preflight/headphone-preflight-report.json --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --playback-gain-db -18 --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel
 ```
 
 Then run the release gate:

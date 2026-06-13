@@ -740,6 +740,145 @@ def display_preflight_route_triples(
     return [selected_candidate] + displayed
 
 
+def find_preflight_candidate(
+    candidates: list[Any],
+    selected_route: tuple[str, str, str],
+) -> dict[str, Any] | None:
+    selected_key = route_triple_key(selected_route)
+    for item in candidates:
+        if isinstance(item, dict) and route_triple_key(item) == selected_key:
+            return item
+    return None
+
+
+def preflight_candidate_device_info(candidate: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        "measurement_input_device": {
+            "hostapi": candidate.get("input_hostapi"),
+            "hostapi_name": candidate.get("input_hostapi_name"),
+            "index": candidate.get("input_device"),
+            "name": candidate.get("input_name"),
+        },
+        "source_output_device": {
+            "hostapi": candidate.get("source_hostapi"),
+            "hostapi_name": candidate.get("source_hostapi_name"),
+            "index": candidate.get("source_output_device"),
+            "name": candidate.get("source_name"),
+        },
+        "headphone_output_device": {
+            "hostapi": candidate.get("headphone_hostapi"),
+            "hostapi_name": candidate.get("headphone_hostapi_name"),
+            "index": candidate.get("headphone_output_device"),
+            "name": candidate.get("headphone_name"),
+        },
+    }
+
+
+def preflight_binding_device_mismatches(
+    binding: dict[str, Any],
+    device_info: dict[str, Any],
+) -> list[str]:
+    mismatches: list[str] = []
+    preflight_device_info = binding.get("preflight_device_info", {})
+    if not isinstance(preflight_device_info, dict):
+        return ["preflight binding does not include preflight_device_info"]
+    for key in ("measurement_input_device", "source_output_device", "headphone_output_device"):
+        expected = preflight_device_info.get(key)
+        current = device_info.get(key)
+        if not isinstance(expected, dict) or not isinstance(current, dict):
+            mismatches.append(f"{key} identity missing from preflight binding or current capture")
+            continue
+        for field in ("index", "hostapi", "hostapi_name", "name"):
+            if str(expected.get(field)) != str(current.get(field)):
+                mismatches.append(
+                    f"{key}.{field} changed since preflight: {expected.get(field)!r} != {current.get(field)!r}"
+                )
+    return mismatches
+
+
+def capture_preflight_binding(
+    *,
+    preflight_report: Path,
+    measurement_input_device: int | str | None,
+    source_output_device: int | str | None,
+    headphone_output_device: int | str | None,
+    sample_rate_hz: int,
+    input_channels: int,
+    output_channels: int,
+) -> dict[str, Any]:
+    report_path = Path(preflight_report)
+    if not report_path.exists():
+        raise ValueError(f"--preflight-report does not exist: {report_path}")
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if not isinstance(report, dict):
+        raise ValueError("--preflight-report must contain a JSON object")
+    summary = report.get("summary", {})
+    benchmark = report.get("benchmarks", {}).get("headphone_earpiece_preflight", {})
+    candidates = benchmark.get("candidate_route_triples", []) if isinstance(benchmark, dict) else []
+    selected_route = route_triple_key(
+        {
+            "input_device": measurement_input_device,
+            "source_output_device": source_output_device,
+            "headphone_output_device": headphone_output_device,
+        }
+    )
+    selected_route_arg = route_triple_arg(selected_route)
+    selected_candidate = find_preflight_candidate(candidates if isinstance(candidates, list) else [], selected_route)
+    failures: list[str] = []
+    if report.get("fixture_kind") != PREFLIGHT_FIXTURE_KIND:
+        failures.append("fixture_kind is not headphone preflight")
+    if report.get("measurement_kind") != PREFLIGHT_MEASUREMENT_KIND:
+        failures.append("measurement_kind is not headphone preflight")
+    if report.get("release_proof") is not False or summary.get("release_proof") is not False:
+        failures.append("preflight report must keep release_proof=false")
+    if not bool(summary.get("planning_passed")):
+        failures.append("preflight planning did not pass")
+    if summary.get("recommended_path") != "guided_capture_possible":
+        failures.append("preflight recommended_path is not guided_capture_possible")
+    if not bool(summary.get("physical_listener_ear_input_confirmed")):
+        failures.append("preflight does not confirm physical listener-ear input")
+    if not bool(summary.get("selected_route_requested")):
+        failures.append("preflight was not bound to a selected route")
+    if not bool(summary.get("selected_route_found")):
+        failures.append("selected route was not found in preflight inventory")
+    if not bool(summary.get("selected_route_capture_ready")):
+        failures.append("selected route is not capture-ready")
+    if str(summary.get("selected_route") or "") != selected_route_arg:
+        failures.append(
+            f"capture devices {selected_route_arg} do not match preflight selected_route {summary.get('selected_route')}"
+        )
+    if int(summary.get("sample_rate_hz") or 0) != int(sample_rate_hz):
+        failures.append("capture sample rate does not match preflight")
+    if int(summary.get("input_channels") or 0) != int(input_channels):
+        failures.append("capture input channels do not match preflight")
+    if int(summary.get("output_channels") or 0) != int(output_channels):
+        failures.append("capture output channels do not match preflight")
+    if selected_candidate is None:
+        failures.append("selected route candidate is not present in preflight report")
+    elif not preflight_route_capture_ready(selected_candidate):
+        failures.append("selected route candidate is not capture-ready by role labels")
+    if failures:
+        raise ValueError("invalid guided capture preflight binding: " + "; ".join(failures))
+    return {
+        "bound": True,
+        "candidate_rank": selected_candidate.get("rank") if isinstance(selected_candidate, dict) else None,
+        "candidate_score": selected_candidate.get("preflight_route_score") if isinstance(selected_candidate, dict) else None,
+        "input_channels": int(input_channels),
+        "inventory_fingerprint": summary.get("inventory_fingerprint"),
+        "output_channels": int(output_channels),
+        "physical_listener_ear_input_confirmed": True,
+        "preflight_device_info": preflight_candidate_device_info(selected_candidate),
+        "planning_passed": True,
+        "preflight_generated_at_unix": report.get("generated_at_unix"),
+        "preflight_report_path": str(report_path),
+        "preflight_report_sha256": sha256_file(report_path),
+        "recommended_path": summary.get("recommended_path"),
+        "sample_rate_hz": int(sample_rate_hz),
+        "selected_route": selected_route_arg,
+        "selected_route_capture_ready": True,
+    }
+
+
 def preflight_quality_gates(summary: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {
@@ -916,6 +1055,7 @@ def preflight_command_hints(
         hints["capture"] = (
             f"{base} -Action capture {python} --measurement-input-device {input_device} "
             f"--source-output-device {source_device} --headphone-output-device {headphone_device} "
+            f"--preflight-report {powershell_quote_arg(Path(args.output_dir) / 'runs' / args.run_id / DEFAULT_PREFLIGHT_REPORT)} "
             f"--sample-rate-hz {int(args.sample_rate_hz)} --input-channels {int(args.input_channels)} "
             f"--output-channels {int(args.output_channels)} --playback-gain-db {float(DEFAULT_PLAYBACK_GAIN_DB):g} "
             "--headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel "
@@ -2577,6 +2717,10 @@ def quality_gates(summary: dict[str, Any], args: argparse.Namespace) -> list[dic
     claim = summary["suppression_claim"]
     capture_backend = str(summary.get("capture_backend", ""))
     capture_source_kind = str(summary.get("capture_source_kind", ""))
+    capture_preflight_binding = summary.get("capture_preflight_binding", {})
+    capture_preflight_binding = (
+        capture_preflight_binding if isinstance(capture_preflight_binding, dict) else {}
+    )
     device_identity = bool(summary.get("device_path_identity_recorded"))
     device_fingerprint = str(summary.get("device_path_fingerprint", ""))
     identity_fingerprint = str(summary.get("measurement_identity_fingerprint", ""))
@@ -2635,6 +2779,30 @@ def quality_gates(summary: dict[str, Any], args: argparse.Namespace) -> list[dic
                 "capture_source_kind": capture_source_kind,
                 "device_path_fingerprint": device_fingerprint,
                 "device_path_identity_recorded": device_identity,
+            },
+        },
+        {
+            "name": "headphone_guided_capture_preflight_bound",
+            "passed": capture_backend != CAPTURE_BACKEND_PORTAUDIO
+            or (
+                bool(capture_preflight_binding.get("bound"))
+                and bool(capture_preflight_binding.get("planning_passed"))
+                and capture_preflight_binding.get("recommended_path") == "guided_capture_possible"
+                and bool(capture_preflight_binding.get("physical_listener_ear_input_confirmed"))
+                and bool(capture_preflight_binding.get("selected_route_capture_ready"))
+                and len(str(capture_preflight_binding.get("preflight_report_sha256", ""))) == 64
+                and len(str(capture_preflight_binding.get("capture_device_path_fingerprint", ""))) == 64
+            ),
+            "threshold": (
+                "guided PortAudio capture evidence must bind to a passing preflight report and selected route"
+            ),
+            "value": {
+                "capture_backend": capture_backend,
+                "preflight_bound": capture_preflight_binding.get("bound"),
+                "preflight_report_sha256": capture_preflight_binding.get("preflight_report_sha256"),
+                "capture_device_path_fingerprint": capture_preflight_binding.get("capture_device_path_fingerprint"),
+                "recommended_path": capture_preflight_binding.get("recommended_path"),
+                "selected_route": capture_preflight_binding.get("selected_route"),
             },
         },
         {
@@ -2776,6 +2944,15 @@ def score(args: argparse.Namespace) -> int:
     headphone_device_label = str(args.headphone_device_label)
     isolation_fixture_label = str(args.isolation_fixture_label)
     measurement_microphone_label = str(args.measurement_microphone_label)
+    capture_context = getattr(args, "capture_context", {})
+    capture_context = capture_context if isinstance(capture_context, dict) else {}
+    capture_preflight_binding = capture_context.get(
+        "preflight_binding",
+        getattr(args, "capture_preflight_binding", {}),
+    )
+    capture_preflight_binding = (
+        capture_preflight_binding if isinstance(capture_preflight_binding, dict) else {}
+    )
     identity_fingerprint = measurement_identity_fingerprint(
         artifact_hashes=artifact_hashes,
         headphone_device_label=headphone_device_label,
@@ -2786,6 +2963,7 @@ def score(args: argparse.Namespace) -> int:
     summary = {
         "all_artifact_hashes_present": all(len(value) == 64 for value in artifact_hashes.values()),
         "capture_backend": str(getattr(args, "capture_backend", CAPTURE_BACKEND_EXTERNAL)),
+        "capture_preflight_binding": capture_preflight_binding,
         "capture_source_kind": str(getattr(args, "capture_source_kind", CAPTURE_SOURCE_KIND_EXTERNAL)),
         "device_path_fingerprint": str(getattr(args, "device_path_fingerprint", "")),
         "device_path_identity_recorded": bool(getattr(args, "device_path_identity_recorded", False)),
@@ -2853,7 +3031,7 @@ def score(args: argparse.Namespace) -> int:
         },
         "artifact_paths": artifact_paths,
         "artifact_hashes": artifact_hashes,
-        "capture": getattr(args, "capture_context", {}),
+        "capture": capture_context,
         "detractor_loop": {
             "strongest_objection": (
                 "Headphone isolation is listener-local attenuation, not room-wide cancellation."
@@ -4316,6 +4494,15 @@ def capture(args: argparse.Namespace) -> int:
     measurement_input_device = parse_device_selector(args.measurement_input_device)
     source_output_device = parse_device_selector(args.source_output_device)
     headphone_output_device = parse_device_selector(args.headphone_output_device)
+    preflight_binding = capture_preflight_binding(
+        preflight_report=Path(args.preflight_report),
+        measurement_input_device=measurement_input_device,
+        source_output_device=source_output_device,
+        headphone_output_device=headphone_output_device,
+        sample_rate_hz=int(args.sample_rate_hz),
+        input_channels=int(args.input_channels),
+        output_channels=int(args.output_channels),
+    )
     run_dir = Path(args.output_dir) / "runs" / args.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     source_raw, translated_raw, reference_source_kind, reference_segments = _capture_reference_tracks(args)
@@ -4360,12 +4547,16 @@ def capture(args: argparse.Namespace) -> int:
         "measurement_input_device": portaudio_device_identity(measurement_input_device, kind="input"),
         "source_output_device": portaudio_device_identity(source_output_device, kind="output"),
     }
+    device_mismatches = preflight_binding_device_mismatches(preflight_binding, device_info)
+    if device_mismatches:
+        raise ValueError("guided capture device identity changed since preflight: " + "; ".join(device_mismatches))
     device_fingerprint = measurement_device_fingerprint(
         device_info=device_info,
         sample_rate_hz=int(args.sample_rate_hz),
         input_channels=int(args.input_channels),
         output_channels=int(args.output_channels),
     )
+    preflight_binding["capture_device_path_fingerprint"] = device_fingerprint
     print(f"measurement device fingerprint: {device_fingerprint}")
     capture_context: dict[str, Any] = {
         "backend": CAPTURE_BACKEND_PORTAUDIO,
@@ -4375,6 +4566,7 @@ def capture(args: argparse.Namespace) -> int:
         "sample_rate_hz": int(args.sample_rate_hz),
         "input_channels": int(args.input_channels),
         "output_channels": int(args.output_channels),
+        "preflight_binding": preflight_binding,
         "playback_gain_db": float(args.playback_gain_db),
         "lead_s": float(args.lead_s),
         "tail_s": float(args.tail_s),
@@ -4543,6 +4735,34 @@ def self_test() -> int:
         result = score(args)
         if result != 0:
             raise RuntimeError("expected headphone isolation self-test fixture to pass")
+        passing_report_path = Path(args.output_dir) / "runs" / args.run_id / "headphone-isolation-report.json"
+        passing_report = json.loads(passing_report_path.read_text(encoding="utf-8"))
+        passing_summary = dict(passing_report["benchmarks"][BENCHMARK_NAME]["summary"])
+        portaudio_summary = dict(passing_summary)
+        portaudio_summary.update(
+            {
+                "capture_backend": CAPTURE_BACKEND_PORTAUDIO,
+                "capture_source_kind": CAPTURE_SOURCE_KIND_PORTAUDIO,
+                "device_path_fingerprint": "1" * 64,
+                "device_path_identity_recorded": True,
+            }
+        )
+        portaudio_gates = {gate["name"]: gate for gate in quality_gates(portaudio_summary, args)}
+        if bool(portaudio_gates["headphone_guided_capture_preflight_bound"]["passed"]):
+            raise RuntimeError("guided PortAudio scoring must fail without preflight binding")
+        portaudio_summary["capture_preflight_binding"] = {
+            "bound": True,
+            "capture_device_path_fingerprint": "3" * 64,
+            "physical_listener_ear_input_confirmed": True,
+            "planning_passed": True,
+            "preflight_report_sha256": "2" * 64,
+            "recommended_path": "guided_capture_possible",
+            "selected_route": "0:1:2",
+            "selected_route_capture_ready": True,
+        }
+        portaudio_gates = {gate["name"]: gate for gate in quality_gates(portaudio_summary, args)}
+        if not bool(portaudio_gates["headphone_guided_capture_preflight_bound"]["passed"]):
+            raise RuntimeError("guided PortAudio scoring should pass with preflight binding")
         args.run_id = "wide-alignment-headphone-earpiece-isolation"
         args.max_alignment_lag_ms = DEFAULT_MAX_ALIGNMENT_LAG_MS + 250.0
         args.score_warning_only = True
@@ -5693,6 +5913,65 @@ def self_test() -> int:
         ).get("recommended_commands", {})
         if "capture" not in confirmed_commands:
             raise RuntimeError("confirmed headphone preflight should emit guided capture command")
+        if "--preflight-report" not in confirmed_commands["capture"]:
+            raise RuntimeError("confirmed headphone preflight capture command should include preflight report")
+        confirmed_preflight_path = root / "confirmed-headphone-preflight-report.json"
+        confirmed_preflight_path.write_text(
+            json.dumps(confirmed_preflight_report, indent=2, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        binding = capture_preflight_binding(
+            preflight_report=confirmed_preflight_path,
+            measurement_input_device="0",
+            source_output_device="1",
+            headphone_output_device="2",
+            sample_rate_hz=48000,
+            input_channels=1,
+            output_channels=2,
+        )
+        if not bool(binding.get("bound")) or binding.get("selected_route") != "0:1:2":
+            raise RuntimeError("confirmed headphone preflight should bind capture to selected route")
+        matching_device_info = {
+            "measurement_input_device": {
+                "hostapi": 0,
+                "hostapi_name": "Windows WASAPI",
+                "index": 0,
+                "name": "USB Lavalier Ear Mic",
+            },
+            "source_output_device": {
+                "hostapi": 0,
+                "hostapi_name": "Windows WASAPI",
+                "index": 1,
+                "name": "Speakers (SoundWire Speakers)",
+            },
+            "headphone_output_device": {
+                "hostapi": 0,
+                "hostapi_name": "Windows WASAPI",
+                "index": 2,
+                "name": "Headphones (WH-1000XM6)",
+            },
+        }
+        if preflight_binding_device_mismatches(binding, matching_device_info):
+            raise RuntimeError("preflight binding should accept unchanged device identities")
+        changed_device_info = json.loads(json.dumps(matching_device_info))
+        changed_device_info["source_output_device"]["name"] = "Different Speakers"
+        if not preflight_binding_device_mismatches(binding, changed_device_info):
+            raise RuntimeError("preflight binding should detect changed device identities")
+        try:
+            capture_preflight_binding(
+                preflight_report=confirmed_preflight_path,
+                measurement_input_device="9",
+                source_output_device="1",
+                headphone_output_device="2",
+                sample_rate_hz=48000,
+                input_channels=1,
+                output_channels=2,
+            )
+        except ValueError as exc:
+            if "do not match preflight selected_route" not in str(exc):
+                raise RuntimeError("preflight binding route mismatch should be explicit") from exc
+        else:
+            raise RuntimeError("preflight binding must reject route mismatch")
         json.dumps(confirmed_preflight_report, allow_nan=False)
 
         class FakeBuiltinPreflightSoundDevice(FakePreflightSoundDevice):
@@ -5745,6 +6024,26 @@ def self_test() -> int:
             raise RuntimeError("builtin laptop-style microphone must not emit guided capture")
         if "route_probe_triage_only" not in builtin_commands:
             raise RuntimeError("builtin laptop-style microphone should still emit route triage command")
+        builtin_preflight_path = root / "builtin-headphone-preflight-report.json"
+        builtin_preflight_path.write_text(
+            json.dumps(builtin_preflight_report, indent=2, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        try:
+            capture_preflight_binding(
+                preflight_report=builtin_preflight_path,
+                measurement_input_device="0",
+                source_output_device="1",
+                headphone_output_device="2",
+                sample_rate_hz=48000,
+                input_channels=1,
+                output_channels=2,
+            )
+        except ValueError as exc:
+            if "preflight recommended_path is not guided_capture_possible" not in str(exc):
+                raise RuntimeError("builtin preflight binding rejection should explain guided capture path") from exc
+        else:
+            raise RuntimeError("builtin laptop-style preflight must not bind guided capture")
         json.dumps(builtin_preflight_report, allow_nan=False)
 
         class FakeAmbiguousPreflightSoundDevice(FakePreflightSoundDevice):
@@ -6083,6 +6382,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     capture_parser.add_argument("--measurement-input-device", required=True)
     capture_parser.add_argument("--source-output-device", required=True)
     capture_parser.add_argument("--headphone-output-device", required=True)
+    capture_parser.add_argument(
+        "--preflight-report",
+        type=Path,
+        required=True,
+        help="passing preflight report generated with --selected-route and physical listener-ear confirmation",
+    )
     capture_parser.add_argument("--input-channels", type=int, default=DEFAULT_CAPTURE_INPUT_CHANNELS)
     capture_parser.add_argument("--output-channels", type=int, default=DEFAULT_CAPTURE_OUTPUT_CHANNELS)
     capture_parser.add_argument("--sample-rate-hz", type=int, default=DEFAULT_SAMPLE_RATE_HZ)

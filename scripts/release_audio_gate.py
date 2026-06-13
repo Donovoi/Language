@@ -163,6 +163,7 @@ HEADPHONE_ISOLATION_REQUIRED_GATES = {
     "headphone_claim_not_true_cancellation",
     "headphone_device_identity_recorded",
     "headphone_capture_source_declared",
+    "headphone_guided_capture_preflight_bound",
     "isolation_fixture_identity_recorded",
     "headphone_recordings_duration_floor",
     "headphone_release_alignment_window",
@@ -2015,6 +2016,41 @@ def _headphone_isolation_gate(spec: EvidenceSpec) -> GateResult:
             expected_device_fingerprint = _headphone_guided_device_fingerprint(summary)
             if summary.get("device_path_fingerprint") != expected_device_fingerprint:
                 failures.append("headphone_earpiece_isolation.summary.device_path_fingerprint does not match guided device info and capture channels")
+        preflight_binding = summary.get("capture_preflight_binding")
+        if not isinstance(preflight_binding, dict):
+            failures.append("headphone_earpiece_isolation.summary.capture_preflight_binding must be recorded for guided capture")
+        else:
+            if preflight_binding.get("bound") is not True:
+                failures.append("headphone_earpiece_isolation.summary.capture_preflight_binding.bound must be true")
+            if preflight_binding.get("planning_passed") is not True:
+                failures.append("headphone_earpiece_isolation.summary.capture_preflight_binding.planning_passed must be true")
+            if preflight_binding.get("recommended_path") != "guided_capture_possible":
+                failures.append("headphone_earpiece_isolation.summary.capture_preflight_binding.recommended_path must be guided_capture_possible")
+            if preflight_binding.get("physical_listener_ear_input_confirmed") is not True:
+                failures.append("headphone_earpiece_isolation.summary.capture_preflight_binding.physical_listener_ear_input_confirmed must be true")
+            if preflight_binding.get("selected_route_capture_ready") is not True:
+                failures.append("headphone_earpiece_isolation.summary.capture_preflight_binding.selected_route_capture_ready must be true")
+            if not _is_sha256(preflight_binding.get("preflight_report_sha256")):
+                failures.append("headphone_earpiece_isolation.summary.capture_preflight_binding.preflight_report_sha256 must be a SHA-256 hex string")
+            if preflight_binding.get("capture_device_path_fingerprint") != summary.get("device_path_fingerprint"):
+                failures.append("headphone_earpiece_isolation.summary.capture_preflight_binding.capture_device_path_fingerprint must match device_path_fingerprint")
+            preflight_device_info = preflight_binding.get("preflight_device_info")
+            device_info = summary.get("device_info")
+            if not isinstance(preflight_device_info, dict) or not isinstance(device_info, dict):
+                failures.append("headphone_earpiece_isolation.summary.capture_preflight_binding.preflight_device_info must be recorded")
+            else:
+                for key in ("measurement_input_device", "source_output_device", "headphone_output_device"):
+                    expected = preflight_device_info.get(key)
+                    current = device_info.get(key)
+                    if not isinstance(expected, dict) or not isinstance(current, dict):
+                        failures.append(f"headphone_earpiece_isolation.summary.capture_preflight_binding.preflight_device_info.{key} must be recorded")
+                        continue
+                    for field in ("index", "hostapi", "hostapi_name", "name"):
+                        if str(expected.get(field)) != str(current.get(field)):
+                            failures.append(
+                                "headphone_earpiece_isolation.summary.capture_preflight_binding."
+                                f"preflight_device_info.{key}.{field} must match guided device_info"
+                            )
     if missing:
         failures.append(f"missing/passing required headphone-isolation gates: {', '.join(missing)}")
 
@@ -3100,6 +3136,21 @@ def _write_headphone_isolation_fixture_report(
         )
         if mismatch_guided_fingerprint:
             headphone_summary["device_path_fingerprint"] = "0" * 64
+        headphone_summary["capture_preflight_binding"] = {
+            "bound": True,
+            "capture_device_path_fingerprint": headphone_summary["device_path_fingerprint"],
+            "input_channels": 1,
+            "inventory_fingerprint": "a" * 64,
+            "output_channels": 2,
+            "physical_listener_ear_input_confirmed": True,
+            "planning_passed": True,
+            "preflight_device_info": device_info,
+            "preflight_report_sha256": "b" * 64,
+            "recommended_path": "guided_capture_possible",
+            "sample_rate_hz": sample_rate_hz,
+            "selected_route": "1:2:3",
+            "selected_route_capture_ready": True,
+        }
     if hybrid_capture_source:
         headphone_summary["capture_backend"] = "external_wav_measurement"
         headphone_summary["capture_source_kind"] = "host_guided_listener_ear_playrec_measurement"
@@ -3155,6 +3206,8 @@ def self_test() -> None:
         short_headphone = root / "short-headphone.json"
         wide_alignment_headphone = root / "wide-alignment-headphone.json"
         guided_headphone = root / "guided-headphone.json"
+        unbound_guided_headphone = root / "unbound-guided-headphone.json"
+        stale_preflight_guided_headphone = root / "stale-preflight-guided-headphone.json"
         mismatched_guided_headphone = root / "mismatched-guided-headphone.json"
         hybrid_capture_headphone = root / "hybrid-capture-headphone.json"
         route_sweep_headphone = root / "route-sweep-headphone.json"
@@ -3274,6 +3327,18 @@ def self_test() -> None:
             summary_overrides={"max_alignment_lag_ms": ROOM_MAX_ALIGNMENT_LAG_MS + 250.0},
         )
         _write_headphone_isolation_fixture_report(guided_headphone, guided_capture=True)
+        _write_headphone_isolation_fixture_report(
+            unbound_guided_headphone,
+            guided_capture=True,
+            summary_overrides={"capture_preflight_binding": {}},
+        )
+        _write_headphone_isolation_fixture_report(stale_preflight_guided_headphone, guided_capture=True)
+        stale_preflight_payload = json.loads(stale_preflight_guided_headphone.read_text(encoding="utf-8"))
+        stale_preflight_summary = stale_preflight_payload["benchmarks"][HEADPHONE_REQUIRED_BENCHMARK_NAME]["summary"]
+        stale_preflight_summary["capture_preflight_binding"]["preflight_device_info"]["source_output_device"][
+            "name"
+        ] = "stale-source-speaker"
+        _write_json(stale_preflight_guided_headphone, stale_preflight_payload)
         _write_headphone_isolation_fixture_report(
             mismatched_guided_headphone,
             guided_capture=True,
@@ -3533,6 +3598,22 @@ def self_test() -> None:
         report = build_report(release_results, prototype_results)
         if not report["summary"]["passed"]:
             raise AssertionError("expected guided headphone isolation with matching device fingerprint to pass")
+
+        unbound_guided_headphone_args = argparse.Namespace(**vars(complete_args))
+        unbound_guided_headphone_args.room_suppression_report = forged_room
+        unbound_guided_headphone_args.headphone_isolation_report = unbound_guided_headphone
+        release_results, prototype_results = evaluate(unbound_guided_headphone_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected guided headphone isolation without preflight binding to fail")
+
+        stale_preflight_guided_headphone_args = argparse.Namespace(**vars(complete_args))
+        stale_preflight_guided_headphone_args.room_suppression_report = forged_room
+        stale_preflight_guided_headphone_args.headphone_isolation_report = stale_preflight_guided_headphone
+        release_results, prototype_results = evaluate(stale_preflight_guided_headphone_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected guided headphone isolation with stale preflight device info to fail")
 
         forged_headphone_args = argparse.Namespace(**vars(complete_args))
         forged_headphone_args.room_suppression_report = forged_room
