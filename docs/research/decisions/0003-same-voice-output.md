@@ -34,6 +34,8 @@ Use a provider-agnostic TTS/voice adapter first, with two explicit modes:
 For local research, benchmark VoxCPM2, CosyVoice 2/Fun-CosyVoice, and OpenVoice V2 before choosing a
 default local model. Treat F5-TTS, VALL-E X, Seed-VC, and similar cross-lingual systems as innovation
 watchlist items until they pass the same benchmark, license, and safety gate.
+Use `scripts/benchmark_same_voice_candidate_fixture.py` as the first acceptance contract for any
+provider or local-model output before wiring that model into the runtime.
 
 ## Evidence
 
@@ -55,19 +57,20 @@ watchlist items until they pass the same benchmark, license, and safety gate.
 - Primary metric: time to first playable same-voice English audio
 - Secondary metrics: speaker similarity, MOS or DNSMOS/UTMOS, WER of synthesized English, real-time factor, reference length, reference deletion proof
 - Dataset or fixture: Seed-TTS-Eval-style English WER/speaker-similarity fixture, consented local speaker references, multilingual source prompts, and fixed English target prompts
-- Disposable command: add a future `scripts/benchmark_voice_clone_fixture.py`
-- Pass condition: bounded latency, no unsafe reference persistence, acceptable speaker similarity, and a clean fallback voice path
+- Disposable command: `scripts/benchmark_same_voice_candidate_fixture.py --self-test`, then `scripts/benchmark_same_voice_candidate_fixture.py check --manifest artifacts/audio_eval/runs/same-voice-candidate/same-voice-candidate-manifest.json`
+- Pass condition: bounded latency, explicit consent evidence, no unsafe reference persistence, non-clone generated audio, built-in proxy score above threshold, matched source/output level, and a clean fallback voice path
 
 ## Integration Plan
 
 - Contract fields: `voice_clone_status`, `translated_audio_stream_id`, `output_level_dbfs`, `playback_latency_ms`
 - Gateway/Rust/Flutter files: provider adapter in gateway; Flutter already renders readiness states
 - Fallback behavior: neutral TTS with visible status when same-voice synthesis is not ready
+- Evidence behavior: same-voice candidate reports must bundle consent, source WAV, reference WAV, output WAV, and similarity sidecar artifacts so the release gate can reopen and revalidate them
 - Rollback trigger: provider/model stores references unsafely, exceeds latency budget, or produces unintelligible English
 
 ## Detractor Concerns
 
 - Strongest objection: Voice-clone demos often optimize for impressiveness, not consent, bounded full-loop latency, cross-language robustness, licensing, or repeatable human speaker similarity.
-- Cheapest falsifying benchmark: three consented speakers, 5s/15s/60s references, ten English outputs each, scored for time-to-first-audio, WER, ASV similarity, and blinded speaker similarity.
+- Cheapest falsifying benchmark: three consented speakers, 5s/15s/60s references, ten English outputs each, scored for time-to-first-audio, WER, ASV similarity, and blinded speaker similarity, using the candidate validator as the artifact contract plus a stronger ASV/human scorer beyond its built-in acoustic proxy.
 - Fallback path: neutral English voice at matched volume with `voice_clone_status=fallback`.
 - Decision reversal condition: a local model proves better latency, similarity, safety, and license terms than the provider path on the same fixture.

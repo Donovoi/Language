@@ -38,6 +38,10 @@ Repository prep for the first internal beta release candidate based on the curre
 - Tightened the release gate so oracle-diarization Whisper-after-TSE reports no longer satisfy product streaming speech translation proof.
 - Added a causal Sortformer plus Whisper-after-WeSep translation bridge and made it the default streaming translation evidence for the release gate.
 - Added a consent-safe eSpeak NG fallback TTS benchmark with hashed, level-matched WAV artifacts, disposable container targets, and release-gate artifact validation.
+- Added a same-voice candidate evidence validator with disposable targets, consent-evidence bundling,
+  hashed source/reference/output/similarity artifacts, non-clone checks, source-level/peak
+  validation, a recomputed built-in acoustic proxy, and release-gate revalidation for
+  `same_voice_candidate` reports.
 
 ## [0.1.0] - First release
 

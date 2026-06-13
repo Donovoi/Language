@@ -100,8 +100,12 @@ diarizer, room noise, non-English speech, and translated playback loopback befor
 3. Benchmark VoxCPM2, CosyVoice 2/Fun-CosyVoice, and OpenVoice V2 locally if licensing/dependencies are acceptable.
 4. Include provider personal-voice paths only when explicit consent and retention rules are implemented.
 5. Always keep neutral fallback TTS. The June 12, 2026 eSpeak NG fallback benchmark now passes the
-   release gate with hashed WAVs and level matching; same-voice cloning remains a separate research
-   benchmark.
+   release gate with hashed WAVs and level matching.
+6. Use `scripts/benchmark_same_voice_candidate_fixture.py` for any external same-voice output before
+   runtime integration. It validates consent evidence, bundled source/reference/output WAV hashes,
+   non-clone output, source-level matching, peak headroom, and sidecars whose built-in acoustic proxy
+   score recomputes from the WAVs. The remaining work is selecting and wiring a generator/provider
+   that can produce passing candidate artifacts, then adding stronger ASV or human similarity scoring.
 
 ## Phase 5: Playback And Suppression
 
@@ -119,8 +123,10 @@ diarizer, room noise, non-English speech, and translated playback loopback befor
 `scripts/release_audio_gate.py` / `make release-audio-gate` is the hard product-release gate. It reads
 the current report artifacts. Live microphone capture, causal diarization, target-speaker extraction
 that beats mixture passthrough, and causal streaming speech translation after accepted TSE now have
-passing evidence on the current host. Consent-safe fallback TTS also passes, while same-voice cloning
-remains a future stronger mode. Real-room playback/suppression is the remaining release blocker. Keep exploratory model checks warning-only if useful,
+passing evidence on the current host. Consent-safe fallback TTS also passes; same-voice candidate
+reports are now gated by consent, hash, non-clone, built-in similarity-proxy, and source-level checks,
+but proxy-only candidates remain validation artifacts until a stronger ASV or human similarity scorer
+exists. Real-room playback/suppression is the remaining release blocker. Keep exploratory model checks warning-only if useful,
 and list prototypes as evidence only. The gate requires product-specific fields, independently
 validates live-capture WAV/chunk artifacts, and rejects bare passing stubs, fixture capture,
 self-attested microphone reports without matching artifacts, and synthetic playback reports as

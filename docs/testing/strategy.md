@@ -143,6 +143,12 @@ make live-microphone-capture-check
   2026 run produced four hashed WAV files, declared `voice_clone_status=fallback_voice`,
   `voice_similarity_claim=not_claimed`, matched each output to the source level with max level error
   0.0 dB, and kept max peak at -5.066 dBFS.
+- `make audio-eval-same-voice-candidate-contract-check` and
+  `make audio-eval-same-voice-candidate-check` validate externally generated same-voice candidate
+  WAVs. The scorer requires explicit consent evidence, bundled reference/output/similarity artifacts,
+  non-clone audio, source-matched levels, peak headroom, and a sidecar score that matches the
+  release gate's recomputed acoustic proxy. Proxy-only candidates remain validation artifacts, not
+  same-voice release proof.
 - `make release-audio-gate` is the product-release blocker, not a research convenience target. It
   reads the current report artifacts. Live microphone capture and causal diarization now pass with
   product-specific evidence on this host, WeSep satisfies the real TSE component gate, and causal
