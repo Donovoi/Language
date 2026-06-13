@@ -250,6 +250,23 @@ def parse_route_triple(value: str) -> tuple[str, str, str]:
     return parts[0], parts[1], parts[2]
 
 
+def route_triple_arg(route: tuple[str, str, str] | dict[str, Any]) -> str:
+    if isinstance(route, dict):
+        parts = (
+            route.get("input_device"),
+            route.get("source_output_device"),
+            route.get("headphone_output_device"),
+        )
+    else:
+        parts = route
+    return ":".join(str(part) for part in parts)
+
+
+def route_triple_key(route: tuple[str, str, str] | dict[str, Any]) -> tuple[str, str, str]:
+    parts = route_triple_arg(route).split(":", 2)
+    return parts[0], parts[1], parts[2]
+
+
 def hostapi_name(sd: Any, hostapi_index: Any) -> str | None:
     try:
         return sd.query_hostapis(hostapi_index).get("name")
@@ -560,12 +577,14 @@ def preflight_inventory_fingerprint(
 def annotate_preflight_route_triples(
     triples: list[dict[str, Any]],
     devices: list[dict[str, Any]],
+    *,
+    max_triples: int,
 ) -> list[dict[str, Any]]:
     by_index = {int(device["index"]): device for device in devices}
     annotated: list[dict[str, Any]] = []
-    for rank, triple in enumerate(triples, start=1):
+    for original_rank, triple in enumerate(triples, start=1):
         item = dict(triple)
-        item["rank"] = rank
+        item["original_rank"] = original_rank
         for field, prefix in (
             ("input_device", "input"),
             ("source_output_device", "source"),
@@ -579,8 +598,146 @@ def annotate_preflight_route_triples(
             if isinstance(device, dict):
                 item[f"{prefix}_name"] = device.get("name")
                 item[f"{prefix}_hostapi_name"] = device.get("hostapi_name")
+        item["preflight_route_score"] = preflight_route_score(item)
+        item["preflight_route_score_reasons"] = preflight_route_score_reasons(item)
         annotated.append(item)
+    annotated.sort(
+        key=lambda item: (
+            item["preflight_route_score"],
+            item.get("original_rank", 0),
+            str(item.get("input_name") or ""),
+            str(item.get("source_name") or ""),
+            str(item.get("headphone_name") or ""),
+        )
+    )
+    for rank, item in enumerate(annotated, start=1):
+        item["rank"] = rank
+    if max_triples > 0:
+        return annotated[:max_triples]
     return annotated
+
+
+def preflight_route_score(item: dict[str, Any]) -> int:
+    input_roles = set(str(role) for role in item.get("input_roles", []))
+    source_roles = set(str(role) for role in item.get("source_roles", []))
+    headphone_roles = set(str(role) for role in item.get("headphone_roles", []))
+    score = 0
+    if "headphone_output_candidate" not in headphone_roles:
+        score += 1000
+    if "source_output_candidate" not in source_roles:
+        score += 700
+    if "headphone_output_candidate" in source_roles:
+        score += 300
+    if "source_output_candidate" in headphone_roles:
+        score += 300
+    if "external_input_candidate_needs_listener_ear_placement" in input_roles:
+        score += 0
+    elif "builtin_or_array_mic_route_triage_only" in input_roles:
+        score += 80
+    elif "input_candidate_unknown_placement" in input_roles:
+        score += 120
+    elif "headset_mic_route_triage_only" in input_roles:
+        score += 200
+    else:
+        score += 160
+    if item.get("source_hostapi") != item.get("headphone_hostapi"):
+        score += 50
+    if item.get("input_hostapi") != item.get("source_hostapi"):
+        score += 25
+    return score
+
+
+def preflight_route_score_reasons(item: dict[str, Any]) -> list[str]:
+    reasons: list[str] = []
+    input_roles = set(str(role) for role in item.get("input_roles", []))
+    source_roles = set(str(role) for role in item.get("source_roles", []))
+    headphone_roles = set(str(role) for role in item.get("headphone_roles", []))
+    if "headphone_output_candidate" in headphone_roles:
+        reasons.append("headphone_slot_has_headphone_output_candidate")
+    else:
+        reasons.append("headphone_slot_not_labeled_as_headphone")
+    if "source_output_candidate" in source_roles:
+        reasons.append("source_slot_has_source_output_candidate")
+    else:
+        reasons.append("source_slot_not_labeled_as_source")
+    if "source_output_candidate" in headphone_roles:
+        reasons.append("headphone_slot_labeled_as_source_output")
+    if "headphone_output_candidate" in source_roles:
+        reasons.append("source_slot_labeled_as_headphone_output")
+    if "external_input_candidate_needs_listener_ear_placement" in input_roles:
+        reasons.append("input_slot_external_candidate")
+    elif "builtin_or_array_mic_route_triage_only" in input_roles:
+        reasons.append("input_slot_builtin_or_array_candidate")
+    elif "headset_mic_route_triage_only" in input_roles:
+        reasons.append("input_slot_headset_triage_only")
+    elif "input_candidate_unknown_placement" in input_roles:
+        reasons.append("input_slot_unknown_placement")
+    if item.get("source_hostapi") == item.get("headphone_hostapi"):
+        reasons.append("source_and_headphone_share_hostapi")
+    if item.get("input_hostapi") == item.get("source_hostapi"):
+        reasons.append("input_and_source_share_hostapi")
+    return reasons
+
+
+def preflight_route_roles_aligned(item: dict[str, Any]) -> bool:
+    source_roles = set(str(role) for role in item.get("source_roles", []))
+    headphone_roles = set(str(role) for role in item.get("headphone_roles", []))
+    return "source_output_candidate" in source_roles and "headphone_output_candidate" in headphone_roles
+
+
+def preflight_route_capture_ready(item: dict[str, Any]) -> bool:
+    input_roles = set(str(role) for role in item.get("input_roles", []))
+    source_roles = set(str(role) for role in item.get("source_roles", []))
+    headphone_roles = set(str(role) for role in item.get("headphone_roles", []))
+    if "builtin_or_array_mic_route_triage_only" in input_roles:
+        return False
+    if "headset_mic_route_triage_only" in input_roles:
+        return False
+    if not (
+        "external_input_candidate_needs_listener_ear_placement" in input_roles
+        or "input_candidate_unknown_placement" in input_roles
+    ):
+        return False
+    if not preflight_route_roles_aligned(item):
+        return False
+    if "headphone_output_candidate" in source_roles:
+        return False
+    if "source_output_candidate" in headphone_roles:
+        return False
+    return True
+
+
+def select_preflight_route(
+    triples: list[dict[str, Any]],
+    selected_route: tuple[str, str, str] | None,
+) -> dict[str, Any] | None:
+    if selected_route is None:
+        return None
+    selected_key = route_triple_key(selected_route)
+    for item in triples:
+        if route_triple_key(item) == selected_key:
+            return item
+    return None
+
+
+def display_preflight_route_triples(
+    triples: list[dict[str, Any]],
+    *,
+    max_triples: int,
+    selected_candidate: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if max_triples > 0:
+        displayed = list(triples[:max_triples])
+    else:
+        displayed = list(triples)
+    if selected_candidate is None:
+        return displayed
+    selected_key = route_triple_key(selected_candidate)
+    if any(route_triple_key(item) == selected_key for item in displayed):
+        return displayed
+    if max_triples > 0:
+        return [selected_candidate] + displayed[: max_triples - 1]
+    return [selected_candidate] + displayed
 
 
 def preflight_quality_gates(summary: dict[str, Any]) -> list[dict[str, Any]]:
@@ -622,6 +779,41 @@ def preflight_quality_gates(summary: dict[str, Any]) -> list[dict[str, Any]]:
             "value": summary.get("candidate_route_triple_count"),
         },
         {
+            "name": "headphone_preflight_role_aligned_route_candidate_found",
+            "passed": int(summary.get("role_aligned_route_triple_count") or 0) > 0,
+            "threshold": "at least one route candidate has source output in source slot and headphone output in headphone slot",
+            "value": summary.get("role_aligned_route_triple_count"),
+        },
+        {
+            "name": "headphone_preflight_capture_ready_route_candidate_found",
+            "passed": int(summary.get("capture_ready_route_triple_count") or 0) > 0,
+            "threshold": (
+                "at least one route has a non-triage listener-ear input and unambiguous "
+                "source/headphone output roles"
+            ),
+            "value": summary.get("capture_ready_route_triple_count"),
+        },
+        {
+            "name": "headphone_preflight_selected_route_found_when_requested",
+            "passed": not bool(summary.get("selected_route_requested")) or bool(summary.get("selected_route_found")),
+            "threshold": "if a selected route is supplied, it must exist in the current device inventory",
+            "value": {
+                "selected_route": summary.get("selected_route"),
+                "selected_route_found": summary.get("selected_route_found"),
+            },
+        },
+        {
+            "name": "headphone_preflight_selected_route_capture_ready_when_confirmed",
+            "passed": not bool(summary.get("physical_listener_ear_input_confirmed"))
+            or bool(summary.get("selected_route_capture_ready")),
+            "threshold": "physical confirmation must be tied to a selected capture-ready route",
+            "value": {
+                "physical_listener_ear_input_confirmed": summary.get("physical_listener_ear_input_confirmed"),
+                "selected_route": summary.get("selected_route"),
+                "selected_route_capture_ready": summary.get("selected_route_capture_ready"),
+            },
+        },
+        {
             "name": "headphone_preflight_physical_listener_ear_input_confirmed",
             "passed": bool(summary.get("physical_listener_ear_input_confirmed")),
             "threshold": "operator explicitly confirms the selected input is physically at the listener-ear point",
@@ -640,10 +832,20 @@ def preflight_recommended_path(summary: dict[str, Any]) -> str:
         return "manual_external_recorder_required"
     if int(summary.get("candidate_route_triple_count") or 0) <= 0:
         return "manual_external_recorder_preferred"
+    if int(summary.get("role_aligned_route_triple_count") or 0) <= 0:
+        return "manual_external_recorder_preferred"
+    if int(summary.get("capture_ready_route_triple_count") or 0) <= 0:
+        return "route_probe_triage_only_manual_listener_ear_capture_required"
     if not bool(summary.get("distinct_output_routes_available")):
         return "manual_external_recorder_preferred"
     if not bool(summary.get("physical_listener_ear_input_confirmed")):
         return "guided_capture_possible_after_physical_input_confirmation"
+    if not bool(summary.get("selected_route_requested")):
+        return "guided_capture_requires_selected_route_confirmation"
+    if not bool(summary.get("selected_route_found")):
+        return "selected_route_not_found"
+    if not bool(summary.get("selected_route_capture_ready")):
+        return "selected_route_not_capture_ready"
     if not bool(summary.get("likely_headphone_output_found")):
         return "manual_external_recorder_preferred"
     if not bool(summary.get("likely_source_output_found")):
@@ -651,14 +853,37 @@ def preflight_recommended_path(summary: dict[str, Any]) -> str:
     return "guided_capture_possible"
 
 
+def powershell_quote_arg(value: Any) -> str:
+    text = str(value)
+    safe = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.\\/:$")
+    if text and all(char in safe for char in text):
+        return text
+    return "'" + text.replace("'", "''") + "'"
+
+
+def preflight_filter_flags(args: argparse.Namespace) -> str:
+    parts: list[str] = []
+    for hostapi in args.hostapi or []:
+        parts.extend(["--hostapi", powershell_quote_arg(hostapi)])
+    if bool(args.include_cross_hostapi):
+        parts.append("--include-cross-hostapi")
+    if bool(args.allow_shared_output_device):
+        parts.append("--allow-shared-output-device")
+    parts.extend(["--max-triples", str(int(args.max_triples))])
+    return " ".join(parts)
+
+
 def preflight_command_hints(
-    first_candidate: dict[str, Any] | None,
+    route_probe_candidate: dict[str, Any] | None,
+    capture_candidate: dict[str, Any] | None,
     args: argparse.Namespace,
     *,
     recommended_path: str,
 ) -> dict[str, str]:
     base = "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1"
     python = "-Python $env:LANGUAGE_PYTHON"
+    preflight_flags = preflight_filter_flags(args)
+    preflight_suffix = f" {preflight_flags}" if preflight_flags else ""
     hints = {
         "manual_prepare": (
             f"{base} -Action prepare-manual {python} --sample-rate-hz {int(args.sample_rate_hz)} "
@@ -667,36 +892,46 @@ def preflight_command_hints(
         "preflight": (
             f"{base} -Action preflight {python} --sample-rate-hz {int(args.sample_rate_hz)} "
             f"--input-channels {int(args.input_channels)} --output-channels {int(args.output_channels)}"
+            f"{preflight_suffix}"
         ),
     }
-    if recommended_path == "guided_capture_possible_after_physical_input_confirmation":
+    if recommended_path == "guided_capture_possible_after_physical_input_confirmation" and capture_candidate:
         hints["confirm_physical_input_preflight"] = (
             f"{base} -Action preflight {python} --sample-rate-hz {int(args.sample_rate_hz)} "
             f"--input-channels {int(args.input_channels)} --output-channels {int(args.output_channels)} "
+            f"{preflight_suffix} --selected-route {route_triple_arg(capture_candidate)} "
             "--confirm-physical-listener-ear-input"
         )
-    if first_candidate:
-        input_device = first_candidate.get("input_device")
-        source_device = first_candidate.get("source_output_device")
-        headphone_device = first_candidate.get("headphone_output_device")
+    if capture_candidate and recommended_path == "guided_capture_possible":
+        input_device = capture_candidate.get("input_device")
+        source_device = capture_candidate.get("source_output_device")
+        headphone_device = capture_candidate.get("headphone_output_device")
         probe_command = (
             f"{base} -Action probe-route {python} --measurement-input-device {input_device} "
             f"--source-output-device {source_device} --headphone-output-device {headphone_device} "
             f"--sample-rate-hz {int(args.sample_rate_hz)} --input-channels {int(args.input_channels)} "
             f"--output-channels {int(args.output_channels)} --playback-gain-db {float(DEFAULT_PLAYBACK_GAIN_DB):g}"
         )
-        if recommended_path == "guided_capture_possible":
-            hints["probe_route"] = probe_command
-            hints["capture"] = (
-                f"{base} -Action capture {python} --measurement-input-device {input_device} "
-                f"--source-output-device {source_device} --headphone-output-device {headphone_device} "
-                f"--sample-rate-hz {int(args.sample_rate_hz)} --input-channels {int(args.input_channels)} "
-                f"--output-channels {int(args.output_channels)} --playback-gain-db {float(DEFAULT_PLAYBACK_GAIN_DB):g} "
-                "--headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel "
-                "--measurement-microphone-label $microphoneLabel"
-            )
-        else:
-            hints["route_probe_triage_only"] = probe_command + " --score-warning-only"
+        hints["probe_route"] = probe_command
+        hints["capture"] = (
+            f"{base} -Action capture {python} --measurement-input-device {input_device} "
+            f"--source-output-device {source_device} --headphone-output-device {headphone_device} "
+            f"--sample-rate-hz {int(args.sample_rate_hz)} --input-channels {int(args.input_channels)} "
+            f"--output-channels {int(args.output_channels)} --playback-gain-db {float(DEFAULT_PLAYBACK_GAIN_DB):g} "
+            "--headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel "
+            "--measurement-microphone-label $microphoneLabel"
+        )
+    elif route_probe_candidate:
+        input_device = route_probe_candidate.get("input_device")
+        source_device = route_probe_candidate.get("source_output_device")
+        headphone_device = route_probe_candidate.get("headphone_output_device")
+        hints["route_probe_triage_only"] = (
+            f"{base} -Action probe-route {python} --measurement-input-device {input_device} "
+            f"--source-output-device {source_device} --headphone-output-device {headphone_device} "
+            f"--sample-rate-hz {int(args.sample_rate_hz)} --input-channels {int(args.input_channels)} "
+            f"--output-channels {int(args.output_channels)} --playback-gain-db {float(DEFAULT_PLAYBACK_GAIN_DB):g} "
+            "--score-warning-only"
+        )
     return hints
 
 
@@ -729,16 +964,37 @@ def build_headphone_preflight_report(sd: Any, args: argparse.Namespace) -> dict[
         hostapis=hostapi_filters,
         include_cross_hostapi=bool(args.include_cross_hostapi),
         input_channels=int(args.input_channels),
-        max_triples=int(args.max_triples),
+        max_triples=0,
         output_channels=int(args.output_channels),
     )
-    annotated_triples = annotate_preflight_route_triples(triples, devices)
+    annotated_triples = annotate_preflight_route_triples(
+        triples,
+        devices,
+        max_triples=0,
+    )
+    role_aligned_triples = [
+        triple for triple in annotated_triples if preflight_route_roles_aligned(triple)
+    ]
+    capture_ready_triples = [
+        triple for triple in annotated_triples if preflight_route_capture_ready(triple)
+    ]
+    selected_route = tuple(args.selected_route) if args.selected_route else None
+    selected_candidate = select_preflight_route(annotated_triples, selected_route)
+    selected_route_capture_ready = (
+        preflight_route_capture_ready(selected_candidate) if selected_candidate is not None else False
+    )
+    displayed_triples = display_preflight_route_triples(
+        annotated_triples,
+        max_triples=int(args.max_triples),
+        selected_candidate=selected_candidate,
+    )
     distinct_output_routes_available = len({int(device["index"]) for device in filtered_outputs}) >= 2
     role_flags = [device.get("role_flags", {}) for device in devices]
     summary = {
         "adapter_id": args.adapter_id,
         "allow_shared_output_device": bool(args.allow_shared_output_device),
         "candidate_route_triple_count": len(annotated_triples),
+        "capture_ready_route_triple_count": len(capture_ready_triples),
         "default_devices": default_devices,
         "device_count": len(devices),
         "distinct_output_routes_available": distinct_output_routes_available,
@@ -766,13 +1022,23 @@ def build_headphone_preflight_report(sd: Any, args: argparse.Namespace) -> dict[
         "output_channels": int(args.output_channels),
         "physical_listener_ear_input_confirmed": bool(args.confirm_physical_listener_ear_input),
         "release_proof": False,
+        "role_aligned_route_triple_count": len(role_aligned_triples),
         "sample_rate_hz": int(args.sample_rate_hz),
+        "selected_route": route_triple_arg(selected_route) if selected_route is not None else None,
+        "selected_route_capture_ready": selected_route_capture_ready,
+        "selected_route_found": selected_candidate is not None,
+        "selected_route_requested": selected_route is not None,
+        "listed_candidate_route_triple_count": len(displayed_triples),
     }
     summary["recommended_path"] = preflight_recommended_path(summary)
     gates = preflight_quality_gates(summary)
     summary["quality_gates"] = gates
     summary["planning_passed"] = all(bool(gate["passed"]) for gate in gates)
-    first_candidate = annotated_triples[0] if annotated_triples else None
+    route_probe_candidate = selected_candidate or (role_aligned_triples[0] if role_aligned_triples else None)
+    if selected_route is not None:
+        capture_candidate = selected_candidate if selected_route_capture_ready else None
+    else:
+        capture_candidate = capture_ready_triples[0] if capture_ready_triples else None
     report = {
         "schema_version": 1,
         "generated_at_unix": int(time.time()),
@@ -784,12 +1050,13 @@ def build_headphone_preflight_report(sd: Any, args: argparse.Namespace) -> dict[
         "benchmarks": {
             "headphone_earpiece_preflight": {
                 "adapter_id": args.adapter_id,
-                "candidate_route_triples": annotated_triples,
+                "candidate_route_triples": displayed_triples,
                 "default_devices": default_devices,
                 "device_inventory": devices,
                 "hostapis": hostapis,
                 "recommended_commands": preflight_command_hints(
-                    first_candidate,
+                    route_probe_candidate,
+                    capture_candidate,
                     args,
                     recommended_path=str(summary["recommended_path"]),
                 ),
@@ -864,19 +1131,21 @@ def render_headphone_preflight_markdown(report: dict[str, Any], json_report_path
     if candidates:
         lines.extend(
             [
-                "| Rank | Input | Source Output | Headphone Output |",
-                "| ---: | --- | --- | --- |",
+                "| Rank | Score | Input | Source Output | Headphone Output | Notes |",
+                "| ---: | ---: | --- | --- | --- | --- |",
             ]
         )
         for candidate in candidates[:10]:
             lines.append(
-                "| {rank} | {input_device} `{input_name}` | {source_device} `{source_name}` | "
-                "{headphone_device} `{headphone_name}` |".format(
+                "| {rank} | {score} | {input_device} `{input_name}` | {source_device} `{source_name}` | "
+                "{headphone_device} `{headphone_name}` | {reasons} |".format(
                     headphone_device=candidate.get("headphone_output_device"),
                     headphone_name=str(candidate.get("headphone_name") or "").replace("|", "/"),
                     input_device=candidate.get("input_device"),
                     input_name=str(candidate.get("input_name") or "").replace("|", "/"),
                     rank=candidate.get("rank"),
+                    reasons=", ".join(candidate.get("preflight_route_score_reasons", [])).replace("|", "/"),
+                    score=candidate.get("preflight_route_score"),
                     source_device=candidate.get("source_output_device"),
                     source_name=str(candidate.get("source_name") or "").replace("|", "/"),
                 )
@@ -891,7 +1160,8 @@ def render_headphone_preflight_markdown(report: dict[str, Any], json_report_path
             "## Hardware Notes",
             "",
             "- Use a USB/lav/recorder microphone physically at the listener-ear point for release evidence.",
-            "- For an improvised laptop test, place one headphone earcup over the laptop mic opening and rerun preflight with `--confirm-physical-listener-ear-input`.",
+            "- Laptop built-in microphones are route triage only; they do not unlock guided capture or release evidence.",
+            "- For an improvised laptop sanity test, place one headphone earcup over the laptop mic opening and run `route_probe_triage_only`.",
             "- A Bluetooth headset microphone is route triage only unless it is physically at that point.",
             "- Disable audio enhancements, AGC, echo cancellation, spatial audio, and communications ducking.",
             "- Preflight is complete when it tells you which path to try next; release evidence still needs WAV scoring.",
@@ -925,6 +1195,12 @@ def headphone_preflight(args: argparse.Namespace) -> int:
             status = "GUIDED-CAPTURE-READY"
         elif recommended_path == "guided_capture_possible_after_physical_input_confirmation":
             status = "NEEDS-PHYSICAL-INPUT-CONFIRMATION"
+        elif recommended_path == "route_probe_triage_only_manual_listener_ear_capture_required":
+            status = "ROUTE-TRIAGE-ONLY"
+        elif recommended_path == "guided_capture_requires_selected_route_confirmation":
+            status = "NEEDS-SELECTED-ROUTE-CONFIRMATION"
+        elif recommended_path in {"selected_route_not_found", "selected_route_not_capture_ready"}:
+            status = "NEEDS-ROUTE-FIX"
         else:
             status = "NEEDS-HARDWARE"
         print(
@@ -5348,6 +5624,7 @@ def self_test() -> int:
             output_dir=root / "preflight-out",
             run_id=DEFAULT_PREFLIGHT_RUN_ID,
             sample_rate_hz=48000,
+            selected_route=None,
         )
         preflight_report = build_headphone_preflight_report(FakePreflightSoundDevice(), preflight_args)
         if preflight_report.get("release_proof") is not False:
@@ -5361,12 +5638,25 @@ def self_test() -> int:
             != "guided_capture_possible_after_physical_input_confirmation"
         ):
             raise RuntimeError("expected fake headphone preflight to require physical input confirmation")
+        fake_candidates = preflight_report.get("benchmarks", {}).get("headphone_earpiece_preflight", {}).get(
+            "candidate_route_triples",
+            [],
+        )
+        if not fake_candidates:
+            raise RuntimeError("expected fake headphone preflight to list candidate routes")
+        fake_first_candidate = fake_candidates[0]
+        if "headphone_output_candidate" not in fake_first_candidate.get("headphone_roles", []):
+            raise RuntimeError("headphone preflight should rank headphone-labeled outputs into the headphone slot")
+        if "source_output_candidate" not in fake_first_candidate.get("source_roles", []):
+            raise RuntimeError("headphone preflight should rank source-labeled outputs into the source slot")
         commands = preflight_report.get("benchmarks", {}).get("headphone_earpiece_preflight", {}).get(
             "recommended_commands",
             {},
         )
         if "capture" in commands:
             raise RuntimeError("preflight must not emit capture commands before physical input confirmation")
+        if "--selected-route 0:1:2" not in commands.get("confirm_physical_input_preflight", ""):
+            raise RuntimeError("physical input confirmation command must bind the selected route")
         preflight_markdown = render_headphone_preflight_markdown(
             preflight_report,
             root / "preflight-out" / DEFAULT_PREFLIGHT_REPORT,
@@ -5376,6 +5666,19 @@ def self_test() -> int:
         json.dumps(preflight_report, allow_nan=False)
 
         preflight_args.confirm_physical_listener_ear_input = True
+        unbound_confirmed_preflight_report = build_headphone_preflight_report(
+            FakePreflightSoundDevice(),
+            preflight_args,
+        )
+        unbound_confirmed_commands = unbound_confirmed_preflight_report.get("benchmarks", {}).get(
+            "headphone_earpiece_preflight",
+            {},
+        ).get("recommended_commands", {})
+        if bool(unbound_confirmed_preflight_report.get("summary", {}).get("planning_passed")):
+            raise RuntimeError("confirmed headphone preflight must require a bound selected route")
+        if "capture" in unbound_confirmed_commands:
+            raise RuntimeError("unbound physical confirmation must not emit guided capture")
+        preflight_args.selected_route = ("0", "1", "2")
         confirmed_preflight_report = build_headphone_preflight_report(
             FakePreflightSoundDevice(),
             preflight_args,
@@ -5391,6 +5694,108 @@ def self_test() -> int:
         if "capture" not in confirmed_commands:
             raise RuntimeError("confirmed headphone preflight should emit guided capture command")
         json.dumps(confirmed_preflight_report, allow_nan=False)
+
+        class FakeBuiltinPreflightSoundDevice(FakePreflightSoundDevice):
+            def __init__(self) -> None:
+                self._hostapis = [{"name": "Windows WASAPI", "device_count": 3}]
+                self._devices = [
+                    {
+                        "default_samplerate": 48000.0,
+                        "hostapi": 0,
+                        "index": 0,
+                        "max_input_channels": 1,
+                        "max_output_channels": 0,
+                        "name": "Input (SoundWire Microphone)",
+                    },
+                    {
+                        "default_samplerate": 48000.0,
+                        "hostapi": 0,
+                        "index": 1,
+                        "max_input_channels": 0,
+                        "max_output_channels": 2,
+                        "name": "Speakers (Realtek Audio)",
+                    },
+                    {
+                        "default_samplerate": 48000.0,
+                        "hostapi": 0,
+                        "index": 2,
+                        "max_input_channels": 0,
+                        "max_output_channels": 2,
+                        "name": "Headphones (WH-1000XM6)",
+                    },
+                ]
+
+        builtin_args = argparse.Namespace(**vars(preflight_args))
+        builtin_args.selected_route = ("0", "1", "2")
+        builtin_args.confirm_physical_listener_ear_input = True
+        builtin_preflight_report = build_headphone_preflight_report(
+            FakeBuiltinPreflightSoundDevice(),
+            builtin_args,
+        )
+        builtin_summary = builtin_preflight_report.get("summary", {})
+        if int(builtin_summary.get("capture_ready_route_triple_count") or 0) != 0:
+            raise RuntimeError("builtin laptop-style microphone must remain route triage only")
+        if builtin_summary.get("recommended_path") != "route_probe_triage_only_manual_listener_ear_capture_required":
+            raise RuntimeError("builtin laptop-style microphone should recommend triage only")
+        builtin_commands = builtin_preflight_report.get("benchmarks", {}).get(
+            "headphone_earpiece_preflight",
+            {},
+        ).get("recommended_commands", {})
+        if "capture" in builtin_commands:
+            raise RuntimeError("builtin laptop-style microphone must not emit guided capture")
+        if "route_probe_triage_only" not in builtin_commands:
+            raise RuntimeError("builtin laptop-style microphone should still emit route triage command")
+        json.dumps(builtin_preflight_report, allow_nan=False)
+
+        class FakeAmbiguousPreflightSoundDevice(FakePreflightSoundDevice):
+            def __init__(self) -> None:
+                self._hostapis = [{"name": "Windows WASAPI", "device_count": 3}]
+                self._devices = [
+                    {
+                        "default_samplerate": 48000.0,
+                        "hostapi": 0,
+                        "index": 0,
+                        "max_input_channels": 1,
+                        "max_output_channels": 0,
+                        "name": "USB Lavalier Ear Mic",
+                    },
+                    {
+                        "default_samplerate": 48000.0,
+                        "hostapi": 0,
+                        "index": 1,
+                        "max_input_channels": 0,
+                        "max_output_channels": 2,
+                        "name": "Headphones Speakers Combo",
+                    },
+                    {
+                        "default_samplerate": 48000.0,
+                        "hostapi": 0,
+                        "index": 2,
+                        "max_input_channels": 0,
+                        "max_output_channels": 2,
+                        "name": "Headphones Speakers Combo 2",
+                    },
+                ]
+
+        ambiguous_args = argparse.Namespace(**vars(preflight_args))
+        ambiguous_args.selected_route = ("0", "1", "2")
+        ambiguous_args.confirm_physical_listener_ear_input = True
+        ambiguous_preflight_report = build_headphone_preflight_report(
+            FakeAmbiguousPreflightSoundDevice(),
+            ambiguous_args,
+        )
+        ambiguous_summary = ambiguous_preflight_report.get("summary", {})
+        if int(ambiguous_summary.get("role_aligned_route_triple_count") or 0) <= 0:
+            raise RuntimeError("ambiguous preflight fixture should still form role-aligned routes")
+        if int(ambiguous_summary.get("capture_ready_route_triple_count") or 0) != 0:
+            raise RuntimeError("cross-labeled source/headphone outputs must not be capture-ready")
+        ambiguous_commands = ambiguous_preflight_report.get("benchmarks", {}).get(
+            "headphone_earpiece_preflight",
+            {},
+        ).get("recommended_commands", {})
+        if "capture" in ambiguous_commands:
+            raise RuntimeError("ambiguous source/headphone route must not emit guided capture")
+        json.dumps(ambiguous_preflight_report, allow_nan=False)
 
         virtual_result = virtual_lab(
             argparse.Namespace(
@@ -5466,6 +5871,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--confirm-physical-listener-ear-input",
         action="store_true",
         help="confirm the selected/input candidate is physically positioned at the listener-ear measurement point",
+    )
+    preflight_parser.add_argument(
+        "--selected-route",
+        type=parse_route_triple,
+        help="bind physical confirmation to INPUT:SOURCE_OUTPUT:HEADPHONE_OUTPUT from the preflight report",
     )
     preflight_parser.add_argument("--json", action="store_true")
     score_parser = subparsers.add_parser(
