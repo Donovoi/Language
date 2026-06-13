@@ -79,6 +79,15 @@ make gateway-run
 make flutter-run
 ```
 
+Windows without `make`/Bash can run the local gateway smoke baseline directly:
+
+```powershell
+pwsh -NoProfile -File scripts/smoke_local_demo.ps1
+```
+
+The PowerShell smoke honors the same `GATEWAY_HOST`, `GATEWAY_PORT`, `GATEWAY_PYTHON`,
+`REQUEST_TIMEOUT_SECONDS`, and `SMOKE_START_TIMEOUT_SECONDS` environment overrides as the Bash path.
+
 ### Disposable core test environment
 
 Use Docker when you want a clean, buildable, destroyable environment for the non-mobile checks:

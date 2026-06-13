@@ -44,6 +44,7 @@ make smoke-integration-demo
 ```
 
 - `make smoke-local-demo` is the fast baseline check for `GET /health`, `GET /v1/session`, and a deterministic SSE preview.
+- `pwsh -NoProfile -File scripts/smoke_local_demo.ps1` is the Windows-native equivalent for hosts without `make`, Bash, or WSL, and honors the same gateway host/port/Python/timeout environment overrides.
 - `make smoke-integration-demo` starts an isolated gateway on `127.0.0.1:8010`, verifies `GET /health`, streams progressive updates from `GET /v1/events/stream` while `POST /v1/mock/live-ingest` is active, then restarts the gateway and confirms the persisted session survives across `GET /v1/session` and the first SSE snapshot.
 - The manual Flutter follow-up lives in `docs/development/integration-smoke-runbook.md` and verifies the visible lane updates, lock messaging, and reconnect behavior in under 10 minutes.
 
