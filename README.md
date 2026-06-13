@@ -98,6 +98,14 @@ replacement for `make check`. The plain command refreshes `services/gateway/.ven
 target; pass `-UseExistingGatewayVenv` only when you deliberately want to reuse the current venv.
 The gateway currently supports Python `>=3.11,<3.14`; if `python` points elsewhere, pass
 `-Python <path-to-python-3.11-through-3.13>`.
+Windows local source and gateway package artifacts can be built with:
+
+```powershell
+pwsh -NoProfile -File scripts/package_local.ps1 -Python <path-to-python-3.11-through-3.13>
+```
+
+That command deletes and recreates `services/gateway/dist/` and refreshes
+`services/gateway/.venv`; use `-Action source-bundle` for source archives only.
 
 ### Disposable core test environment
 
