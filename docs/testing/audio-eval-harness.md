@@ -717,8 +717,8 @@ rate, minimum durations, and non-placeholder score labels are coherent.
 `scripts/release_audio_gate.py` writes `artifacts/release/audio-gate-report.json` plus the readable
 `artifacts/release/audio-gate-report.md` handoff, and exits nonzero until the product audio-loop
 evidence is present. The JSON remains the authoritative gate artifact; the Markdown report is for
-operator handoff and blocker triage. It is intentionally stricter than the warning-only research
-targets.
+operator handoff, blocker triage, and physical-evidence command hints. It is intentionally stricter
+than the warning-only research targets.
 
 ```bash
 make release-audio-gate
