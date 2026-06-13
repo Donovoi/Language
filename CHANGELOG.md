@@ -29,7 +29,7 @@ Repository prep for the first internal beta release candidate based on the curre
 - Manual headphone/earpiece release kit now writes `manual-recording-checklist.md` beside the JSON manifest so physical listener-ear take capture has exact filenames, setup notes, and follow-up commands.
 - Windows-native `scripts/smoke_local_demo.ps1` verifies the local gateway health/session/SSE smoke path without requiring `make`, Bash, or WSL.
 - Windows-native `scripts/check_local.ps1` mirrors the top-level `make check` validation path, enforces the gateway's supported Python range, and labels no-Flutter host runs as partial.
-- Windows-native `scripts/package_local.ps1` builds source bundles and gateway distributions without `make`, refusing dirty-tree release artifacts by default.
+- Windows-native `scripts/package_local.ps1` builds source bundles and gateway distributions without `make`, refusing dirty-tree release artifacts by default and writing a scope-specific local artifact manifest plus checksums.
 
 #### Changed
 

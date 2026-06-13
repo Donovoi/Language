@@ -105,7 +105,8 @@ pwsh -NoProfile -File scripts/package_local.ps1 -Python <path-to-python-3.11-thr
 ```
 
 That command deletes and recreates `services/gateway/dist/` and refreshes
-`services/gateway/.venv`; use `-Action source-bundle` for source archives only.
+`services/gateway/.venv`; use `-Action source-bundle` for source archives only. It also writes a
+scope-specific local artifact handoff manifest and `SHA256SUMS.txt` under `dist/local-release-artifacts/`.
 
 ### Disposable core test environment
 
