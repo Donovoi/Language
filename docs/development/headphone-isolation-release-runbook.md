@@ -79,6 +79,44 @@ for route triage unless it is physically positioned at the listener-ear point. T
 are the current-host improvised path with the laptop mic array; replace `17` and the microphone label
 with the real USB/lav/recorder input when you have that hardware.
 
+## Hardware Setup Checklist
+
+Before running the physical commands:
+
+1. Pair or connect the WH-1000XM6 headphones and confirm Windows is using the stereo headphone output,
+   not a hands-free/headset call profile, for translated playback.
+2. Use a separate measurement input for release evidence: a USB/lavalier mic at the earcup is best. If
+   you only have the laptop mic array, place one headphone earcup directly over the laptop mic opening
+   and keep that placement unchanged for the isolated-source and translated-playback takes.
+3. Do not use the WH-1000XM6 headset microphone as release evidence unless the mic is physically
+   positioned at the listener-ear acoustic point. The headset mic mostly hears the room and Windows
+   voice processing, so it is useful for route triage but not final isolation proof.
+4. Put the source speaker where it will be during the test, then leave it fixed. For the open-ear
+   control, the measurement mic should be exposed to the source. For the isolated-source take, seal
+   the headphone earcup over the same mic position while the source speaker plays the same route.
+5. Disable processing that can rewrite the probe signal: Windows audio enhancements, spatial audio,
+   input noise suppression, AGC/auto gain, echo cancellation, and communications ducking. In Windows
+   Sound settings, also set Communications behavior to "Do nothing" if available.
+6. Start with moderate output volume and `--playback-gain-db -18`. Increase to `-12` only if the
+   report says `recording_too_quiet`; lower it if the report says `recording_clipped`.
+7. Keep the room quiet during the short probe and capture takes. Do not move the mic, source speaker,
+   or headphone seal between the matching source-open and source-isolated takes.
+
+When a sweep or probe fails, use the diagnosis before changing hardware:
+
+- `route_not_opened`: the device id, host API, sample rate, or channel count is incompatible; relist
+  devices and try the same physical devices through another listed host API.
+- `recording_too_quiet`: move the measurement mic closer to the sound being measured or raise gain in
+  small steps.
+- `reference_not_detected` or `reference_distorted`: after the recording is loud enough, Windows or
+  Bluetooth processing is altering the probe, the wrong route is being recorded, or the mic is
+  hearing room spill instead of the target path; disable processing, try another host API, or use a
+  wired/USB listener-ear mic.
+- `recording_clipped`: lower playback gain or device output volume and rerun the same route.
+- `gate:headphone_route_outputs_distinct`: the selected source and headphone outputs resolved to the
+  same PortAudio device; pick a different physical output route unless you are deliberately running a
+  non-release shared-output diagnostic.
+
 ## Physical Test Commands
 
 Sweep uncertain routes first. This command is expected to produce a triage report; it is not release
@@ -92,6 +130,13 @@ Use the sweep's `candidate_attempt` only to choose the next single route. Then p
 Copy the candidate's exact `sample_rate_hz`, `input_channels`, and `output_channels` into both
 `probe-route` and `capture`. This command must pass without `--score-warning-only` before capture is
 worth running:
+
+If the sweep has no candidate, inspect `summary.failure_summary` and each attempt's `diagnosis`.
+`recording_too_quiet` means fix gain or mic placement before chasing fidelity. `reference_not_detected`
+or `reference_distorted` on a loud route means the microphone heard sound but not the generated probe
+faithfully; disable Windows enhancements/noise suppression/AGC/echo processing, move the mic or
+source, try another host API/device triple, or use a USB/wired listener-ear mic. `gate:*` entries
+count failed quality gates such as same-device source/headphone routing.
 
 ```powershell
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device 17 --source-output-device 14 --headphone-output-device 16 --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --playback-gain-db -18

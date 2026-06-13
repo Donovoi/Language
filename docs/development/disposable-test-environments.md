@@ -453,7 +453,10 @@ with every attempted listener-ear input/source output/headphone output triple, f
 best-scored attempt, and candidate attempt. It is also `release_proof=false`; rerun any candidate as a
 single `probe-route`, then run guided capture. If the sweep tries multiple sample rates or channel
 configs, copy the chosen `candidate_attempt`'s exact `sample_rate_hz`, `input_channels`, and
-`output_channels` into both follow-up commands.
+`output_channels` into both follow-up commands. Failed attempts include `diagnosis` and the sweep
+summary includes `failure_summary`; `gate:*` entries count route-gate failures, while route diagnosis
+distinguishes route-open errors, too-quiet recordings, clipping, and audible but reference-distorted
+Windows processing paths.
 The guided capture command records source-open and source-isolated through the same source output
 route, records translated playback through the headphone output, and embeds PortAudio device
 snapshots, a device-path fingerprint, per-take levels, clipping counts, and hashes. Placeholder labels
