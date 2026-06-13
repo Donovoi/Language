@@ -154,6 +154,7 @@ manual external-recorder path instead of lowering thresholds:
 
 ```powershell
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-prepare-manual --sample-rate-hz 48000 --playback-gain-db -18
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-check-manual --score-warning-only
 ```
 
 This writes release-derived playback references and a checklist manifest under
@@ -175,10 +176,20 @@ same 500 ms window; use a wider alignment window only for diagnosis, not release
 - `translated-headphone-recording.wav`: translated reference through the headphone/earpiece while it
   remains sealed over the mic.
 
-Then score those real recordings:
+Then run the manual-recording doctor without warning-only and with the real labels you will use for
+scoring. It checks that the kit manifest remains `release_proof=false`, both reference WAVs exist and
+still hash-match the manifest, all five WAVs are mono 16-bit PCM at the kit sample rate, the three
+listener-ear recordings meet the minimum duration, and the score labels are no longer placeholders. It writes
+`artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.json`:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-score --source-reference artifacts/audio_eval/runs/headphone-earpiece-manual-kit/source-reference.wav --source-open-ear-recording artifacts/audio_eval/runs/headphone-earpiece-manual-kit/source-open-ear-recording.wav --source-isolated-ear-recording artifacts/audio_eval/runs/headphone-earpiece-manual-kit/source-isolated-ear-recording.wav --translated-playback-reference artifacts/audio_eval/runs/headphone-earpiece-manual-kit/translated-playback-reference.wav --translated-headphone-recording artifacts/audio_eval/runs/headphone-earpiece-manual-kit/translated-headphone-recording.wav --headphone-device-label "Sony WH-1000XM6 over-ear headphones" --isolation-fixture-label "WH-1000XM6 left earcup sealed over listener-ear microphone" --measurement-microphone-label "placeholder REPLACE_WITH_REAL_MIC_MODEL_AND_POSITION"
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-check-manual --headphone-device-label "Sony WH-1000XM6 over-ear headphones" --isolation-fixture-label "WH-1000XM6 left earcup sealed over listener-ear microphone" --measurement-microphone-label "USB lavalier microphone capsule flush with left earcup listener-ear position"
+```
+
+Only score the real recordings after this command reports ready:
+
+```powershell
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-score --source-reference artifacts/audio_eval/runs/headphone-earpiece-manual-kit/source-reference.wav --source-open-ear-recording artifacts/audio_eval/runs/headphone-earpiece-manual-kit/source-open-ear-recording.wav --source-isolated-ear-recording artifacts/audio_eval/runs/headphone-earpiece-manual-kit/source-isolated-ear-recording.wav --translated-playback-reference artifacts/audio_eval/runs/headphone-earpiece-manual-kit/translated-playback-reference.wav --translated-headphone-recording artifacts/audio_eval/runs/headphone-earpiece-manual-kit/translated-headphone-recording.wav --headphone-device-label "Sony WH-1000XM6 over-ear headphones" --isolation-fixture-label "WH-1000XM6 left earcup sealed over listener-ear microphone" --measurement-microphone-label "USB lavalier microphone capsule flush with left earcup listener-ear position"
 ```
 
 The manual kit itself is not release evidence: it has `release_proof=false`. Only the scored report at
@@ -216,3 +227,5 @@ With only the WH-1000XM6 headset and no separate measurement mic, we can run:
 We cannot honestly claim final listener-ear isolation unless some microphone is placed at the
 listener-ear acoustic position. The cheapest unblocker is a small USB/lavalier microphone or a phone
 configured as a real input microphone, placed inside the headphone earcup during the guided capture.
+When using a phone or recorder, export WAV rather than compressed audio; the manual doctor will fail
+until the files are mono 16-bit PCM WAV at the exact sample rate named in the manifest.

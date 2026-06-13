@@ -374,6 +374,7 @@ pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-contract-che
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-list-devices
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-virtual-lab
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-prepare-manual --sample-rate-hz 48000 --playback-gain-db -18
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-check-manual --score-warning-only
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-sweep-routes --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --headphone-device-label "placeholder REPLACE_WITH_HEADPHONE_MODEL" --isolation-fixture-label "placeholder REPLACE_WITH_EARCUP_AND_MIC_POSITION" --measurement-microphone-label "placeholder REPLACE_WITH_MIC_MODEL_AND_POSITION"
@@ -470,8 +471,11 @@ If host routing remains unreliable, `headphone-isolation-prepare-manual` writes
 `artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-manifest.json` plus the
 source and translated reference WAVs. Record the three listener-ear WAVs named in that manifest with a
 phone, USB mic, or external recorder, export mono 16-bit PCM WAV at the kit sample rate, trim pre-roll
-so playback starts within 500 ms of recording start, then run `headphone-isolation-score` with
-specific hardware and fixture labels to create the same release-gated headphone isolation report.
+so playback starts within 500 ms of recording start, then run `headphone-isolation-check-manual`
+without warning-only before scoring. The doctor writes `manual-recording-status.json` and fails until
+the manifest, reference hashes, sample rate, mono 16-bit PCM format, and minimum recording durations
+are ready, and until `check-manual` receives specific hardware and fixture labels matching the later
+`headphone-isolation-score` command.
 
 ## Release Audio Evidence Gate
 

@@ -28,6 +28,7 @@ DEFAULT_ROUTE_PROBE_RUN_ID = "headphone-earpiece-route-probe"
 DEFAULT_ROUTE_PROBE_SWEEP_RUN_ID = "headphone-earpiece-route-probe-sweep"
 DEFAULT_VIRTUAL_LAB_RUN_ID = "headphone-earpiece-virtual-lab"
 DEFAULT_MANUAL_KIT_RUN_ID = "headphone-earpiece-manual-kit"
+DEFAULT_MANUAL_STATUS_REPORT = "manual-recording-status.json"
 DEFAULT_ADAPTER_ID = "listener_headphone_earpiece_isolation_measurement_v1"
 DEFAULT_ROUTE_PROBE_ADAPTER_ID = "listener_headphone_earpiece_route_probe_v1"
 DEFAULT_ROUTE_PROBE_SWEEP_ADAPTER_ID = "listener_headphone_earpiece_route_probe_sweep_v1"
@@ -74,6 +75,12 @@ CAPTURE_SOURCE_KIND_PORTAUDIO = "host_guided_listener_ear_playrec_measurement"
 CAPTURE_SOURCE_KIND_VIRTUAL = "synthetic_room_headphone_model"
 CAPTURE_BACKENDS = {CAPTURE_BACKEND_EXTERNAL, CAPTURE_BACKEND_PORTAUDIO}
 CAPTURE_SOURCE_KINDS = {CAPTURE_SOURCE_KIND_EXTERNAL, CAPTURE_SOURCE_KIND_PORTAUDIO}
+MANUAL_REQUIRED_RECORDINGS = (
+    "source_open_ear_recording",
+    "source_isolated_ear_recording",
+    "translated_headphone_recording",
+)
+MANUAL_REQUIRED_REFERENCES = ("source_reference", "translated_playback_reference")
 PLACEHOLDER_LABEL_PREFIXES = (
     "unspecified",
     "unknown",
@@ -404,6 +411,71 @@ def resolve_report_path(report_path: Path, value: Any) -> Path:
     if beside.exists():
         return beside
     return path
+
+
+def resolve_manual_manifest_path(manifest_path: Path, value: Any) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ValueError("expected non-empty manifest path")
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    candidates = [
+        path,
+        manifest_path.parent / path,
+        manifest_path.parent / path.name,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return path
+
+
+def inspect_mono_pcm16_wav(
+    path: Path,
+    *,
+    expected_sample_rate_hz: int,
+    min_duration_s: float,
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "exists": path.exists(),
+        "issues": [],
+        "path": str(path),
+        "passed": False,
+    }
+    if not path.exists():
+        result["issues"].append("missing")
+        return result
+    try:
+        with wave.open(str(path), "rb") as wav:
+            channels = int(wav.getnchannels())
+            sample_width = int(wav.getsampwidth())
+            sample_rate_hz = int(wav.getframerate())
+            frame_count = int(wav.getnframes())
+    except (OSError, wave.Error) as exc:
+        result["issues"].append(f"unreadable WAV: {exc}")
+        return result
+    duration_s = float(frame_count) / float(sample_rate_hz) if sample_rate_hz > 0 else 0.0
+    result.update(
+        {
+            "channels": channels,
+            "duration_s": round(duration_s, 6),
+            "frame_count": frame_count,
+            "sample_rate_hz": sample_rate_hz,
+            "sample_width_bytes": sample_width,
+        }
+    )
+    if channels != 1:
+        result["issues"].append("must be mono")
+    if sample_width != 2:
+        result["issues"].append("must be 16-bit PCM")
+    if sample_rate_hz != int(expected_sample_rate_hz):
+        result["issues"].append(f"sample rate must be {int(expected_sample_rate_hz)} Hz")
+    if frame_count <= 0:
+        result["issues"].append("must contain frames")
+    if duration_s < float(min_duration_s):
+        result["issues"].append(f"duration must be >= {float(min_duration_s):.3f}s")
+    result["passed"] = not result["issues"]
+    return result
 
 
 def load_tts_segments(report_path: Path) -> list[dict[str, Any]]:
@@ -2332,6 +2404,232 @@ def prepare_manual_kit(args: argparse.Namespace) -> int:
     return 0
 
 
+def check_manual_recordings(args: argparse.Namespace) -> int:
+    manifest_path = Path(args.manifest)
+    report_path = Path(args.report) if args.report else manifest_path.parent / DEFAULT_MANUAL_STATUS_REPORT
+    checks: list[dict[str, Any]] = []
+    warnings: list[str] = []
+    issues: list[str] = []
+
+    def add_check(name: str, passed: bool, message: str, value: Any = None) -> None:
+        check = {"message": message, "name": name, "passed": bool(passed)}
+        if value is not None:
+            check["value"] = value
+        checks.append(check)
+        if not passed:
+            issues.append(message)
+
+    manifest: dict[str, Any] = {}
+    if manifest_path.exists():
+        try:
+            loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                manifest = loaded
+            else:
+                issues.append("manifest JSON must be an object")
+        except (OSError, json.JSONDecodeError) as exc:
+            issues.append(f"manifest could not be read: {exc}")
+    else:
+        issues.append(f"manifest is missing: {manifest_path}")
+
+    if manifest:
+        add_check(
+            "manual_kit_not_release_proof",
+            manifest.get("release_proof") is False,
+            "manual kit manifest must remain release_proof=false",
+            manifest.get("release_proof"),
+        )
+        requirements = manifest.get("recording_requirements")
+        requirements = requirements if isinstance(requirements, dict) else {}
+        raw_sample_rate_hz = (
+            requirements.get("sample_rate_hz")
+            or manifest.get("sample_rate_hz")
+            or DEFAULT_SAMPLE_RATE_HZ
+        )
+        try:
+            expected_sample_rate_hz = int(raw_sample_rate_hz)
+            if expected_sample_rate_hz <= 0:
+                raise ValueError("must be positive")
+        except (TypeError, ValueError):
+            expected_sample_rate_hz = DEFAULT_SAMPLE_RATE_HZ
+            issues.append("recording sample_rate_hz must be a positive integer")
+        try:
+            min_duration_s = float(manifest.get("min_artifact_duration_s") or DEFAULT_MIN_MEASUREMENT_DURATION_S)
+            if min_duration_s <= 0.0:
+                raise ValueError("must be positive")
+        except (TypeError, ValueError):
+            min_duration_s = DEFAULT_MIN_MEASUREMENT_DURATION_S
+            issues.append("min_artifact_duration_s must be a positive number")
+        artifacts = manifest.get("artifact_paths")
+        artifacts = artifacts if isinstance(artifacts, dict) else {}
+        artifact_hashes = manifest.get("artifact_hashes")
+        artifact_hashes = artifact_hashes if isinstance(artifact_hashes, dict) else {}
+        expected_recordings = manifest.get("expected_recording_paths")
+        expected_recordings = expected_recordings if isinstance(expected_recordings, dict) else {}
+
+        reference_results: dict[str, Any] = {}
+        for key in MANUAL_REQUIRED_REFERENCES:
+            try:
+                path = resolve_manual_manifest_path(manifest_path, artifacts.get(key))
+            except ValueError as exc:
+                reference_results[key] = {"issues": [str(exc)], "passed": False}
+                issues.append(f"{key}: {exc}")
+                continue
+            result = inspect_mono_pcm16_wav(
+                path,
+                expected_sample_rate_hz=expected_sample_rate_hz,
+                min_duration_s=min_duration_s,
+            )
+            expected_hash = artifact_hashes.get(key)
+            if not expected_hash:
+                result["issues"].append("missing manifest hash")
+                result["passed"] = False
+            elif result["passed"]:
+                actual_hash = sha256_file(path)
+                result["sha256"] = actual_hash
+                if actual_hash != expected_hash:
+                    result["issues"].append("hash does not match manifest")
+                    result["passed"] = False
+            reference_results[key] = result
+            if not result["passed"]:
+                issues.append(f"{key}: {', '.join(result['issues'])}")
+        add_check(
+            "manual_reference_wavs_ready",
+            all(bool(item.get("passed")) for item in reference_results.values())
+            and len(reference_results) == len(MANUAL_REQUIRED_REFERENCES),
+            "manual kit source/translated reference WAVs must exist and match the manifest",
+            reference_results,
+        )
+
+        recording_results: dict[str, Any] = {}
+        for key in MANUAL_REQUIRED_RECORDINGS:
+            try:
+                path = resolve_manual_manifest_path(manifest_path, expected_recordings.get(key))
+            except ValueError as exc:
+                recording_results[key] = {"issues": [str(exc)], "passed": False}
+                issues.append(f"{key}: {exc}")
+                continue
+            result = inspect_mono_pcm16_wav(
+                path,
+                expected_sample_rate_hz=expected_sample_rate_hz,
+                min_duration_s=min_duration_s,
+            )
+            recording_results[key] = result
+            if not result["passed"]:
+                issues.append(f"{key}: {', '.join(result['issues'])}")
+        add_check(
+            "manual_recording_wavs_ready",
+            all(bool(item.get("passed")) for item in recording_results.values())
+            and len(recording_results) == len(MANUAL_REQUIRED_RECORDINGS),
+            "three listener-ear recordings must exist as mono 16-bit PCM WAVs at the kit sample rate",
+            recording_results,
+        )
+        files_ready = not issues and bool(manifest)
+
+        score_command = manifest.get("score_command")
+        score_command = score_command if isinstance(score_command, list) else []
+        label_flags = {
+            "headphone_device_label": "--headphone-device-label",
+            "isolation_fixture_label": "--isolation-fixture-label",
+            "measurement_microphone_label": "--measurement-microphone-label",
+        }
+        score_command_labels = {
+            attr: str(score_command[index + 1])
+            for attr, flag in label_flags.items()
+            for index, value in enumerate(score_command[:-1])
+            if value == flag
+        }
+        score_label_results: dict[str, Any] = {}
+        placeholder_labels = []
+        for attr, flag in label_flags.items():
+            provided = getattr(args, attr, None)
+            manifest_value = score_command_labels.get(attr)
+            if isinstance(provided, str) and specific_label(provided):
+                score_label_results[attr] = {
+                    "passed": True,
+                    "source": "check-manual argument",
+                    "value": provided,
+                }
+            elif isinstance(manifest_value, str) and specific_label(manifest_value):
+                score_label_results[attr] = {
+                    "passed": True,
+                    "source": "manifest score_command",
+                    "value": manifest_value,
+                }
+            else:
+                value = provided if isinstance(provided, str) and provided.strip() else manifest_value
+                placeholder_labels.append(str(value or flag))
+                score_label_results[attr] = {
+                    "passed": False,
+                    "source": "missing or placeholder",
+                    "value": value,
+                }
+        score_labels_specific = all(bool(item.get("passed")) for item in score_label_results.values())
+        add_check(
+            "manual_score_labels_specific",
+            score_labels_specific,
+            "specific headphone, listener-ear microphone, and fixture labels must be supplied before scoring",
+            score_label_results,
+        )
+        if placeholder_labels:
+            warnings.append(
+                "replace placeholder score-command labels with specific headphone, mic, and fixture labels before scoring"
+            )
+    else:
+        expected_sample_rate_hz = DEFAULT_SAMPLE_RATE_HZ
+        min_duration_s = DEFAULT_MIN_MEASUREMENT_DURATION_S
+        reference_results = {}
+        recording_results = {}
+        files_ready = False
+        placeholder_labels = []
+        score_labels_specific = False
+
+    ready = not issues and bool(manifest)
+    report = {
+        "schema_version": 1,
+        "generated_at_unix": int(time.time()),
+        "manifest_path": str(manifest_path),
+        "release_proof": False,
+        "summary": {
+            "issue_count": len(issues),
+            "manual_recordings_ready_for_score_input": files_ready,
+            "manual_score_labels_specific": score_labels_specific,
+            "manual_score_ready": ready,
+            "placeholder_label_count": len(placeholder_labels),
+            "release_proof": False,
+            "warning_count": len(warnings),
+        },
+        "checks": checks,
+        "issues": issues,
+        "warnings": warnings,
+        "recording_requirements": {
+            "format": "mono 16-bit PCM WAV",
+            "min_duration_s": min_duration_s,
+            "sample_rate_hz": expected_sample_rate_hz,
+            "sync": "trim recording pre-roll so played reference starts within 500 ms",
+        },
+        "detractor_loop": {
+            "strongest_objection": (
+                "This status report checks file shape only. It does not prove source isolation, "
+                "translated fidelity, microphone placement, or headphone seal."
+            ),
+            "verdict": "Use this before score; only the scored headphone-isolation report can satisfy release evidence.",
+        },
+    }
+    report = json_safe(report)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True))
+    status = "SCORE-READY" if ready else ("FILES-READY-LABELS-PENDING" if files_ready else "NOT-READY")
+    print(
+        f"headphone/earpiece manual recordings {status}: "
+        f"issues={len(issues)}, warnings={len(warnings)}"
+    )
+    print(f"wrote manual recording status to {report_path}")
+    return 0 if ready or args.score_warning_only else 1
+
+
 def capture(args: argparse.Namespace) -> int:
     for field in ("headphone_device_label", "isolation_fixture_label", "measurement_microphone_label"):
         if not specific_label(getattr(args, field)):
@@ -2657,6 +2955,134 @@ def self_test() -> int:
             raise RuntimeError("manual recording kit should include a score command")
         if not manual_manifest.get("expected_recording_paths", {}).get("source_open_ear_recording"):
             raise RuntimeError("manual recording kit should name expected recording paths")
+        missing_manual_result = check_manual_recordings(
+            argparse.Namespace(
+                json=False,
+                manifest=manual_manifest_path,
+                report=manual_manifest_path.parent / "manual-recording-status-missing.json",
+                score_warning_only=True,
+            )
+        )
+        if missing_manual_result != 0:
+            raise RuntimeError("warning-only manual recording status should return 0 before recordings exist")
+        missing_manual_status = json.loads(
+            (manual_manifest_path.parent / "manual-recording-status-missing.json").read_text(encoding="utf-8")
+        )
+        if bool(missing_manual_status.get("summary", {}).get("manual_recordings_ready_for_score_input")):
+            raise RuntimeError("expected manual recording status to reject missing listener-ear recordings")
+        expected_recordings = manual_manifest.get("expected_recording_paths", {})
+        write_mono_wav(
+            Path(expected_recordings["source_open_ear_recording"]),
+            add_padding(source_open, sample_rate_hz, 0.1, 0.1),
+            sample_rate_hz,
+        )
+        write_mono_wav(
+            Path(expected_recordings["source_isolated_ear_recording"]),
+            add_padding(source_isolated, sample_rate_hz, 0.1, 0.1),
+            sample_rate_hz,
+        )
+        write_mono_wav(
+            Path(expected_recordings["translated_headphone_recording"]),
+            add_padding(translated_recording, sample_rate_hz, 0.1, 0.1),
+            sample_rate_hz,
+        )
+        ready_manual_result = check_manual_recordings(
+            argparse.Namespace(
+                json=False,
+                manifest=manual_manifest_path,
+                report=manual_manifest_path.parent / "manual-recording-status-ready.json",
+                score_warning_only=False,
+            )
+        )
+        if ready_manual_result != 1:
+            raise RuntimeError("expected manual recording status to block score-ready state while labels are placeholders")
+        placeholder_manual_status = json.loads(
+            (manual_manifest_path.parent / "manual-recording-status-ready.json").read_text(encoding="utf-8")
+        )
+        if not bool(placeholder_manual_status.get("summary", {}).get("manual_recordings_ready_for_score_input")):
+            raise RuntimeError("expected manual recording status to mark valid WAV recordings ready")
+        if bool(placeholder_manual_status.get("summary", {}).get("manual_score_ready")):
+            raise RuntimeError("manual recording status must not be score-ready with placeholder labels")
+        if int(placeholder_manual_status.get("summary", {}).get("placeholder_label_count") or 0) <= 0:
+            raise RuntimeError("manual recording status should warn about placeholder score-command labels")
+        ready_manual_result = check_manual_recordings(
+            argparse.Namespace(
+                headphone_device_label="unit headphones",
+                isolation_fixture_label="unit sealed-ear fixture",
+                json=False,
+                manifest=manual_manifest_path,
+                measurement_microphone_label="unit ear microphone",
+                report=manual_manifest_path.parent / "manual-recording-status-ready-with-labels.json",
+                score_warning_only=False,
+            )
+        )
+        if ready_manual_result != 0:
+            raise RuntimeError("expected manual recording status to pass after valid WAV recordings and labels exist")
+        ready_manual_status = json.loads(
+            (manual_manifest_path.parent / "manual-recording-status-ready-with-labels.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        if not bool(ready_manual_status.get("summary", {}).get("manual_recordings_ready_for_score_input")):
+            raise RuntimeError("expected manual recording status to mark valid listener-ear recordings ready")
+        if not bool(ready_manual_status.get("summary", {}).get("manual_score_ready")):
+            raise RuntimeError("expected manual recording status to mark valid listener-ear recordings score-ready")
+        if ready_manual_status.get("summary", {}).get("release_proof") is not False:
+            raise RuntimeError("manual recording status must not set release_proof")
+        if int(ready_manual_status.get("summary", {}).get("placeholder_label_count") or 0) != 0:
+            raise RuntimeError("manual recording status should clear placeholder labels when explicit labels are supplied")
+        missing_hash_manifest = json.loads(json.dumps(manual_manifest))
+        missing_hash_manifest["artifact_hashes"].pop("source_reference", None)
+        missing_hash_manifest_path = manual_manifest_path.parent / "manual-recording-manifest-missing-hash.json"
+        missing_hash_manifest_path.write_text(
+            json.dumps(missing_hash_manifest, indent=2, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        missing_hash_result = check_manual_recordings(
+            argparse.Namespace(
+                json=False,
+                manifest=missing_hash_manifest_path,
+                report=manual_manifest_path.parent / "manual-recording-status-missing-hash.json",
+                score_warning_only=True,
+            )
+        )
+        if missing_hash_result != 0:
+            raise RuntimeError("warning-only manual recording status should return 0 for malformed manifest")
+        missing_hash_status = json.loads(
+            (manual_manifest_path.parent / "manual-recording-status-missing-hash.json").read_text(encoding="utf-8")
+        )
+        if bool(missing_hash_status.get("summary", {}).get("manual_recordings_ready_for_score_input")):
+            raise RuntimeError("manual recording status must reject references without manifest hashes")
+        if not any("missing manifest hash" in issue for issue in missing_hash_status.get("issues", [])):
+            raise RuntimeError("manual recording status should explain missing manifest hashes")
+        malformed_manifest = json.loads(json.dumps(manual_manifest))
+        malformed_manifest["recording_requirements"]["sample_rate_hz"] = "not-a-sample-rate"
+        malformed_manifest["min_artifact_duration_s"] = "not-a-duration"
+        malformed_manifest_path = manual_manifest_path.parent / "manual-recording-manifest-malformed.json"
+        malformed_manifest_path.write_text(
+            json.dumps(malformed_manifest, indent=2, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        malformed_result = check_manual_recordings(
+            argparse.Namespace(
+                json=False,
+                manifest=malformed_manifest_path,
+                report=manual_manifest_path.parent / "manual-recording-status-malformed.json",
+                score_warning_only=True,
+            )
+        )
+        if malformed_result != 0:
+            raise RuntimeError("warning-only manual recording status should return 0 for bad manifest fields")
+        malformed_status = json.loads(
+            (manual_manifest_path.parent / "manual-recording-status-malformed.json").read_text(encoding="utf-8")
+        )
+        malformed_issues = malformed_status.get("issues", [])
+        if bool(malformed_status.get("summary", {}).get("manual_recordings_ready_for_score_input")):
+            raise RuntimeError("manual recording status must reject malformed numeric manifest fields")
+        if not any("sample_rate_hz" in issue for issue in malformed_issues):
+            raise RuntimeError("manual recording status should explain malformed sample_rate_hz")
+        if not any("min_artifact_duration_s" in issue for issue in malformed_issues):
+            raise RuntimeError("manual recording status should explain malformed min_artifact_duration_s")
         json.dumps(manual_manifest, allow_nan=False)
         limited_segments = limit_reference_segments(
             [
@@ -3151,6 +3577,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=DEFAULT_MIN_MEASUREMENT_DURATION_S,
     )
+    check_manual_parser = subparsers.add_parser(
+        "check-manual",
+        help="check whether manual listener-ear recordings are ready to pass into score",
+    )
+    check_manual_parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR
+        / "runs"
+        / DEFAULT_MANUAL_KIT_RUN_ID
+        / "manual-recording-manifest.json",
+    )
+    check_manual_parser.add_argument("--report", type=Path)
+    check_manual_parser.add_argument("--headphone-device-label")
+    check_manual_parser.add_argument("--isolation-fixture-label")
+    check_manual_parser.add_argument("--measurement-microphone-label")
+    check_manual_parser.add_argument("--json", action="store_true")
+    check_manual_parser.add_argument("--score-warning-only", action="store_true")
     capture_parser = subparsers.add_parser(
         "capture",
         help="guide a host PortAudio measurement and then score the captured WAV artifacts",
@@ -3355,6 +3799,8 @@ def main(argv: list[str] | None = None) -> int:
         return score(args)
     if args.command == "prepare-manual":
         return prepare_manual_kit(args)
+    if args.command == "check-manual":
+        return check_manual_recordings(args)
     if args.command == "capture":
         return capture(args)
     if args.command == "probe-route":
