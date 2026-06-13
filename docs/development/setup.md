@@ -96,12 +96,17 @@ PortAudio can see Bluetooth, WASAPI, USB, and built-in microphone devices direct
 $env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action self-test -Python $env:LANGUAGE_PYTHON
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action virtual-lab -Python $env:LANGUAGE_PYTHON
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action prepare-manual -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --playback-gain-db -18
 ```
 
 The wrapper creates `.venv-audio-local/` and installs only the packages needed for the selected
-action. Device-listing, route-probe, sweep, capture, and manual-playback actions also install
-`sounddevice`; pure manifest/scoring actions need only `numpy`.
+action. Device-listing, preflight, route-probe, sweep, capture, and manual-playback actions also
+install `sounddevice`; pure manifest/scoring actions need only `numpy`. Preflight is no-audio
+hardware planning only and writes `release_proof=false` reports under
+`artifacts/audio_eval/runs/headphone-earpiece-preflight/`. For an improvised laptop-mic release
+attempt, place the headphone earcup over the laptop mic opening and rerun preflight with
+`--confirm-physical-listener-ear-input` before guided capture.
 
 The smoke script uses non-mutating `mode=FOCUS` preview requests for the session and SSE checks so the result stays deterministic even if the in-memory session was changed earlier during local testing.
 

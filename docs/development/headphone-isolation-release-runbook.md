@@ -68,6 +68,8 @@ Device numbers can shift. Always list devices first:
 ```powershell
 $env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action list-devices -Python $env:LANGUAGE_PYTHON
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --confirm-physical-listener-ear-input
 ```
 
 On the current host snapshot, likely candidates were:
@@ -81,6 +83,11 @@ For final evidence, prefer a measurement mic physically inside/at the earcup. Us
 for route triage unless it is physically positioned at the listener-ear point. The `17` examples below
 are the current-host improvised path with the laptop mic array; replace `17` and the microphone label
 with the real USB/lav/recorder input when you have that hardware.
+The preflight command does not play or record audio. It writes
+`artifacts/audio_eval/runs/headphone-earpiece-preflight/headphone-preflight-report.json` and
+`headphone-preflight-report.md` with a device inventory fingerprint, likely input/output roles,
+route candidates, and a recommendation to try guided capture after physical input confirmation or
+switch to the manual external recorder path. It always remains `release_proof=false`.
 
 ## Windows Host-Local Wrapper
 
@@ -92,6 +99,8 @@ installs `sounddevice` only for commands that touch host devices:
 $env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action self-test -Python $env:LANGUAGE_PYTHON
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action list-devices -Python $env:LANGUAGE_PYTHON
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --confirm-physical-listener-ear-input
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action prepare-manual -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --playback-gain-db -18
 ```
 
@@ -121,6 +130,11 @@ Before running the physical commands:
    report says `recording_too_quiet`; lower it if the report says `recording_clipped`.
 7. Keep the room quiet during the short probe and capture takes. Do not move the mic, source speaker,
    or headphone seal between the matching source-open and source-isolated takes.
+8. Run `preflight` before `sweep-routes` or `probe-route`. If you are using the laptop mic array,
+   place one headphone earcup directly over the laptop mic opening, keep that position fixed, and
+   rerun preflight with `--confirm-physical-listener-ear-input` before guided capture. If preflight
+   still recommends `manual_external_recorder_preferred` or `manual_external_recorder_required`, use
+   the manual kit unless you have a specific route-triage reason to keep testing guided capture.
 
 When a sweep or probe fails, use the diagnosis before changing hardware:
 

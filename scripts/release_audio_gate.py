@@ -3158,6 +3158,7 @@ def self_test() -> None:
         mismatched_guided_headphone = root / "mismatched-guided-headphone.json"
         hybrid_capture_headphone = root / "hybrid-capture-headphone.json"
         route_sweep_headphone = root / "route-sweep-headphone.json"
+        preflight_headphone = root / "preflight-headphone.json"
         virtual_lab_headphone = root / "virtual-lab-headphone.json"
         qualification_room = root / "qualification-room.json"
         sweep_room = root / "sweep-room.json"
@@ -3295,6 +3296,28 @@ def self_test() -> None:
                             "measurement_kind": "headphone_earpiece_route_probe_sweep_triage",
                             "release_proof": False,
                             "triage_candidate_found": True,
+                        },
+                    }
+                },
+            ),
+        )
+        _write_json(
+            preflight_headphone,
+            _report(
+                True,
+                [{"name": "headphone_preflight_physical_listener_ear_input_confirmed", "passed": True}],
+                fixture_kind="headphone_earpiece_preflight",
+                measurement_kind="headphone_earpiece_preflight",
+                release_proof=False,
+                benchmarks={
+                    "headphone_earpiece_preflight": {
+                        "adapter_id": "unit_headphone_preflight",
+                        "candidate_route_triples": [{"input_device": 0, "source_output_device": 1, "headphone_output_device": 2}],
+                        "summary": {
+                            "measurement_kind": "headphone_earpiece_preflight",
+                            "planning_passed": True,
+                            "recommended_path": "guided_capture_possible",
+                            "release_proof": False,
                         },
                     }
                 },
@@ -3586,6 +3609,18 @@ def self_test() -> None:
             raise AssertionError("expected headphone route sweep report to fail release gate")
         if "fixture_kind" not in route_sweep_message or "release_proof" not in route_sweep_message:
             raise AssertionError("expected headphone route sweep rejection to cite release metadata")
+
+        preflight_headphone_args = argparse.Namespace(**vars(complete_args))
+        preflight_headphone_args.room_suppression_report = forged_room
+        preflight_headphone_args.headphone_isolation_report = preflight_headphone
+        release_results, prototype_results = evaluate(preflight_headphone_args)
+        report = build_report(release_results, prototype_results)
+        failed = {gate.name: gate.message for gate in release_results if not gate.passed}
+        preflight_message = failed.get("playback_source_suppression_evidence", "")
+        if report["summary"]["passed"] or not preflight_message:
+            raise AssertionError("expected headphone preflight report to fail release gate")
+        if "fixture_kind" not in preflight_message or "release_proof" not in preflight_message:
+            raise AssertionError("expected headphone preflight rejection to cite release metadata")
 
         virtual_lab_headphone_args = argparse.Namespace(**vars(complete_args))
         virtual_lab_headphone_args.room_suppression_report = forged_room

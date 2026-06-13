@@ -155,6 +155,7 @@ make real-room-playback-suppression-sweep-devices
 make real-room-playback-suppression-check
 make headphone-isolation-contract-check
 make headphone-isolation-list-devices
+HEADPHONE_ISOLATION_PREFLIGHT_ARGS='--sample-rate-hz 48000 --input-channels 1 --output-channels 2' make headphone-isolation-preflight
 HEADPHONE_ISOLATION_SWEEP_ROUTES_ARGS='--triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only' make headphone-isolation-sweep-routes
 HEADPHONE_ISOLATION_PROBE_ROUTE_ARGS='--measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2' make headphone-isolation-probe-route
 HEADPHONE_ISOLATION_PREPARE_MANUAL_ARGS='--sample-rate-hz 48000 --playback-gain-db -18' make headphone-isolation-prepare-manual
@@ -233,6 +234,7 @@ $fixtureLabel = "REPLACE_WITH_EARCUP_AND_MIC_POSITION"
 $microphoneLabel = "REPLACE_WITH_MIC_MODEL_AND_POSITION"
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action self-test -Python $env:LANGUAGE_PYTHON
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action list-devices -Python $env:LANGUAGE_PYTHON
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action sweep-routes -Python $env:LANGUAGE_PYTHON --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action probe-route -Python $env:LANGUAGE_PYTHON --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action prepare-manual -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --playback-gain-db -18
@@ -245,6 +247,14 @@ pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action virtual-lab 
 The wrapper creates `.venv-audio-local/`, installs `numpy`, and installs `sounddevice` only for
 actions that touch host audio devices. Pass `-RecreateVenv` when you want to rebuild that small
 environment from scratch.
+The `preflight` action only enumerates and classifies host audio devices; it does not play or record
+audio. It writes
+`artifacts/audio_eval/runs/headphone-earpiece-preflight/headphone-preflight-report.json` and
+`headphone-preflight-report.md` with route candidates, a guided-capture/manual-recorder
+recommendation, and `release_proof=false`. If you use the laptop microphone array as the improvised
+listener-ear mic, physically place one headphone earcup over the laptop mic opening, keep that
+placement fixed, and rerun preflight with `--confirm-physical-listener-ear-input` before guided
+capture.
 
 The June 12, 2026 SoundWire/WASAPI measurements currently fail release: the 48 kHz device
 qualification recorded audible calibration but failed reference fidelity
@@ -291,6 +301,8 @@ $env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
 $headphoneLabel = "REPLACE_WITH_HEADPHONE_MODEL"
 $fixtureLabel = "REPLACE_WITH_EARCUP_AND_MIC_POSITION"
 $microphoneLabel = "REPLACE_WITH_MIC_MODEL_AND_POSITION"
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --confirm-physical-listener-ear-input
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action sweep-routes -Python $env:LANGUAGE_PYTHON --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action probe-route -Python $env:LANGUAGE_PYTHON --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action capture -Python $env:LANGUAGE_PYTHON --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel
