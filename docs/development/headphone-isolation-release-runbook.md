@@ -158,12 +158,14 @@ pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-prepare-manu
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-check-manual --score-warning-only
 ```
 
-This writes release-derived playback references and a checklist manifest under
+This writes release-derived playback references, a JSON manifest, and a human-readable recording
+checklist under
 `artifacts/audio_eval/runs/headphone-earpiece-manual-kit/`:
 
 - `source-reference.wav`
 - `translated-playback-reference.wav`
 - `manual-recording-manifest.json`
+- `manual-recording-checklist.md`
 
 Optionally dry-run the manifest playback plan before touching the recorder:
 

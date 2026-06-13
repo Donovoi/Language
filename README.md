@@ -253,9 +253,9 @@ flag route-gate failures, `recording_too_quiet` means fix gain/placement first, 
 `reference_not_detected` usually means Windows processing, route mismatch, or poor mic placement.
 If Bluetooth or Windows routing blocks guided capture, use `headphone-isolation-prepare-manual`
 instead. It writes `source-reference.wav`, `translated-playback-reference.wav`, and
-`manual-recording-manifest.json` under
+`manual-recording-manifest.json` plus a human-readable `manual-recording-checklist.md` under
 `artifacts/audio_eval/runs/headphone-earpiece-manual-kit/`; record the three expected listener-ear
-WAVs named in that manifest with a phone/USB mic. The optional
+WAVs named in that manifest/checklist with a phone/USB mic. The optional
 `headphone-isolation-play-manual` helper can play the exact manifest references through the source
 and headphone outputs while the external recorder is rolling; it requires explicit output devices
 unless you deliberately pass `--output-device` or `--allow-default-output`. Its
