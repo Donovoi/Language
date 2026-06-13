@@ -591,10 +591,14 @@ When PortAudio routing is the blocker, `headphone-isolation-prepare-manual` crea
 reference WAVs and `manual-recording-manifest.json` for a phone/USB mic/external recorder flow. The
 manual kit remains `release_proof=false`; use `headphone-isolation-score-manual` after collecting
 real listener-ear, mono 16-bit PCM WAV recordings trimmed within the 500 ms release alignment window
-to write the release-gated `headphone-isolation-report.json`. Run `headphone-isolation-check-manual`
-after recording and before scoring; it writes `manual-recording-status.json` and blocks until the
-manifest, reference hashes, WAV headers, sample rate, minimum durations, and non-placeholder score
-labels are coherent.
+to write the release-gated `headphone-isolation-report.json`. The optional
+`headphone-isolation-play-manual` host helper plays the manifest references through selected outputs
+and writes `manual-playback-log.json` with `release_proof=false`; it is recording assistance only.
+It requires explicit source/headphone output devices unless `--output-device` or
+`--allow-default-output` is passed deliberately.
+Run `headphone-isolation-check-manual` after recording and before scoring; it writes
+`manual-recording-status.json` and blocks until the manifest, reference hashes, WAV headers, sample
+rate, minimum durations, and non-placeholder score labels are coherent.
 
 ## Release Audio Evidence Gate
 

@@ -165,6 +165,26 @@ This writes release-derived playback references and a checklist manifest under
 - `translated-playback-reference.wav`
 - `manual-recording-manifest.json`
 
+Optionally dry-run the manifest playback plan before touching the recorder:
+
+```powershell
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-play-manual --dry-run --source-output-device 14 --headphone-output-device 16
+```
+
+For a minimal hardware setup, use:
+
+- source output: laptop speakers or another speaker that is not the Bluetooth headset
+- headphone output: the Bluetooth headset/earpiece being tested
+- measurement recorder: a phone voice recorder, USB mic, field recorder, or other recorder that is not
+  the same Bluetooth headset mic
+
+Put the recorder mic at the listener-ear position. For `source-open-ear-recording.wav`, leave the
+headset/earpiece off or unsealed so the recorder hears the source speaker. For
+`source-isolated-ear-recording.wav`, keep the source speaker in the same place and seal the headset
+earcup/earpiece over the recorder mic. For `translated-headphone-recording.wav`, keep the seal and
+play the translated reference through the headset. Keep the playback level comfortable and avoid
+clipping on the recorder; it is better to repeat the take than to rescue distorted audio later.
+
 Record the three expected WAVs named in the manifest with the mic at the listener-ear position. Export
 each recording as mono 16-bit PCM WAV at the kit sample rate, and trim pre-roll so the played
 reference begins within 500 ms of the recording start. The release gate recomputes alignment with the
@@ -176,6 +196,20 @@ same 500 ms window; use a wider alignment window only for diagnosis, not release
   sealed over the mic.
 - `translated-headphone-recording.wav`: translated reference through the headphone/earpiece while it
   remains sealed over the mic.
+
+If you want the repo to play the references instead of using an external media player, start the
+phone/USB recorder for each prompted take and run:
+
+```powershell
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-play-manual --source-output-device 14 --headphone-output-device 16
+```
+
+The playback helper requires explicit source/headphone output devices, or one deliberate
+`--output-device` override, so a default Windows route does not silently produce bad recordings. Use
+`--allow-default-output` only for diagnosis when you have manually verified the default route.
+
+This writes `manual-playback-log.json` with `release_proof=false`. It is only an operator trace; the
+release evidence still comes from the scored listener-ear WAV recordings.
 
 Then run the manual-recording doctor without warning-only and with the real labels you will use for
 scoring. It checks that the kit manifest remains `release_proof=false`, both reference WAVs exist and

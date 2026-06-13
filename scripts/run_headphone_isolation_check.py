@@ -29,6 +29,7 @@ DEFAULT_ROUTE_PROBE_SWEEP_RUN_ID = "headphone-earpiece-route-probe-sweep"
 DEFAULT_VIRTUAL_LAB_RUN_ID = "headphone-earpiece-virtual-lab"
 DEFAULT_MANUAL_KIT_RUN_ID = "headphone-earpiece-manual-kit"
 DEFAULT_MANUAL_STATUS_REPORT = "manual-recording-status.json"
+DEFAULT_MANUAL_PLAYBACK_LOG = "manual-playback-log.json"
 DEFAULT_ADAPTER_ID = "listener_headphone_earpiece_isolation_measurement_v1"
 DEFAULT_ROUTE_PROBE_ADAPTER_ID = "listener_headphone_earpiece_route_probe_v1"
 DEFAULT_ROUTE_PROBE_SWEEP_ADAPTER_ID = "listener_headphone_earpiece_route_probe_sweep_v1"
@@ -81,6 +82,26 @@ MANUAL_REQUIRED_RECORDINGS = (
     "translated_headphone_recording",
 )
 MANUAL_REQUIRED_REFERENCES = ("source_reference", "translated_playback_reference")
+MANUAL_PLAYBACK_TAKES = {
+    "source-open": {
+        "reference_key": "source_reference",
+        "recording_key": "source_open_ear_recording",
+        "route": "source",
+        "summary": "open-ear source control",
+    },
+    "source-isolated": {
+        "reference_key": "source_reference",
+        "recording_key": "source_isolated_ear_recording",
+        "route": "source",
+        "summary": "isolated source take",
+    },
+    "translated": {
+        "reference_key": "translated_playback_reference",
+        "recording_key": "translated_headphone_recording",
+        "route": "headphone",
+        "summary": "translated headphone playback take",
+    },
+}
 PLACEHOLDER_LABEL_PREFIXES = (
     "unspecified",
     "unknown",
@@ -2689,6 +2710,261 @@ def score_manual_recordings(args: argparse.Namespace) -> int:
     return score(score_args)
 
 
+def manual_take_names(values: list[str] | None) -> list[str]:
+    requested = values or ["all"]
+    if "all" in requested:
+        return list(MANUAL_PLAYBACK_TAKES.keys())
+    names: list[str] = []
+    for value in requested:
+        if value not in MANUAL_PLAYBACK_TAKES:
+            raise ValueError(f"unknown manual playback take: {value}")
+        if value not in names:
+            names.append(value)
+    return names
+
+
+def manual_playback_output_device(args: argparse.Namespace, route: str) -> int | str | None:
+    override = parse_device_selector(getattr(args, "output_device", None))
+    if override is not None:
+        return override
+    if route == "source":
+        output_device = parse_device_selector(getattr(args, "source_output_device", None))
+        if output_device is None and not bool(getattr(args, "allow_default_output", False)):
+            raise ValueError("source manual playback takes require --source-output-device or --output-device")
+        return output_device
+    if route == "headphone":
+        output_device = parse_device_selector(getattr(args, "headphone_output_device", None))
+        if output_device is None and not bool(getattr(args, "allow_default_output", False)):
+            raise ValueError("translated manual playback takes require --headphone-output-device or --output-device")
+        return output_device
+    raise ValueError(f"unknown manual playback route: {route}")
+
+
+def manual_reference_result(
+    *,
+    artifact_hashes: dict[str, Any],
+    expected_sample_rate_hz: int,
+    key: str,
+    manifest_path: Path,
+    min_duration_s: float,
+    path: Path,
+) -> dict[str, Any]:
+    result = inspect_mono_pcm16_wav(
+        path,
+        expected_sample_rate_hz=expected_sample_rate_hz,
+        min_duration_s=min_duration_s,
+    )
+    expected_hash = artifact_hashes.get(key)
+    if not expected_hash:
+        result["issues"].append("missing manifest hash")
+        result["passed"] = False
+    elif result["passed"]:
+        actual_hash = sha256_file(path)
+        result["sha256"] = actual_hash
+        if actual_hash != expected_hash:
+            result["issues"].append("hash does not match manifest")
+            result["passed"] = False
+    result["manifest_path"] = str(manifest_path)
+    return result
+
+
+def build_manual_playback_plan(args: argparse.Namespace) -> tuple[Path, dict[str, Any], list[dict[str, Any]]]:
+    manifest_path = Path(args.manifest)
+    manifest = load_manual_manifest(manifest_path)
+    artifacts = manifest.get("artifact_paths")
+    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    artifact_hashes = manifest.get("artifact_hashes")
+    artifact_hashes = artifact_hashes if isinstance(artifact_hashes, dict) else {}
+    expected_recordings = manifest.get("expected_recording_paths")
+    expected_recordings = expected_recordings if isinstance(expected_recordings, dict) else {}
+    requirements = manifest.get("recording_requirements")
+    requirements = requirements if isinstance(requirements, dict) else {}
+    try:
+        expected_sample_rate_hz = int(
+            requirements.get("sample_rate_hz")
+            or manifest.get("sample_rate_hz")
+            or DEFAULT_SAMPLE_RATE_HZ
+        )
+    except (TypeError, ValueError) as exc:
+        raise ValueError("manual playback manifest sample_rate_hz must be an integer") from exc
+    try:
+        min_duration_s = float(manifest.get("min_artifact_duration_s") or DEFAULT_MIN_MEASUREMENT_DURATION_S)
+        if min_duration_s <= 0.0:
+            raise ValueError
+    except (TypeError, ValueError) as exc:
+        raise ValueError("manual playback manifest min_artifact_duration_s must be a positive number") from exc
+    if manifest.get("release_proof") is not False:
+        raise ValueError("manual playback manifest must remain release_proof=false")
+
+    reference_paths = {
+        key: resolve_manual_manifest_path(manifest_path, artifacts.get(key))
+        for key in MANUAL_REQUIRED_REFERENCES
+    }
+    reference_results = {
+        key: manual_reference_result(
+            artifact_hashes=artifact_hashes,
+            expected_sample_rate_hz=expected_sample_rate_hz,
+            key=key,
+            manifest_path=manifest_path,
+            min_duration_s=min_duration_s,
+            path=path,
+        )
+        for key, path in reference_paths.items()
+    }
+    failed_references = {
+        key: value.get("issues", [])
+        for key, value in reference_results.items()
+        if not value.get("passed")
+    }
+    if failed_references:
+        raise ValueError(f"manual playback references are not ready: {failed_references}")
+
+    plan: list[dict[str, Any]] = []
+    for take_name in manual_take_names(args.take):
+        take = MANUAL_PLAYBACK_TAKES[take_name]
+        reference_key = str(take["reference_key"])
+        recording_key = str(take["recording_key"])
+        route = str(take["route"])
+        reference_path = reference_paths[reference_key]
+        reference_audio, reference_rate_hz = read_mono_wav(reference_path)
+        output_device = manual_playback_output_device(args, route)
+        plan.append(
+            {
+                "duration_s": round(float(reference_audio.size) / float(reference_rate_hz), 6),
+                "expected_recording_path": str(
+                    resolve_manual_manifest_path(manifest_path, expected_recordings.get(recording_key))
+                ),
+                "output_channels": int(args.output_channels),
+                "reference_key": reference_key,
+                "reference_path": str(reference_path),
+                "reference_sha256": sha256_file(reference_path),
+                "route": route,
+                "sample_rate_hz": int(reference_rate_hz),
+                "summary": str(take["summary"]),
+                "take": take_name,
+                "requested_output_device": output_device,
+            }
+        )
+    return manifest_path, manifest, plan
+
+
+def play_manual_references(args: argparse.Namespace) -> int:
+    if int(args.output_channels) <= 0:
+        raise ValueError("--output-channels must be positive")
+    if int(args.repeat) <= 0:
+        raise ValueError("--repeat must be positive")
+    manifest_path = Path(args.manifest)
+    log_path = Path(args.log) if args.log else manifest_path.parent / DEFAULT_MANUAL_PLAYBACK_LOG
+    try:
+        manifest_path, manifest, plan = build_manual_playback_plan(args)
+    except Exception as exc:
+        log = json_safe(
+            {
+                "schema_version": 1,
+                "generated_at_unix": int(time.time()),
+                "manifest_path": str(manifest_path),
+                "release_proof": False,
+                "summary": {
+                    "dry_run": bool(args.dry_run),
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                    "manual_playback_plan_ready": False,
+                    "playback_event_count": 0,
+                    "release_proof": False,
+                },
+                "playback_events": [],
+                "detractor_loop": {
+                    "strongest_objection": (
+                        "This failed playback-plan log is not evidence that audio was played or recorded."
+                    ),
+                    "verdict": "Fix the manual manifest or output-device arguments before recording.",
+                },
+            }
+        )
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(json.dumps(log, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+        print(f"headphone/earpiece manual playback NOT-READY: {type(exc).__name__}: {exc}")
+        print(f"wrote manual playback log to {log_path}")
+        return 1
+    playback_events: list[dict[str, Any]] = []
+    sd = None if args.dry_run else import_sounddevice()
+
+    for repeat_index in range(int(args.repeat)):
+        for index, item in enumerate(plan):
+            message = (
+                f"[{repeat_index + 1}/{int(args.repeat)}] {item['take']}: "
+                f"record to {item['expected_recording_path']} while playing {item['reference_path']} "
+                f"via {item['route']} output"
+            )
+            wait_for_operator(message, non_interactive=bool(args.non_interactive or args.dry_run))
+            if float(args.countdown_s) > 0.0 and not args.dry_run:
+                print(f"starting playback in {float(args.countdown_s):.1f}s")
+                time.sleep(float(args.countdown_s))
+            event = dict(item)
+            event["dry_run"] = bool(args.dry_run)
+            event["repeat_index"] = repeat_index
+            event["played_at_unix"] = int(time.time())
+            if args.dry_run:
+                event["elapsed_s"] = 0.0
+                event["output_device_info"] = {}
+            else:
+                audio, sample_rate_hz = read_mono_wav(Path(str(item["reference_path"])))
+                playback = mono_playback(audio, int(args.output_channels))
+                output_device = item["requested_output_device"]
+                output_info = portaudio_device_identity(output_device, kind="output")
+                start = time.perf_counter()
+                sd.play(
+                    playback,
+                    samplerate=int(sample_rate_hz),
+                    device=output_device,
+                    blocking=True,
+                )
+                event["elapsed_s"] = round(time.perf_counter() - start, 6)
+                event["output_device_info"] = output_info
+            playback_events.append(event)
+            if (
+                not args.dry_run
+                and float(args.inter_take_pause_s) > 0.0
+                and (repeat_index < int(args.repeat) - 1 or index < len(plan) - 1)
+            ):
+                time.sleep(float(args.inter_take_pause_s))
+
+    log = json_safe(
+        {
+            "schema_version": 1,
+            "generated_at_unix": int(time.time()),
+            "manifest_path": str(manifest_path),
+            "release_proof": False,
+            "summary": {
+                "dry_run": bool(args.dry_run),
+                "playback_event_count": len(playback_events),
+                "release_proof": False,
+                "take_count": len(plan),
+            },
+            "manual_manifest": {
+                "artifact_hashes": manifest.get("artifact_hashes", {}),
+                "artifact_paths": manifest.get("artifact_paths", {}),
+                "expected_recording_paths": manifest.get("expected_recording_paths", {}),
+                "sample_rate_hz": manifest.get("sample_rate_hz"),
+            },
+            "playback_events": playback_events,
+            "detractor_loop": {
+                "strongest_objection": (
+                    "This log only records guided playback attempts. It does not prove the external "
+                    "recorder captured listener-ear audio or that isolation passed."
+                ),
+                "verdict": "Keep release_proof=false; score the recorded WAVs before using release evidence.",
+            },
+        }
+    )
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(json.dumps(log, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    mode = "DRY-RUN" if args.dry_run else "DONE"
+    print(f"headphone/earpiece manual playback {mode}: events={len(playback_events)}")
+    print(f"wrote manual playback log to {log_path}")
+    return 0
+
+
 def capture(args: argparse.Namespace) -> int:
     for field in ("headphone_device_label", "isolation_fixture_label", "measurement_microphone_label"):
         if not specific_label(getattr(args, field)):
@@ -3014,6 +3290,103 @@ def self_test() -> int:
             raise RuntimeError("manual recording kit should include a score-manual command")
         if not manual_manifest.get("expected_recording_paths", {}).get("source_open_ear_recording"):
             raise RuntimeError("manual recording kit should name expected recording paths")
+        playback_dry_run_result = play_manual_references(
+            argparse.Namespace(
+                countdown_s=0.0,
+                dry_run=True,
+                headphone_output_device="unit-headphone-output",
+                inter_take_pause_s=0.0,
+                log=manual_manifest_path.parent / "manual-playback-log-dry-run.json",
+                manifest=manual_manifest_path,
+                non_interactive=True,
+                allow_default_output=False,
+                output_channels=2,
+                output_device=None,
+                repeat=1,
+                source_output_device="unit-source-output",
+                take=["all"],
+            )
+        )
+        if playback_dry_run_result != 0:
+            raise RuntimeError("expected manual playback dry-run self-test fixture to pass")
+        playback_log = json.loads(
+            (manual_manifest_path.parent / "manual-playback-log-dry-run.json").read_text(encoding="utf-8")
+        )
+        if playback_log.get("release_proof") is not False:
+            raise RuntimeError("manual playback log must not set release_proof")
+        if int(playback_log.get("summary", {}).get("playback_event_count") or 0) != 3:
+            raise RuntimeError("manual playback dry-run should plan three recording takes")
+        playback_routes = {event.get("take"): event.get("route") for event in playback_log.get("playback_events", [])}
+        if playback_routes != {
+            "source-open": "source",
+            "source-isolated": "source",
+            "translated": "headphone",
+        }:
+            raise RuntimeError("manual playback dry-run should map takes to source/headphone routes")
+        json.dumps(playback_log, allow_nan=False)
+        missing_route_playback_result = play_manual_references(
+            argparse.Namespace(
+                countdown_s=0.0,
+                dry_run=True,
+                headphone_output_device=None,
+                inter_take_pause_s=0.0,
+                log=manual_manifest_path.parent / "manual-playback-log-missing-route.json",
+                manifest=manual_manifest_path,
+                non_interactive=True,
+                allow_default_output=False,
+                output_channels=2,
+                output_device=None,
+                repeat=1,
+                source_output_device=None,
+                take=["all"],
+            )
+        )
+        if missing_route_playback_result == 0:
+            raise RuntimeError("manual playback should fail closed without explicit output routes")
+        missing_route_playback_log = json.loads(
+            (manual_manifest_path.parent / "manual-playback-log-missing-route.json").read_text(encoding="utf-8")
+        )
+        if missing_route_playback_log.get("release_proof") is not False:
+            raise RuntimeError("failed manual playback route log must not set release_proof")
+        if bool(missing_route_playback_log.get("summary", {}).get("manual_playback_plan_ready", True)):
+            raise RuntimeError("failed manual playback route log should mark plan not ready")
+        missing_route_error = str(missing_route_playback_log.get("summary", {}).get("error") or "")
+        if "--source-output-device" not in missing_route_error:
+            raise RuntimeError("missing route playback log should explain required source output device")
+        playback_malformed_manifest = json.loads(json.dumps(manual_manifest))
+        playback_malformed_manifest["min_artifact_duration_s"] = "not-a-duration"
+        playback_malformed_manifest_path = (
+            manual_manifest_path.parent / "manual-recording-manifest-playback-malformed.json"
+        )
+        playback_malformed_manifest_path.write_text(
+            json.dumps(playback_malformed_manifest, indent=2, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        malformed_playback_result = play_manual_references(
+            argparse.Namespace(
+                countdown_s=0.0,
+                dry_run=True,
+                headphone_output_device="unit-headphone-output",
+                inter_take_pause_s=0.0,
+                log=manual_manifest_path.parent / "manual-playback-log-malformed.json",
+                manifest=playback_malformed_manifest_path,
+                non_interactive=True,
+                allow_default_output=False,
+                output_channels=2,
+                output_device=None,
+                repeat=1,
+                source_output_device="unit-source-output",
+                take=["all"],
+            )
+        )
+        if malformed_playback_result == 0:
+            raise RuntimeError("manual playback should fail for malformed manifest duration")
+        malformed_playback_log = json.loads(
+            (manual_manifest_path.parent / "manual-playback-log-malformed.json").read_text(encoding="utf-8")
+        )
+        malformed_playback_error = str(malformed_playback_log.get("summary", {}).get("error") or "")
+        if "min_artifact_duration_s" not in malformed_playback_error:
+            raise RuntimeError("malformed manual playback log should explain min_artifact_duration_s")
         missing_manual_result = check_manual_recordings(
             argparse.Namespace(
                 json=False,
@@ -3763,6 +4136,39 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     check_manual_parser.add_argument("--measurement-microphone-label")
     check_manual_parser.add_argument("--json", action="store_true")
     check_manual_parser.add_argument("--score-warning-only", action="store_true")
+    play_manual_parser = subparsers.add_parser(
+        "play-manual",
+        help="play manual-kit reference WAVs through source/headphone outputs for external recording",
+    )
+    play_manual_parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR
+        / "runs"
+        / DEFAULT_MANUAL_KIT_RUN_ID
+        / "manual-recording-manifest.json",
+    )
+    play_manual_parser.add_argument("--log", type=Path)
+    play_manual_parser.add_argument(
+        "--take",
+        choices=["all", *MANUAL_PLAYBACK_TAKES.keys()],
+        action="append",
+        help="manual take to play; defaults to all three takes",
+    )
+    play_manual_parser.add_argument("--source-output-device")
+    play_manual_parser.add_argument("--headphone-output-device")
+    play_manual_parser.add_argument("--output-device")
+    play_manual_parser.add_argument(
+        "--allow-default-output",
+        action="store_true",
+        help="allow unspecified source/headphone routes to use the system default output",
+    )
+    play_manual_parser.add_argument("--output-channels", type=int, default=DEFAULT_CAPTURE_OUTPUT_CHANNELS)
+    play_manual_parser.add_argument("--countdown-s", type=float, default=3.0)
+    play_manual_parser.add_argument("--inter-take-pause-s", type=float, default=1.0)
+    play_manual_parser.add_argument("--repeat", type=int, default=1)
+    play_manual_parser.add_argument("--non-interactive", action="store_true")
+    play_manual_parser.add_argument("--dry-run", action="store_true")
     score_manual_parser = subparsers.add_parser(
         "score-manual",
         help="validate a manual recording manifest and score its listener-ear WAV artifacts",
@@ -4018,6 +4424,8 @@ def main(argv: list[str] | None = None) -> int:
         return prepare_manual_kit(args)
     if args.command == "check-manual":
         return check_manual_recordings(args)
+    if args.command == "play-manual":
+        return play_manual_references(args)
     if args.command == "score-manual":
         return score_manual_recordings(args)
     if args.command == "capture":
