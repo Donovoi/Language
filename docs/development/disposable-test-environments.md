@@ -56,6 +56,7 @@ make audio-eval-playback-suppression-check
 make audio-eval-fallback-tts-contract-check
 make audio-eval-fallback-tts-check
 make audio-eval-same-voice-candidate-contract-check
+make audio-eval-speechbrain-voice-similarity-contract-check
 make audio-eval-shell
 make audio-eval-purge
 ```
@@ -74,6 +75,7 @@ pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-playback-suppression-
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-fallback-tts-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-fallback-tts-check
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-same-voice-candidate-contract-check
+pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-speechbrain-voice-similarity-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-purge
 ```
 
@@ -102,6 +104,9 @@ artifact hashes, and records that the claim is only
 `make audio-eval-same-voice-candidate-contract-check` validates the candidate voice evidence
 contract without a provider. `make audio-eval-same-voice-candidate-check` scores an externally
 generated manifest and bundles every referenced artifact into the ignored run directory.
+`make audio-eval-speechbrain-voice-similarity-contract-check` validates the stronger optional ASV
+report contract without downloading a model. The full `audio-eval-speechbrain-voice-similarity-check`
+target runs in the heavier SpeechBrain profile after a same-voice candidate report exists.
 
 ### Host Live Microphone Capture
 
@@ -288,6 +293,7 @@ target-speaker extraction runtime.
 make audio-eval-speechbrain-sepformer-build
 make audio-eval-speechbrain-sepformer-contract-check
 make audio-eval-speechbrain-sepformer-check
+SPEECHBRAIN_VOICE_SIMILARITY_ARGS='--candidate-report artifacts/audio_eval/runs/same-voice-candidate/voice-clone-report.json --score-warning-only' make audio-eval-speechbrain-voice-similarity-check
 make audio-eval-whisper-speechbrain-sepformer-translation-check
 make audio-eval-speechbrain-sepformer-shell
 make audio-eval-speechbrain-sepformer-purge
@@ -298,6 +304,7 @@ Windows:
 ```powershell
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-speechbrain-sepformer-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-speechbrain-sepformer-check
+pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-speechbrain-voice-similarity-check --candidate-report artifacts/audio_eval/runs/same-voice-candidate/voice-clone-report.json --score-warning-only
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-whisper-speechbrain-sepformer-translation-check
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-speechbrain-sepformer-purge
 ```
@@ -307,6 +314,10 @@ host environment. SepFormer emits unordered separated streams and may normalize 
 so the benchmark records oracle stream assignment and same-volume errors explicitly. Treat a pass as
 evidence that blind separation helped the fixture, not proof that live speaker locking, enrollment, or
 source suppression are solved.
+The same profile also carries the optional SpeechBrain ECAPA voice-similarity scorer for externally
+generated same-voice candidate reports. It verifies reference/output WAV hashes and writes ASV scores,
+but remains candidate evidence rather than release proof until calibrated against consented local
+speakers and human listener similarity.
 
 ## Optional WeSep Enrolled TSE Environment
 
@@ -396,9 +407,9 @@ consent evidence, clipped output, or output levels more than 0.75 dB from the so
 
 `release_audio_gate.py` repeats the hash, WAV, level, consent binding, sidecar, and built-in acoustic
 proxy checks, then keeps proxy-only `same_voice_candidate` reports out of release proof until a
-stronger ASV or human speaker-similarity gate exists. The current release evidence still uses
-`fallback_voice`; this candidate path is for evaluating VoxCPM/CosyVoice/OpenVoice/provider outputs
-without weakening the fallback release gate.
+calibrated ASV/human speaker-similarity release gate exists. The current release evidence still uses
+`fallback_voice`; this candidate path plus the optional SpeechBrain ECAPA scorer is for evaluating
+VoxCPM/CosyVoice/OpenVoice/provider outputs without weakening the fallback release gate.
 
 ## Host Real-Room Playback Suppression
 

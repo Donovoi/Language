@@ -114,6 +114,8 @@ make audio-eval-fallback-tts-contract-check
 make audio-eval-fallback-tts-check
 make audio-eval-same-voice-candidate-contract-check
 SAME_VOICE_CANDIDATE_ARGS='--manifest artifacts/audio_eval/runs/same-voice-candidate/same-voice-candidate-manifest.json' make audio-eval-same-voice-candidate-check
+make audio-eval-speechbrain-voice-similarity-contract-check
+SPEECHBRAIN_VOICE_SIMILARITY_ARGS='--candidate-report artifacts/audio_eval/runs/same-voice-candidate/voice-clone-report.json --score-warning-only' make audio-eval-speechbrain-voice-similarity-check
 make real-room-playback-suppression-list-devices
 make real-room-playback-suppression-contract-check
 make real-room-playback-suppression-probe-route
@@ -157,6 +159,9 @@ voice-conversion candidate WAVs. It requires consent metadata, a consent evidenc
 source/reference/output WAVs, source-level matching, peak headroom, non-clone output, and a hashed
 speaker similarity sidecar whose built-in acoustic proxy score is recomputed by the release gate. It
 does not synthesize audio itself.
+`audio-eval-speechbrain-voice-similarity-check` runs a stronger optional SpeechBrain ECAPA verifier
+against a passing same-voice candidate report. It remains candidate evidence, not release proof, but
+it gives future voice generators an ASV gate before runtime integration.
 
 The real-room playback/suppression check also runs on the host audio stack, not inside Docker:
 
@@ -184,6 +189,8 @@ pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-fallback-tts-contract
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-fallback-tts-check
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-same-voice-candidate-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-same-voice-candidate-check --manifest artifacts/audio_eval/runs/same-voice-candidate/same-voice-candidate-manifest.json
+pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-speechbrain-voice-similarity-contract-check
+pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-speechbrain-voice-similarity-check --candidate-report artifacts/audio_eval/runs/same-voice-candidate/voice-clone-report.json --score-warning-only
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-list-devices
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-sweep-routes --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
@@ -410,9 +417,10 @@ diarization and passes the streaming speech-translation gate with primary-langua
 mean translation token F1 0.206838. Consent-safe neutral fallback TTS now passes with hashed
 eSpeak NG WAVs level-matched to the source speech; same-voice cloning remains a stronger follow-up,
 not a release claim. The same-voice candidate validator now prevents self-attested proxy artifacts
-from masquerading as release proof, and fallback remains the release voice path until a stronger
-ASV/human similarity gate exists. Product release remains blocked until playback source-suppression evidence
-passes: either true real-room cancellation or a measured headphone/earpiece mode explicitly labeled
+from masquerading as release proof, and fallback remains the release voice path until calibrated
+ASV/human speaker-similarity release acceptance exists. Product release remains blocked until
+playback source-suppression evidence passes: either true real-room cancellation or a measured
+headphone/earpiece mode explicitly labeled
 `headphone_isolated_not_true_cancellation`. The gate rejects bare
 `summary.passed=true` stubs, self-attested live-capture reports without matching WAV/chunk artifacts,
 and prototype evidence such as fixture capture and playback ducking. It does not claim cryptographic
@@ -454,7 +462,7 @@ The repository now provides:
 - a tiny runtime-downloaded LibriSpeech real-speech overlap fixture and pyannote/Sortformer smoke paths for catching obvious diarization failures before larger benchmarks
 - a gateway diarization import boundary plus prefix, stateful-online, and rolling-PCM Sortformer benchmarks for turning model JSONL into speaker lanes with latency, causality, and label-churn accounting
 - a SpeechBrain SepFormer WHAMR blind-separation spike plus external-TSE Whisper bridge for measuring real separator artifacts against oracle and mixture-passthrough controls
-- a same-voice candidate validator that accepts only consented, hashed, level-matched, non-clone English voice outputs with matching similarity evidence
+- a same-voice candidate validator that accepts only consented, hashed, level-matched, non-clone English voice outputs with matching similarity evidence, plus an optional SpeechBrain ECAPA ASV scorer for stronger candidate comparison
 - a Flutter operator shell that renders speaker lanes, mode changes, translated-caption fields, audio/voice/suppression metadata, live SSE status, and speaker lock controls from gateway-compatible data
 - local smoke and integration-smoke paths, repo-root `.env` config support, a gateway container recipe, optional bearer auth for mutating API routes, and internal beta release/runbook docs
 - CI workflows for Rust, Python, Flutter, and proto-backed contract-lock validation

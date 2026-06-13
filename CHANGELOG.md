@@ -25,6 +25,7 @@ Repository prep for the first internal beta release candidate based on the curre
 - Polarity-invariant target-speaker extraction scoring, plus WeSep postprocess metadata for runtime-available mixture-correlation polarity correction and enrollment-RMS level normalization without reference stems.
 - Host real-room playback/suppression loopback runner with device listing, sentinel route-probe triage, route/sample-rate/channel sweep triage, device-path qualification, bounded device sweep triage, contract self-test, hashed room WAV evidence, release-gate WAV recomputation, bounded alignment, calibration audibility/fidelity checks, and honest failing SoundWire/WASAPI evidence that remains the final audio-release blocker.
 - Explicit `source_suppression_mode` session/event contract field so speaker lanes distinguish unavailable suppression, overlay ducking, headphone isolation, and measured true cancellation instead of inferring claims from a dB value.
+- SpeechBrain ECAPA same-voice candidate scorer with disposable Docker/PowerShell targets, WAV hash revalidation, ASV score gates, and an explicit candidate-evidence-only release boundary.
 
 #### Changed
 

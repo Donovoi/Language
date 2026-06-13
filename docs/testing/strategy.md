@@ -149,6 +149,11 @@ make live-microphone-capture-check
   non-clone audio, source-matched levels, peak headroom, and a sidecar score that matches the
   release gate's recomputed acoustic proxy. Proxy-only candidates remain validation artifacts, not
   same-voice release proof.
+- `make audio-eval-speechbrain-voice-similarity-contract-check` and
+  `make audio-eval-speechbrain-voice-similarity-check` add the stronger optional SpeechBrain ECAPA
+  ASV pass for same-voice candidate reports. It verifies reference/output WAV hashes and speaker
+  verification scores, but remains candidate evidence until calibrated against human listener
+  similarity and release-safe generator outputs.
 - `make release-audio-gate` is the product-release blocker, not a research convenience target. It
   reads the current report artifacts. Live microphone capture and causal diarization now pass with
   product-specific evidence on this host, WeSep satisfies the real TSE component gate, and causal

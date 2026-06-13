@@ -1452,7 +1452,7 @@ def _voice_gate(spec: EvidenceSpec) -> GateResult:
                     )
                 failures.append(
                     f"voice/TTS segment {index} uses candidate-only acoustic proxy evidence; "
-                    "same_voice_candidate cannot replace fallback release evidence until a stronger ASV/human similarity gate is implemented"
+                    "same_voice_candidate cannot replace fallback release evidence until calibrated ASV/human similarity release acceptance is implemented"
                 )
                 if reference_details is None:
                     failures.append(f"voice/TTS segment {index} candidate reference audio is required")
