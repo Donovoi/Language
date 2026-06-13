@@ -36,7 +36,9 @@ than by inventing a second package version line.
 
 - [ ] Run repository validation on a clean branch:
 	- `make check`
+	- Windows without `make`: `pwsh -NoProfile -File scripts/check_local.ps1`
 	- `make smoke-local-demo`
+	- Windows without Bash/WSL: `pwsh -NoProfile -File scripts/smoke_local_demo.ps1`
 - [ ] For a product release that claims the realtime audio-loop goal, run the hard audio evidence gate:
 	- `make live-microphone-capture-check` on the release host or target capture device
 	- `make release-audio-gate`

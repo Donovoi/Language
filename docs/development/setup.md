@@ -67,6 +67,17 @@ Windows hosts without `make`, Bash, or WSL can run the same gateway smoke baseli
 pwsh -NoProfile -File scripts/smoke_local_demo.ps1
 ```
 
+The Windows-native equivalent for the broader repository validation path is:
+
+```powershell
+pwsh -NoProfile -File scripts/check_local.ps1
+```
+
+Pass `-SkipFlutter` only for a partial host run when Flutter is not installed. The plain command
+refreshes `services/gateway/.venv` like `make check`; pass `-UseExistingGatewayVenv` only when you
+deliberately want a faster reuse run. The gateway currently supports Python `>=3.11,<3.14`; pass
+`-Python <path-to-supported-python>` if the host's default `python` is outside that range.
+
 The smoke script uses non-mutating `mode=FOCUS` preview requests for the session and SSE checks so the result stays deterministic even if the in-memory session was changed earlier during local testing.
 
 If you need a non-default bind address, override `GATEWAY_HOST` and `GATEWAY_PORT` for both the
