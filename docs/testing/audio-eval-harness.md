@@ -333,6 +333,8 @@ make audio-eval-enrolled-mismatch-tse-check
 make audio-eval-whisper-enrolled-oracle-tse-translation-check
 make audio-eval-speechbrain-sepformer-contract-check
 make audio-eval-speechbrain-sepformer-check
+make audio-eval-speechbrain-voice-similarity-contract-check
+SPEECHBRAIN_VOICE_SIMILARITY_ARGS='--candidate-report artifacts/audio_eval/runs/same-voice-candidate/voice-clone-report.json --score-warning-only' make audio-eval-speechbrain-voice-similarity-check
 make audio-eval-whisper-speechbrain-sepformer-translation-check
 make audio-eval-wesep-contract-check
 make audio-eval-wesep-check
@@ -356,6 +358,8 @@ pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-enrolled-mismatch-tse
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-whisper-enrolled-oracle-tse-translation-check
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-speechbrain-sepformer-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-speechbrain-sepformer-check
+pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-speechbrain-voice-similarity-contract-check
+pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-speechbrain-voice-similarity-check --candidate-report artifacts/audio_eval/runs/same-voice-candidate/voice-clone-report.json --score-warning-only
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-whisper-speechbrain-sepformer-translation-check
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-wesep-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-wesep-check
@@ -534,6 +538,41 @@ consent evidence, stale external artifact paths, unrelated consent speaker/refer
 cloned reference audio. Because that proxy is not a real speaker-similarity proof, proxy-only
 candidate reports are deliberately not allowed to replace fallback TTS as release evidence. Human
 listener similarity and stronger ASV scoring remain the next falsifying benchmark.
+
+## SpeechBrain ECAPA Voice Similarity
+
+`scripts/run_speechbrain_voice_similarity_fixture.py` is the stronger optional ASV pass for a same-
+voice candidate report. It reopens the candidate report, verifies referenced reference/output WAV
+hashes, runs SpeechBrain ECAPA-TDNN speaker verification, and writes
+`artifacts/audio_eval/runs/speechbrain-ecapa-same-voice-similarity/speechbrain-voice-similarity-report.json`.
+
+Run the contract check in the small audio image:
+
+```bash
+make audio-eval-speechbrain-voice-similarity-contract-check
+```
+
+Run the model scorer in the SpeechBrain profile after a same-voice candidate report exists:
+
+```bash
+SPEECHBRAIN_VOICE_SIMILARITY_ARGS='--candidate-report artifacts/audio_eval/runs/same-voice-candidate/voice-clone-report.json --score-warning-only' make audio-eval-speechbrain-voice-similarity-check
+```
+
+Windows:
+
+```powershell
+pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-speechbrain-voice-similarity-contract-check
+pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-speechbrain-voice-similarity-check --candidate-report artifacts/audio_eval/runs/same-voice-candidate/voice-clone-report.json --score-warning-only
+```
+
+The default verifier is `speechbrain/spkrec-ecapa-voxceleb`. Its official model card describes an
+ECAPA-TDNN verifier trained on VoxCeleb1+VoxCeleb2, cosine speaker verification, mono 16 kHz input
+with automatic normalization, Apache-2.0 licensing, and a reported 0.80 EER on VoxCeleb1-test
+cleaned. ECAPA-TDNN itself was published at Interspeech 2020, and SpeechBrain is the peer-reviewed
+toolkit behind the model. Treat this as stronger candidate evidence than the local acoustic proxy,
+not product release proof: generated cross-language voice output still needs consented local speaker
+tests, human similarity ratings, intelligibility scoring, and the fallback release path until that
+calibration exists.
 
 ## Real-Room Playback Suppression
 

@@ -51,14 +51,17 @@ provider or local-model output before wiring that model into the runtime.
 | R8 | DiffGAN-ZSTTS | Scientific Reports 2025 | Peer-reviewed zero-shot speaker-adaptive TTS over Chinese/English datasets. | https://pubmed.ncbi.nlm.nih.gov/39979408/ |
 | R9 | VALL-E X | arXiv preprint | Cross-lingual synthesis from one source-language utterance. | https://arxiv.org/abs/2303.03926 |
 | R10 | Cross-Lingual F5-TTS | arXiv/preprint listing | Cross-lingual cloning without prompt transcripts. | https://huggingface.co/papers/2509.14579 |
+| R11 | SpeechBrain ECAPA verifier | Official model card plus SpeechBrain paper | ECAPA-TDNN speaker verification trained on VoxCeleb1+2 with cosine scoring and reported 0.80 EER on VoxCeleb1-test cleaned. | https://huggingface.co/speechbrain/spkrec-ecapa-voxceleb |
+| R12 | ECAPA-TDNN | Interspeech 2020 | Peer-reviewed speaker-verification architecture with Res2Net, squeeze-excitation, attentive statistics pooling, and VoxCeleb gains. | https://arxiv.org/abs/2005.07143 |
 
 ## Metrics And Benchmark
 
 - Primary metric: time to first playable same-voice English audio
-- Secondary metrics: speaker similarity, MOS or DNSMOS/UTMOS, WER of synthesized English, real-time factor, reference length, reference deletion proof
+- Secondary metrics: speaker similarity, SpeechBrain ECAPA ASV score, MOS or DNSMOS/UTMOS, WER of synthesized English, real-time factor, reference length, reference deletion proof
 - Dataset or fixture: Seed-TTS-Eval-style English WER/speaker-similarity fixture, consented local speaker references, multilingual source prompts, and fixed English target prompts
-- Disposable command: `scripts/benchmark_same_voice_candidate_fixture.py --self-test`, then `scripts/benchmark_same_voice_candidate_fixture.py check --manifest artifacts/audio_eval/runs/same-voice-candidate/same-voice-candidate-manifest.json`
-- Pass condition: bounded latency, explicit consent evidence, no unsafe reference persistence, non-clone generated audio, built-in proxy score above threshold, matched source/output level, and a clean fallback voice path
+- Disposable command: `scripts/benchmark_same_voice_candidate_fixture.py --self-test`, then `scripts/benchmark_same_voice_candidate_fixture.py check --manifest artifacts/audio_eval/runs/same-voice-candidate/same-voice-candidate-manifest.json`, then `scripts/run_speechbrain_voice_similarity_fixture.py score --candidate-report artifacts/audio_eval/runs/same-voice-candidate/voice-clone-report.json --score-warning-only`
+- Candidate acceptance target: bounded latency, explicit consent evidence, no unsafe reference persistence, non-clone generated audio, built-in proxy score above threshold, SpeechBrain ECAPA ASV evidence above its threshold, matched source/output level, and a clean fallback voice path
+- Release condition: keep fallback voice as the release path until ASV thresholds are calibrated against blinded human same-speaker ratings on consented local speakers.
 
 ## Integration Plan
 
@@ -66,6 +69,8 @@ provider or local-model output before wiring that model into the runtime.
 - Gateway/Rust/Flutter files: provider adapter in gateway; Flutter already renders readiness states
 - Fallback behavior: neutral TTS with visible status when same-voice synthesis is not ready
 - Evidence behavior: same-voice candidate reports must bundle consent, source WAV, reference WAV, output WAV, and similarity sidecar artifacts so the release gate can reopen and revalidate them
+- ASV behavior: `scripts/run_speechbrain_voice_similarity_fixture.py` is stronger candidate evidence
+  for generator comparison, but it is not calibrated release proof without human similarity ratings.
 - Rollback trigger: provider/model stores references unsafely, exceeds latency budget, or produces unintelligible English
 
 ## Detractor Concerns

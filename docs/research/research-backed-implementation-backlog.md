@@ -105,7 +105,9 @@ diarizer, room noise, non-English speech, and translated playback loopback befor
    runtime integration. It validates consent evidence, bundled source/reference/output WAV hashes,
    non-clone output, source-level matching, peak headroom, and sidecars whose built-in acoustic proxy
    score recomputes from the WAVs. The remaining work is selecting and wiring a generator/provider
-   that can produce passing candidate artifacts, then adding stronger ASV or human similarity scoring.
+   that can produce passing candidate artifacts, then running
+   `scripts/run_speechbrain_voice_similarity_fixture.py` as the stronger ECAPA ASV gate before human
+   listener similarity calibration.
 
 ## Phase 5: Playback And Suppression
 
@@ -125,8 +127,9 @@ the current report artifacts. Live microphone capture, causal diarization, targe
 that beats mixture passthrough, and causal streaming speech translation after accepted TSE now have
 passing evidence on the current host. Consent-safe fallback TTS also passes; same-voice candidate
 reports are now gated by consent, hash, non-clone, built-in similarity-proxy, and source-level checks,
-but proxy-only candidates remain validation artifacts until a stronger ASV or human similarity scorer
-exists. Real-room playback/suppression is the remaining release blocker. Keep exploratory model checks warning-only if useful,
+and can be rescored with SpeechBrain ECAPA ASV, but proxy-only and ASV-only candidates remain
+validation artifacts until calibrated against human similarity. Real-room playback/suppression is the
+remaining release blocker. Keep exploratory model checks warning-only if useful,
 and list prototypes as evidence only. The gate requires product-specific fields, independently
 validates live-capture WAV/chunk artifacts, and rejects bare passing stubs, fixture capture,
 self-attested microphone reports without matching artifacts, and synthetic playback reports as
