@@ -126,6 +126,16 @@ VOICE_REQUIRED_GATES = {
     "tts_output_level_matched",
     "voice_similarity_or_fallback_declared",
 }
+VOICE_CANDIDATE_SIMILARITY_CLAIMS = {"measured_proxy", "asv_similarity_measured"}
+VOICE_CANDIDATE_MIN_SIMILARITY_SCORE = 0.65
+VOICE_CANDIDATE_SIMILARITY_SCORE_TOLERANCE = 0.01
+VOICE_CANDIDATE_METRIC_NAME = "release_gate_acoustic_proxy_v1"
+VOICE_CANDIDATE_EVALUATOR_ID = "language_release_gate_builtin_v1"
+VOICE_CANDIDATE_ALLOWED_RETENTION_POLICIES = {
+    "ephemeral_reference_deleted",
+    "ephemeral_reference_not_persisted",
+    "consented_retention_with_expiry",
+}
 ROOM_SUPPRESSION_REQUIRED_GATES = {
     "device_path_identity_recorded",
     "room_loopback_recorded",
@@ -474,6 +484,103 @@ def _read_mono_pcm16_wav(path: Path) -> tuple[int, array.array]:
     if sys.byteorder != "little":
         samples.byteswap()
     return sample_rate_hz, samples
+
+
+def _mono_pcm16_wav_samples_and_details(path: Path) -> tuple[array.array, dict[str, Any]]:
+    with wave.open(str(path), "rb") as wav:
+        channels = int(wav.getnchannels())
+        sample_width = int(wav.getsampwidth())
+        sample_rate_hz = int(wav.getframerate())
+        frame_count = int(wav.getnframes())
+        raw = wav.readframes(frame_count)
+    if channels != 1:
+        raise ValueError(f"{path} must be mono")
+    if sample_width != 2:
+        raise ValueError(f"{path} must be 16-bit PCM")
+    if sample_rate_hz <= 0 or frame_count <= 0:
+        raise ValueError(f"{path} must contain frames")
+    samples = array.array("h")
+    samples.frombytes(raw)
+    if sys.byteorder != "little":
+        samples.byteswap()
+    rms_value = _rms_i16(samples)
+    peak = max(abs(int(sample)) for sample in samples) if samples else 0
+    details = {
+        "dbfs": _dbfs_from_rms_i16(rms_value),
+        "frame_count": frame_count,
+        "pcm_sha256": hashlib.sha256(raw).hexdigest(),
+        "peak_dbfs": _dbfs_from_rms_i16(float(peak)),
+        "sample_rate_hz": sample_rate_hz,
+        "sha256": _sha256_file(path),
+    }
+    return samples, details
+
+
+def _mono_pcm16_wav_details(path: Path) -> dict[str, Any]:
+    _samples, details = _mono_pcm16_wav_samples_and_details(path)
+    return details
+
+
+def _frame_acoustic_features(samples: array.array, sample_rate_hz: int) -> list[float]:
+    frame_len = max(1, int(round(sample_rate_hz * 0.04)))
+    hop = max(1, int(round(sample_rate_hz * 0.02)))
+    frame_starts = [0] if len(samples) < frame_len else list(range(0, len(samples) - frame_len + 1, hop))
+    lag = max(1, int(round(sample_rate_hz * 0.005)))
+    rows: list[list[float]] = []
+    for start in frame_starts:
+        frame = [float(sample) / 32768.0 for sample in samples[start : start + frame_len]]
+        if not frame:
+            continue
+        if len(frame) < frame_len:
+            frame.extend([0.0] * (frame_len - len(frame)))
+        frame_rms = math.sqrt(sum(value * value for value in frame) / float(len(frame)))
+        if len(frame) > 1:
+            zcr = sum(
+                1
+                for left, right in zip(frame, frame[1:])
+                if (left < 0.0) != (right < 0.0)
+            ) / float(len(frame) - 1)
+            deltas = [abs(right - left) for left, right in zip(frame, frame[1:])]
+            mean_abs_delta = sum(deltas) / float(len(deltas))
+        else:
+            zcr = 0.0
+            mean_abs_delta = 0.0
+        if len(frame) > lag and frame_rms > 0.0:
+            lhs = frame[:-lag]
+            rhs = frame[lag:]
+            lhs_energy = sum(value * value for value in lhs)
+            rhs_energy = sum(value * value for value in rhs)
+            denom = math.sqrt(lhs_energy * rhs_energy)
+            autocorr = sum(left * right for left, right in zip(lhs, rhs)) / denom if denom > 0.0 else 0.0
+        else:
+            autocorr = 0.0
+        rows.append([frame_rms, zcr, mean_abs_delta, autocorr])
+    if not rows:
+        return [0.0] * 8
+    means = [sum(row[column] for row in rows) / float(len(rows)) for column in range(4)]
+    stds = [
+        math.sqrt(sum((row[column] - means[column]) ** 2 for row in rows) / float(len(rows)))
+        for column in range(4)
+    ]
+    return means + stds
+
+
+def _acoustic_similarity_proxy(
+    reference_samples: array.array,
+    output_samples: array.array,
+    sample_rate_hz: int,
+) -> float:
+    reference_vector = _frame_acoustic_features(reference_samples, sample_rate_hz)
+    output_vector = _frame_acoustic_features(output_samples, sample_rate_hz)
+    scale = [0.2, 0.2, 0.05, 1.0, 0.1, 0.1, 0.03, 0.5]
+    distance = math.sqrt(
+        sum(
+            ((reference_value - output_value) / feature_scale) ** 2
+            for reference_value, output_value, feature_scale in zip(reference_vector, output_vector, scale)
+        )
+        / float(len(scale))
+    )
+    return 1.0 / (1.0 + distance)
 
 
 def _rms_i16(samples: array.array, frame_count: int | None = None) -> float:
@@ -1207,6 +1314,27 @@ def _voice_gate(spec: EvidenceSpec) -> GateResult:
         )
     if voice_status == "fallback_voice" and voice_claim != "not_claimed":
         failures.append("fallback voice reports must set voice_similarity_claim='not_claimed'")
+    if voice_status == "same_voice_candidate" and voice_claim not in VOICE_CANDIDATE_SIMILARITY_CLAIMS:
+        failures.append(
+            "same_voice_candidate reports must set a measured voice_similarity_claim"
+        )
+    consent = report.get("consent", {})
+    consent = consent if isinstance(consent, dict) else {}
+    if voice_status == "same_voice_candidate":
+        if consent.get("speaker_consent") is not True:
+            failures.append("same_voice_candidate consent.speaker_consent must be true")
+        if consent.get("voice_clone_reference_used") is not True:
+            failures.append("same_voice_candidate consent.voice_clone_reference_used must be true")
+        if consent.get("reference_retention_policy") not in VOICE_CANDIDATE_ALLOWED_RETENTION_POLICIES:
+            failures.append("same_voice_candidate consent reference retention policy is not release-safe")
+        consent_hash = consent.get("consent_evidence_sha256")
+        consent_path = _resolve_artifact_path(spec.path, consent.get("consent_evidence_path"))
+        if not _is_sha256(consent_hash):
+            failures.append("same_voice_candidate consent_evidence_sha256 is required")
+        elif consent_path is None or not consent_path.exists():
+            failures.append("same_voice_candidate consent evidence artifact is missing")
+        elif _sha256_file(consent_path) != consent_hash:
+            failures.append("same_voice_candidate consent evidence hash does not match artifact")
 
     benchmark = report.get("benchmarks", {}).get("same_voice_or_fallback_tts", {})
     benchmark = benchmark if isinstance(benchmark, dict) else {}
@@ -1214,6 +1342,10 @@ def _voice_gate(spec: EvidenceSpec) -> GateResult:
     if not isinstance(segments, list) or not segments:
         failures.append("benchmarks.same_voice_or_fallback_tts.segments must be non-empty")
     else:
+        candidate_speaker_ids: set[str] = set()
+        candidate_reference_hashes: set[str] = set()
+        candidate_reference_hashes_by_index: dict[int, tuple[str, str]] = {}
+        candidate_output_hashes_by_index: dict[int, tuple[str, str]] = {}
         for index, segment in enumerate(segments):
             if not isinstance(segment, dict):
                 failures.append(f"voice/TTS segment {index} is not an object")
@@ -1222,32 +1354,73 @@ def _voice_gate(spec: EvidenceSpec) -> GateResult:
             if audio_path is None or not audio_path.exists():
                 failures.append(f"voice/TTS segment {index} output audio is missing")
                 continue
+            audio_details: dict[str, Any] | None = None
+            audio_samples: array.array | None = None
+            try:
+                audio_samples, audio_details = _mono_pcm16_wav_samples_and_details(audio_path)
+            except (OSError, ValueError, wave.Error) as exc:
+                failures.append(f"voice/TTS segment {index} WAV could not be inspected: {exc}")
+                continue
             expected_hash = segment.get("tts_output_sha256")
             if not _is_sha256(expected_hash):
                 failures.append(f"voice/TTS segment {index} tts_output_sha256 is invalid")
-            elif _sha256_file(audio_path) != expected_hash:
+            elif audio_details["sha256"] != expected_hash:
                 failures.append(f"voice/TTS segment {index} tts_output_sha256 does not match file")
+            reported_pcm_hash = segment.get("tts_output_pcm_sha256")
+            if reported_pcm_hash is not None and reported_pcm_hash != audio_details["pcm_sha256"]:
+                failures.append(f"voice/TTS segment {index} tts_output_pcm_sha256 does not match WAV")
             frame_count = _int_or_none(segment.get("tts_output_frame_count"))
-            if frame_count is not None:
+            if frame_count is not None and audio_details["frame_count"] != int(frame_count):
+                failures.append(f"voice/TTS segment {index} frame count does not match WAV")
+            if audio_details["peak_dbfs"] > -0.1:
+                failures.append(f"voice/TTS segment {index} output peak must be <= -0.1 dBFS")
+
+            reference_hash = segment.get("reference_audio_sha256")
+            reference_path = _resolve_artifact_path(spec.path, segment.get("reference_audio_path"))
+            reference_details: dict[str, Any] | None = None
+            reference_samples: array.array | None = None
+            if reference_hash is not None and not _is_sha256(reference_hash):
+                failures.append(f"voice/TTS segment {index} reference_audio_sha256 is invalid")
+            if reference_path is not None and reference_path.exists():
                 try:
-                    with wave.open(str(audio_path), "rb") as wav:
-                        if wav.getnframes() != frame_count:
+                    reference_samples, reference_details = _mono_pcm16_wav_samples_and_details(reference_path)
+                except (OSError, ValueError, wave.Error) as exc:
+                    failures.append(f"voice/TTS segment {index} reference WAV could not be inspected: {exc}")
+                if reference_details is not None:
+                    if reference_hash is not None and reference_details["sha256"] != reference_hash:
+                        failures.append(
+                            f"voice/TTS segment {index} reference_audio_sha256 does not match file"
+                        )
+                    reported_reference_pcm_hash = segment.get("reference_audio_pcm_sha256")
+                    if (
+                        reported_reference_pcm_hash is not None
+                        and reported_reference_pcm_hash != reference_details["pcm_sha256"]
+                    ):
+                        failures.append(
+                            f"voice/TTS segment {index} reference_audio_pcm_sha256 does not match WAV"
+                        )
+                    candidate_reference_hashes_by_index[index] = (
+                        str(reference_details["sha256"]),
+                        str(reference_details["pcm_sha256"]),
+                    )
+                    if voice_status != "same_voice_candidate":
+                        recomputed_level_error = abs(float(audio_details["dbfs"]) - float(reference_details["dbfs"]))
+                        reported_level_error = _float_or_none(segment.get("output_level_error_db"))
+                        if recomputed_level_error > 0.75:
                             failures.append(
-                                f"voice/TTS segment {index} frame count does not match WAV"
+                                f"voice/TTS segment {index} recomputed output level error must be <= 0.75 dB"
                             )
-                        if wav.getnchannels() != 1:
-                            failures.append(f"voice/TTS segment {index} WAV must be mono")
-                        if wav.getsampwidth() != 2:
+                        if (
+                            reported_level_error is None
+                            or abs(recomputed_level_error - reported_level_error) > 0.075
+                        ):
                             failures.append(
-                                f"voice/TTS segment {index} WAV sample width must be 2 bytes"
+                                f"voice/TTS segment {index} output_level_error_db does not match recomputed WAV levels"
                             )
-                except (OSError, wave.Error) as exc:
-                    failures.append(f"voice/TTS segment {index} WAV could not be inspected: {exc}")
-            level_error = _float_or_none(segment.get("output_level_error_db"))
-            if level_error is None or level_error > 0.75:
-                failures.append(
-                    f"voice/TTS segment {index} output level error must be <= 0.75 dB"
-                )
+            candidate_output_hashes_by_index[index] = (
+                str(audio_details["sha256"]),
+                str(audio_details["pcm_sha256"]),
+            )
             if voice_status == "fallback_voice":
                 if segment.get("voice_clone_reference_used") is not False:
                     failures.append(
@@ -1257,15 +1430,208 @@ def _voice_gate(spec: EvidenceSpec) -> GateResult:
                     failures.append(
                         f"voice/TTS segment {index} fallback must not claim voice similarity"
                     )
-            reference_hash = segment.get("reference_audio_sha256")
-            if reference_hash is not None and not _is_sha256(reference_hash):
-                failures.append(f"voice/TTS segment {index} reference_audio_sha256 is invalid")
-            reference_path = _resolve_artifact_path(spec.path, segment.get("reference_audio_path"))
-            if reference_hash is not None and reference_path is not None and reference_path.exists():
-                if _sha256_file(reference_path) != reference_hash:
+            if voice_status == "same_voice_candidate":
+                speaker_id = str(segment.get("speaker_id") or "").strip()
+                if speaker_id:
+                    candidate_speaker_ids.add(speaker_id)
+                else:
+                    failures.append(f"voice/TTS segment {index} candidate speaker_id is required")
+                if segment.get("voice_clone_reference_used") is not True:
                     failures.append(
-                        f"voice/TTS segment {index} reference_audio_sha256 does not match file"
+                        f"voice/TTS segment {index} candidate must use a consented voice reference"
                     )
+                if segment.get("voice_similarity_claim") not in VOICE_CANDIDATE_SIMILARITY_CLAIMS:
+                    failures.append(f"voice/TTS segment {index} candidate must declare measured similarity")
+                if segment.get("voice_similarity_metric") != VOICE_CANDIDATE_METRIC_NAME:
+                    failures.append(
+                        f"voice/TTS segment {index} candidate metric must be {VOICE_CANDIDATE_METRIC_NAME}"
+                    )
+                if segment.get("voice_similarity_evaluator_id") != VOICE_CANDIDATE_EVALUATOR_ID:
+                    failures.append(
+                        f"voice/TTS segment {index} candidate evaluator must be {VOICE_CANDIDATE_EVALUATOR_ID}"
+                    )
+                failures.append(
+                    f"voice/TTS segment {index} uses candidate-only acoustic proxy evidence; "
+                    "same_voice_candidate cannot replace fallback release evidence until a stronger ASV/human similarity gate is implemented"
+                )
+                if reference_details is None:
+                    failures.append(f"voice/TTS segment {index} candidate reference audio is required")
+                else:
+                    candidate_reference_hashes.add(str(reference_details["sha256"]))
+                    try:
+                        same_path = audio_path.resolve() == reference_path.resolve() if reference_path else False
+                    except OSError:
+                        same_path = False
+                    if same_path or audio_details["sha256"] == reference_details["sha256"]:
+                        failures.append(f"voice/TTS segment {index} candidate output must not clone reference WAV bytes")
+                    if audio_details["pcm_sha256"] == reference_details["pcm_sha256"]:
+                        failures.append(f"voice/TTS segment {index} candidate output must not clone reference PCM")
+                source_path = _resolve_artifact_path(spec.path, segment.get("source_audio_path"))
+                source_details: dict[str, Any] | None = None
+                if source_path is None or not source_path.exists():
+                    failures.append(f"voice/TTS segment {index} candidate source audio is required")
+                else:
+                    try:
+                        _source_samples, source_details = _mono_pcm16_wav_samples_and_details(source_path)
+                    except (OSError, ValueError, wave.Error) as exc:
+                        failures.append(f"voice/TTS segment {index} source WAV could not be inspected: {exc}")
+                if source_details is not None:
+                    source_hash = segment.get("source_audio_sha256")
+                    if not _is_sha256(source_hash):
+                        failures.append(f"voice/TTS segment {index} source_audio_sha256 is invalid")
+                    elif source_details["sha256"] != source_hash:
+                        failures.append(f"voice/TTS segment {index} source_audio_sha256 does not match file")
+                    reported_source_pcm_hash = segment.get("source_audio_pcm_sha256")
+                    if (
+                        reported_source_pcm_hash is not None
+                        and reported_source_pcm_hash != source_details["pcm_sha256"]
+                    ):
+                        failures.append(
+                            f"voice/TTS segment {index} source_audio_pcm_sha256 does not match WAV"
+                        )
+                    recomputed_level_error = abs(float(audio_details["dbfs"]) - float(source_details["dbfs"]))
+                    reported_level_error = _float_or_none(segment.get("output_level_error_db"))
+                    if recomputed_level_error > 0.75:
+                        failures.append(
+                            f"voice/TTS segment {index} recomputed source/output level error must be <= 0.75 dB"
+                        )
+                    if (
+                        reported_level_error is None
+                        or abs(recomputed_level_error - reported_level_error) > 0.075
+                    ):
+                        failures.append(
+                            f"voice/TTS segment {index} output_level_error_db does not match source/output WAV levels"
+                        )
+                similarity_score = _float_or_none(segment.get("voice_similarity_score"))
+                similarity_threshold = _float_or_none(segment.get("voice_similarity_threshold"))
+                if similarity_score is None:
+                    failures.append(f"voice/TTS segment {index} voice_similarity_score is required")
+                if similarity_threshold is None:
+                    failures.append(f"voice/TTS segment {index} voice_similarity_threshold is required")
+                elif similarity_threshold < VOICE_CANDIDATE_MIN_SIMILARITY_SCORE:
+                    failures.append(
+                        f"voice/TTS segment {index} voice_similarity_threshold is below release minimum"
+                    )
+                if (
+                    similarity_score is not None
+                    and similarity_threshold is not None
+                    and similarity_score < similarity_threshold
+                ):
+                    failures.append(f"voice/TTS segment {index} voice similarity score is below threshold")
+                recomputed_similarity_score: float | None = None
+                if (
+                    reference_samples is not None
+                    and audio_samples is not None
+                    and reference_details is not None
+                ):
+                    recomputed_similarity_score = _acoustic_similarity_proxy(
+                        reference_samples,
+                        audio_samples,
+                        int(reference_details["sample_rate_hz"]),
+                    )
+                    if (
+                        similarity_score is not None
+                        and abs(recomputed_similarity_score - similarity_score)
+                        > VOICE_CANDIDATE_SIMILARITY_SCORE_TOLERANCE
+                    ):
+                        failures.append(
+                            f"voice/TTS segment {index} voice_similarity_score does not match recomputed proxy"
+                        )
+                evidence_hash = segment.get("voice_similarity_evidence_sha256")
+                evidence_path = _resolve_artifact_path(spec.path, segment.get("voice_similarity_evidence_path"))
+                if not _is_sha256(evidence_hash):
+                    failures.append(f"voice/TTS segment {index} similarity evidence hash is required")
+                elif evidence_path is None or not evidence_path.exists():
+                    failures.append(f"voice/TTS segment {index} similarity evidence artifact is missing")
+                elif _sha256_file(evidence_path) != evidence_hash:
+                    failures.append(f"voice/TTS segment {index} similarity evidence hash does not match artifact")
+                else:
+                    try:
+                        evidence = _load_json(evidence_path)
+                    except Exception as exc:
+                        evidence = None
+                        failures.append(f"voice/TTS segment {index} similarity evidence is unreadable: {exc}")
+                    if isinstance(evidence, dict):
+                        if evidence.get("speaker_id") != segment.get("speaker_id"):
+                            failures.append(f"voice/TTS segment {index} similarity evidence speaker_id mismatch")
+                        if evidence.get("reference_audio_sha256") != segment.get("reference_audio_sha256"):
+                            failures.append(
+                                f"voice/TTS segment {index} similarity evidence reference hash mismatch"
+                            )
+                        if evidence.get("reference_audio_pcm_sha256") != segment.get("reference_audio_pcm_sha256"):
+                            failures.append(
+                                f"voice/TTS segment {index} similarity evidence reference PCM hash mismatch"
+                            )
+                        if evidence.get("tts_output_sha256") != segment.get("tts_output_sha256"):
+                            failures.append(
+                                f"voice/TTS segment {index} similarity evidence output hash mismatch"
+                            )
+                        if evidence.get("tts_output_pcm_sha256") != segment.get("tts_output_pcm_sha256"):
+                            failures.append(
+                                f"voice/TTS segment {index} similarity evidence output PCM hash mismatch"
+                            )
+                        if evidence.get("metric_name") != VOICE_CANDIDATE_METRIC_NAME:
+                            failures.append(f"voice/TTS segment {index} similarity evidence metric mismatch")
+                        if evidence.get("evaluator_id") != VOICE_CANDIDATE_EVALUATOR_ID:
+                            failures.append(f"voice/TTS segment {index} similarity evidence evaluator mismatch")
+                        evidence_score = _float_or_none(evidence.get("score"))
+                        evidence_threshold = _float_or_none(evidence.get("threshold"))
+                        if (
+                            evidence_score is None
+                            or similarity_score is None
+                            or abs(evidence_score - similarity_score) > 1e-6
+                        ):
+                            failures.append(f"voice/TTS segment {index} similarity evidence score mismatch")
+                        if (
+                            evidence_score is not None
+                            and recomputed_similarity_score is not None
+                            and abs(evidence_score - recomputed_similarity_score)
+                            > VOICE_CANDIDATE_SIMILARITY_SCORE_TOLERANCE
+                        ):
+                            failures.append(
+                                f"voice/TTS segment {index} similarity evidence score does not match recomputed proxy"
+                            )
+                        if (
+                            evidence_threshold is None
+                            or similarity_threshold is None
+                            or abs(evidence_threshold - similarity_threshold) > 1e-6
+                        ):
+                            failures.append(f"voice/TTS segment {index} similarity evidence threshold mismatch")
+
+        if voice_status == "same_voice_candidate":
+            consent_speaker_ids = consent.get("speaker_ids")
+            if (
+                not isinstance(consent_speaker_ids, list)
+                or sorted(str(item) for item in consent_speaker_ids) != sorted(candidate_speaker_ids)
+            ):
+                failures.append("same_voice_candidate consent.speaker_ids must match segment speakers")
+            consent_reference_hashes = consent.get("reference_audio_sha256s")
+            if (
+                not isinstance(consent_reference_hashes, list)
+                or sorted(str(item) for item in consent_reference_hashes)
+                != sorted(candidate_reference_hashes)
+            ):
+                failures.append(
+                    "same_voice_candidate consent.reference_audio_sha256s must match segment references"
+                )
+            if consent.get("reference_retention_policy") == "consented_retention_with_expiry":
+                expiry = _float_or_none(consent.get("reference_retention_expires_unix"))
+                if expiry is None or expiry <= time.time():
+                    failures.append(
+                        "same_voice_candidate consent.reference_retention_expires_unix must be in the future"
+                    )
+            for output_index, output_hashes in candidate_output_hashes_by_index.items():
+                for reference_index, reference_hashes in candidate_reference_hashes_by_index.items():
+                    if output_index == reference_index:
+                        continue
+                    if output_hashes[0] == reference_hashes[0]:
+                        failures.append(
+                            f"voice/TTS segment {output_index} output must not clone segment {reference_index} reference WAV bytes"
+                        )
+                    if output_hashes[1] == reference_hashes[1]:
+                        failures.append(
+                            f"voice/TTS segment {output_index} output must not clone segment {reference_index} reference PCM"
+                        )
 
     if failures:
         return _fail(spec, "; ".join(failures))
@@ -2290,6 +2656,145 @@ def _write_voice_fixture_report(path: Path, *, forge_hash: bool = False) -> None
     _write_json(path, report)
 
 
+def _level_dbfs_from_samples(samples: list[int]) -> float:
+    values = array.array("h", samples)
+    return _dbfs_from_rms_i16(_rms_i16(values))
+
+
+def _write_voice_candidate_fixture_report(
+    path: Path,
+    *,
+    clone_reference: bool = False,
+    reported_level_error: float | None = None,
+    similarity_score: float | None = None,
+    output_gain: float = 1.0,
+) -> None:
+    sample_rate_hz = 16_000
+    frame_count = 8_000
+    reference_samples: list[int] = []
+    output_samples: list[int] = []
+    for index in range(frame_count):
+        t = float(index) / float(sample_rate_hz)
+        reference = int(round(8500.0 * math.sin(2.0 * math.pi * 180.0 * t)))
+        if clone_reference:
+            output = reference
+        else:
+            output = int(round(output_gain * 8500.0 * math.sin(2.0 * math.pi * 185.0 * t)))
+        reference_samples.append(reference)
+        output_samples.append(output)
+    reference_path = path.parent / f"{path.stem}-candidate-reference.wav"
+    output_path = path.parent / f"{path.stem}-candidate-output.wav"
+    consent_path = path.parent / f"{path.stem}-candidate-consent.txt"
+    evidence_path = path.parent / f"{path.stem}-candidate-similarity.json"
+    _write_pcm16_samples_wav(reference_path, sample_rate_hz, reference_samples)
+    _write_pcm16_samples_wav(output_path, sample_rate_hz, output_samples)
+    consent_path.write_text("unit test speaker consent\n", encoding="utf-8")
+    reference_hash = _sha256_file(reference_path)
+    output_hash = _sha256_file(output_path)
+    reference_details = _mono_pcm16_wav_details(reference_path)
+    output_details = _mono_pcm16_wav_details(output_path)
+    proxy_score = _acoustic_similarity_proxy(
+        array.array("h", reference_samples),
+        array.array("h", output_samples),
+        sample_rate_hz,
+    )
+    reported_similarity_score = proxy_score if similarity_score is None else similarity_score
+    evidence = {
+        "schema_version": 1,
+        "evaluator_id": VOICE_CANDIDATE_EVALUATOR_ID,
+        "metric_name": VOICE_CANDIDATE_METRIC_NAME,
+        "reference_audio_pcm_sha256": reference_details["pcm_sha256"],
+        "reference_audio_sha256": reference_hash,
+        "score": reported_similarity_score,
+        "speaker_id": "speaker_unit",
+        "threshold": 0.65,
+        "tts_output_pcm_sha256": output_details["pcm_sha256"],
+        "tts_output_sha256": output_hash,
+    }
+    _write_json(evidence_path, evidence)
+    reference_dbfs = _level_dbfs_from_samples(reference_samples)
+    output_dbfs = _level_dbfs_from_samples(output_samples)
+    level_error = abs(output_dbfs - reference_dbfs)
+    if reported_level_error is not None:
+        level_error = reported_level_error
+    segment = {
+        "fixture_id": "unit_voice_candidate",
+        "input_level_dbfs": round(reference_dbfs, 3),
+        "output_level_error_db": round(level_error, 3),
+        "reference_audio_path": str(reference_path),
+        "reference_audio_sha256": reference_hash,
+        "reference_audio_pcm_sha256": reference_details["pcm_sha256"],
+        "reference_audio_usage": "voice_clone_reference_and_similarity_measurement",
+        "segment_index": 0,
+        "speaker_id": "speaker_unit",
+        "source_audio_path": str(reference_path),
+        "source_audio_sha256": reference_hash,
+        "source_audio_pcm_sha256": reference_details["pcm_sha256"],
+        "target_language_code": "en",
+        "translated_text": "Unit same voice candidate.",
+        "tts_output_frame_count": frame_count,
+        "tts_output_level_dbfs": round(output_dbfs, 3),
+        "tts_output_path": str(output_path),
+        "tts_output_pcm_sha256": output_details["pcm_sha256"],
+        "tts_output_sha256": output_hash,
+        "voice_clone_reference_used": True,
+        "voice_clone_status": "same_voice_candidate",
+        "voice_similarity_claim": "measured_proxy",
+        "voice_similarity_evaluator_id": VOICE_CANDIDATE_EVALUATOR_ID,
+        "voice_similarity_evidence_path": str(evidence_path),
+        "voice_similarity_evidence_sha256": _sha256_file(evidence_path),
+        "voice_similarity_metric": VOICE_CANDIDATE_METRIC_NAME,
+        "voice_similarity_score": reported_similarity_score,
+        "voice_similarity_threshold": 0.65,
+    }
+    report = _report(
+        True,
+        _passed_gates(VOICE_REQUIRED_GATES),
+        fixture_kind="same_voice_candidate_tts_audio_stream",
+        benchmarks={
+            "same_voice_or_fallback_tts": {
+                "adapter_id": "unit_same_voice_candidate",
+                "segments": [segment],
+                "summary": {
+                    "max_output_level_error_db": round(level_error, 3),
+                    "min_voice_similarity_score": reported_similarity_score,
+                    "segment_count": 1,
+                    "voice_clone_status": "same_voice_candidate",
+                    "voice_similarity_claim": "measured_proxy",
+                },
+            }
+        },
+        adapter={
+            "voice": {
+                "adapter_id": "unit_same_voice_candidate",
+                "mode": "same_voice_candidate",
+                "voice_clone_reference_used": True,
+                "voice_similarity_claim": "measured_proxy",
+            }
+        },
+    )
+    report["summary"].update(
+        {
+            "max_output_level_error_db": round(level_error, 3),
+            "min_voice_similarity_score": reported_similarity_score,
+            "segment_count": 1,
+            "voice_clone_status": "same_voice_candidate",
+            "voice_similarity_claim": "measured_proxy",
+        }
+    )
+    report["consent"] = {
+        "consent_basis": "unit test speaker consent",
+        "consent_evidence_path": str(consent_path),
+        "consent_evidence_sha256": _sha256_file(consent_path),
+        "reference_retention_policy": "ephemeral_reference_deleted",
+        "reference_audio_sha256s": [reference_hash],
+        "speaker_consent": True,
+        "speaker_ids": ["speaker_unit"],
+        "voice_clone_reference_used": True,
+    }
+    _write_json(path, report)
+
+
 def _write_room_suppression_fixture_report(
     path: Path,
     summary_overrides: dict[str, Any] | None = None,
@@ -2634,6 +3139,10 @@ def self_test() -> None:
         translation = root / "translation.json"
         voice = root / "voice.json"
         forged_voice = root / "forged-voice.json"
+        voice_candidate = root / "voice-candidate.json"
+        weak_voice_candidate = root / "weak-voice-candidate.json"
+        forged_level_voice_candidate = root / "forged-level-voice-candidate.json"
+        clone_voice_candidate = root / "clone-voice-candidate.json"
         room = root / "room.json"
         forged_room = root / "forged-room.json"
         mismatched_room = root / "mismatched-room.json"
@@ -2731,6 +3240,14 @@ def self_test() -> None:
         )
         _write_voice_fixture_report(voice)
         _write_voice_fixture_report(forged_voice, forge_hash=True)
+        _write_voice_candidate_fixture_report(voice_candidate)
+        _write_voice_candidate_fixture_report(weak_voice_candidate, similarity_score=0.25)
+        _write_voice_candidate_fixture_report(
+            forged_level_voice_candidate,
+            output_gain=0.25,
+            reported_level_error=0.0,
+        )
+        _write_voice_candidate_fixture_report(clone_voice_candidate, clone_reference=True)
         _write_room_suppression_fixture_report(room)
         _write_room_suppression_fixture_report(
             forged_room,
@@ -2941,6 +3458,34 @@ def self_test() -> None:
         report = build_report(release_results, prototype_results)
         if report["summary"]["passed"]:
             raise AssertionError("expected forged voice/TTS artifacts to fail")
+
+        candidate_voice_args = argparse.Namespace(**vars(complete_args))
+        candidate_voice_args.voice_report = voice_candidate
+        release_results, prototype_results = evaluate(candidate_voice_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected proxy-only same-voice candidate evidence to require stronger proof")
+
+        weak_candidate_voice_args = argparse.Namespace(**vars(complete_args))
+        weak_candidate_voice_args.voice_report = weak_voice_candidate
+        release_results, prototype_results = evaluate(weak_candidate_voice_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected weak same-voice similarity evidence to fail")
+
+        forged_level_voice_args = argparse.Namespace(**vars(complete_args))
+        forged_level_voice_args.voice_report = forged_level_voice_candidate
+        release_results, prototype_results = evaluate(forged_level_voice_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected forged same-voice level report to fail")
+
+        clone_candidate_voice_args = argparse.Namespace(**vars(complete_args))
+        clone_candidate_voice_args.voice_report = clone_voice_candidate
+        release_results, prototype_results = evaluate(clone_candidate_voice_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected same-voice reference clone to fail")
 
         forged_room_args = argparse.Namespace(**vars(complete_args))
         forged_room_args.room_suppression_report = forged_room

@@ -53,6 +53,9 @@ make audio-eval-live-capture-contract-check
 make audio-eval-live-capture-check
 make audio-eval-playback-suppression-contract-check
 make audio-eval-playback-suppression-check
+make audio-eval-fallback-tts-contract-check
+make audio-eval-fallback-tts-check
+make audio-eval-same-voice-candidate-contract-check
 make audio-eval-shell
 make audio-eval-purge
 ```
@@ -68,6 +71,9 @@ pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-live-capture-contract
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-live-capture-check
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-playback-suppression-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-playback-suppression-check
+pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-fallback-tts-contract-check
+pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-fallback-tts-check
+pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-same-voice-candidate-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-purge
 ```
 
@@ -93,6 +99,9 @@ pass/fail gates. `make audio-eval-playback-suppression-check` renders a FLEURS t
 surrogate, matches playback level to source level, ducks the source residual, checks clipping and
 artifact hashes, and records that the claim is only
 `ducking_masking_simulation_not_true_cancellation`.
+`make audio-eval-same-voice-candidate-contract-check` validates the candidate voice evidence
+contract without a provider. `make audio-eval-same-voice-candidate-check` scores an externally
+generated manifest and bundles every referenced artifact into the ignored run directory.
 
 ### Host Live Microphone Capture
 
@@ -356,6 +365,41 @@ hashed eSpeak NG WAV files, `voice_clone_status=fallback_voice`, `voice_similari
 max level error 0.0 dB, and max peak -5.066 dBFS. This is release evidence for fallback spoken
 English only; same-voice cloning still needs a dedicated provider/model benchmark.
 
+## Same-Voice Candidate Artifacts
+
+The same audio-eval base image also contains the validation path for externally generated same-voice
+candidate WAVs. This path is intentionally smaller than a full model environment: future provider or
+local-model spikes can write a manifest plus WAV/JSON sidecars, then destroy their own heavier runtime
+after the candidate artifacts have been scored.
+
+```bash
+make audio-eval-same-voice-candidate-contract-check
+SAME_VOICE_CANDIDATE_ARGS='--manifest artifacts/audio_eval/runs/same-voice-candidate/same-voice-candidate-manifest.json' make audio-eval-same-voice-candidate-check
+```
+
+Windows:
+
+```powershell
+pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-same-voice-candidate-contract-check
+pwsh -NoProfile -File scripts/dev_container.ps1 audio-eval-same-voice-candidate-check --manifest artifacts/audio_eval/runs/same-voice-candidate/same-voice-candidate-manifest.json
+```
+
+The manifest must include structured consent metadata, a consent evidence path, consent-bound
+`speaker_ids` and `reference_audio_sha256s`, one or more mono 16-bit PCM source/reference WAVs, one
+generated English output WAV per segment, and a similarity-evidence JSON sidecar whose speaker id,
+metric, evaluator, score, threshold, reference/output SHA-256 hashes, and reference/output PCM hashes
+match the manifest. The scorer copies those files under
+`artifacts/audio_eval/runs/same-voice-candidate/candidate_artifacts/`, writes
+`voice-clone-report.json`, recomputes the built-in `release_gate_acoustic_proxy_v1` score, and fails
+cloned reference bytes/PCM, cross-segment reference clones, weak or non-recomputed similarity, missing
+consent evidence, clipped output, or output levels more than 0.75 dB from the source audio.
+
+`release_audio_gate.py` repeats the hash, WAV, level, consent binding, sidecar, and built-in acoustic
+proxy checks, then keeps proxy-only `same_voice_candidate` reports out of release proof until a
+stronger ASV or human speaker-similarity gate exists. The current release evidence still uses
+`fallback_voice`; this candidate path is for evaluating VoxCPM/CosyVoice/OpenVoice/provider outputs
+without weakening the fallback release gate.
+
 ## Host Real-Room Playback Suppression
 
 Real-room playback/suppression checks run on the host audio stack because Docker cannot reliably
@@ -504,7 +548,8 @@ failing. Live microphone capture, causal diarization, real target-speaker extrac
 speech translation after accepted TSE are checked separately. On the current June 12, 2026 evidence,
 the WeSep component report passes and the causal Sortformer plus Whisper-after-WeSep bridge satisfies
 the streaming translation gate. Consent-safe fallback TTS also passes with independently verified WAV
-hashes and level matching. The gate still blocks product-release claims until playback source
+hashes and level matching; same-voice proxy candidates are validation artifacts only until a stronger
+speaker-similarity gate exists. The gate still blocks product-release claims until playback source
 suppression has passing evidence: either true real-room cancellation or the measured headphone/earpiece
 mode described above.
 Prototype checks are recorded separately, must identify their prototype source kind, and cannot
