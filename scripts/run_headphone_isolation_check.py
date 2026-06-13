@@ -832,6 +832,93 @@ def route_probe_gates(summary: dict[str, Any], args: argparse.Namespace) -> list
     ]
 
 
+def route_probe_diagnostics(summary: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    min_corr = float(args.min_route_probe_correlation)
+    max_distortion = float(args.max_route_probe_distortion_db)
+    min_level = float(args.min_route_probe_dbfs)
+    max_lag_samples = max(1, int(round(float(args.sample_rate_hz) * float(args.max_alignment_lag_ms) / 1000.0)))
+
+    def route(prefix: str, label: str) -> dict[str, Any]:
+        opened = bool(summary.get(f"{prefix}_route_opened"))
+        error = summary.get(f"{prefix}_route_error")
+        recording = summary.get(f"{prefix}_route_recording")
+        recording = recording if isinstance(recording, dict) else {}
+        level = report_float(summary.get(f"{prefix}_route_recording_dbfs"), 3)
+        confidence = report_float(summary.get(f"{prefix}_route_reference_confidence"), 6)
+        distortion = report_float(summary.get(f"{prefix}_route_reference_distortion_db"), 3)
+        lag_samples = summary.get(f"{prefix}_route_reference_lag_samples")
+        clipped = recording.get("clipped_sample_count")
+        reasons: list[str] = []
+        next_actions: list[str] = []
+        if not opened:
+            reasons.append("route_not_opened")
+            next_actions.append("try another host API/device triple or channel config")
+            if error:
+                next_actions.append("inspect the PortAudio route error in the report")
+        else:
+            too_quiet = level is None or level < min_level
+            if too_quiet:
+                reasons.append("recording_too_quiet")
+                next_actions.append("move the measurement mic closer or raise playback gain without clipping")
+            if not too_quiet and (confidence is None or confidence < min_corr):
+                reasons.append("reference_not_detected")
+                next_actions.append("disable Windows audio enhancements, noise suppression, AGC, and echo processing")
+                next_actions.append("try an alternate host API route for the same physical devices")
+            if not too_quiet and (distortion is None or distortion > max_distortion):
+                reasons.append("reference_distorted")
+                next_actions.append("reduce processing in the capture/playback path or use a USB/wired listener-ear mic")
+            if isinstance(clipped, int) and clipped > int(args.max_route_probe_clipped_samples):
+                reasons.append("recording_clipped")
+                next_actions.append("lower playback gain and rerun the route probe")
+            if isinstance(lag_samples, int) and abs(lag_samples) >= int(max_lag_samples * 0.9):
+                reasons.append("alignment_near_search_boundary")
+                next_actions.append("increase --max-alignment-lag-ms only for diagnosis, then fix the route latency")
+        if not reasons:
+            reasons.append("route_reference_faithful")
+            next_actions.append("rerun this exact sample rate/channel config as probe-route before capture")
+        return {
+            "label": label,
+            "reasons": reasons,
+            "next_actions": list(dict.fromkeys(next_actions)),
+            "opened": opened,
+            "recording_dbfs": level,
+            "reference_confidence": confidence,
+            "reference_distortion_db": distortion,
+            "reference_lag_samples": lag_samples,
+        }
+
+    source = route("source", "source speaker route")
+    headphone = route("headphone", "headphone playback route")
+    blocking_reasons = [
+        f"source:{reason}" for reason in source["reasons"] if reason != "route_reference_faithful"
+    ] + [
+        f"headphone:{reason}" for reason in headphone["reasons"] if reason != "route_reference_faithful"
+    ]
+    return {
+        "blocking_reasons": blocking_reasons,
+        "headphone": headphone,
+        "next_actions": list(dict.fromkeys(source["next_actions"] + headphone["next_actions"])),
+        "source": source,
+    }
+
+
+def route_sweep_failure_summary(attempts: list[dict[str, Any]]) -> dict[str, int]:
+    failure_summary: dict[str, int] = {}
+    for attempt in attempts:
+        diagnosis = attempt.get("diagnosis")
+        if isinstance(diagnosis, dict):
+            for reason in diagnosis.get("blocking_reasons", []):
+                reason = str(reason)
+                failure_summary[reason] = failure_summary.get(reason, 0) + 1
+        failed_gates = attempt.get("failed_gates", [])
+        if not isinstance(failed_gates, list):
+            continue
+        for failed_gate in failed_gates:
+            reason = f"gate:{failed_gate}"
+            failure_summary[reason] = failure_summary.get(reason, 0) + 1
+    return dict(sorted(failure_summary.items()))
+
+
 def route_probe(args: argparse.Namespace) -> int:
     measurement_input_device = parse_device_selector(args.measurement_input_device)
     source_output_device = parse_device_selector(args.source_output_device)
@@ -992,6 +1079,7 @@ def route_probe(args: argparse.Namespace) -> int:
         artifact_hashes.get("headphone_route_probe_recording")
         == artifact_hashes.get("headphone_route_probe_reference")
     )
+    summary["route_failure_diagnosis"] = route_probe_diagnostics(summary, args)
     gates = route_probe_gates(summary, args)
     report = {
         "schema_version": 1,
@@ -1210,6 +1298,7 @@ def sweep_routes(args: argparse.Namespace) -> int:
                     "artifact_hashes": artifact_hashes if isinstance(artifact_hashes, dict) else {},
                     "artifact_paths": artifact_paths if isinstance(artifact_paths, dict) else {},
                     "device": benchmark.get("device") if isinstance(benchmark, dict) else None,
+                    "diagnosis": summary.get("route_failure_diagnosis"),
                     "failed_gates": failed_gates,
                     "metrics": metrics,
                     "passed": passed,
@@ -1236,6 +1325,7 @@ def sweep_routes(args: argparse.Namespace) -> int:
     best_scored_attempt = (
         max(scored_attempts, key=lambda item: float(item.get("score") or 0.0)) if scored_attempts else None
     )
+    failure_summary = route_sweep_failure_summary(attempts)
     gates = [
         {
             "name": "headphone_route_probe_sweep_not_release_proof",
@@ -1270,6 +1360,7 @@ def sweep_routes(args: argparse.Namespace) -> int:
             "channel_configs": [
                 {"input_channels": item[0], "output_channels": item[1]} for item in channel_configs
             ],
+            "failure_summary": failure_summary,
             "passed": bool(candidates),
             "quality_gates": gates,
             "release_proof": False,
@@ -2341,6 +2432,46 @@ def self_test() -> int:
         route_gates = {gate["name"]: gate for gate in route_probe_gates(route_summary, route_args)}
         if bool(route_gates["headphone_route_outputs_distinct"]["passed"]):
             raise RuntimeError("expected route probe same-output self-test fixture to fail")
+        failed_route_summary = dict(route_summary)
+        failed_route_summary["source_route_reference_confidence"] = 0.0
+        failed_route_summary["source_route_reference_distortion_db"] = 99.0
+        failed_route_summary["sample_rate_hz"] = sample_rate_hz
+        route_diagnosis_args = argparse.Namespace(
+            max_alignment_lag_ms=DEFAULT_MAX_ALIGNMENT_LAG_MS,
+            max_route_probe_clipped_samples=DEFAULT_MAX_ROUTE_PROBE_CLIPPED_SAMPLES,
+            max_route_probe_distortion_db=DEFAULT_MAX_ROUTE_PROBE_DISTORTION_DB,
+            min_route_probe_correlation=DEFAULT_MIN_ROUTE_PROBE_CORRELATION,
+            min_route_probe_dbfs=DEFAULT_MIN_SOURCE_OPEN_DBFS,
+            sample_rate_hz=sample_rate_hz,
+        )
+        diagnosis = route_probe_diagnostics(failed_route_summary, route_diagnosis_args)
+        if "source:reference_not_detected" not in diagnosis["blocking_reasons"]:
+            raise RuntimeError("expected route diagnosis to flag missing source reference")
+        if not diagnosis["next_actions"]:
+            raise RuntimeError("expected route diagnosis to include next actions")
+        quiet_route_summary = dict(failed_route_summary)
+        quiet_route_summary["source_route_recording_dbfs"] = DEFAULT_MIN_SOURCE_OPEN_DBFS - 12.0
+        quiet_diagnosis = route_probe_diagnostics(quiet_route_summary, route_diagnosis_args)
+        if "source:recording_too_quiet" not in quiet_diagnosis["blocking_reasons"]:
+            raise RuntimeError("expected quiet route diagnosis to flag recording_too_quiet")
+        if "source:reference_not_detected" in quiet_diagnosis["blocking_reasons"]:
+            raise RuntimeError("quiet route diagnosis should prioritize level before reference fidelity")
+        if "source:reference_distorted" in quiet_diagnosis["blocking_reasons"]:
+            raise RuntimeError("quiet route diagnosis should not claim reference distortion before level is adequate")
+        same_output_failure_summary = route_sweep_failure_summary(
+            [
+                {
+                    "diagnosis": diagnosis,
+                    "failed_gates": [
+                        name for name, gate in route_gates.items() if not bool(gate.get("passed"))
+                    ],
+                }
+            ]
+        )
+        if same_output_failure_summary.get("gate:headphone_route_outputs_distinct") != 1:
+            raise RuntimeError("expected route sweep failure summary to include same-output gate")
+        if same_output_failure_summary.get("source:reference_not_detected") != 1:
+            raise RuntimeError("expected route sweep failure summary to include diagnosis reasons")
         sweep_metrics = route_probe_attempt_metrics(
             {
                 **route_summary,

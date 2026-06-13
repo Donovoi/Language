@@ -581,6 +581,10 @@ source-isolated with the same source output/reference/gain/sample-rate/channel r
 translated playback through the headphone output, and embeds device snapshots, a device-path
 fingerprint, per-take levels, clipping counts, hashes, and the same non-tamper-proof provenance
 boundary as the other host audio evidence.
+Route sweeps are still triage only. Their reports include `summary.failure_summary` and per-attempt
+`diagnosis` entries so operators can tell whether the route failed to open, used the same output for
+source and headphones, was too quiet, clipped, or heard audio that did not match the generated
+reference because of processing or routing mismatch.
 
 ## Release Audio Evidence Gate
 

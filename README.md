@@ -221,7 +221,10 @@ pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --me
 ```
 
 If you let `sweep-routes` try multiple sample rates or channel configs, copy the winning
-`candidate_attempt` values into both `probe-route` and `capture`.
+`candidate_attempt` values into both `probe-route` and `capture`. If no candidate is found, inspect
+`summary.failure_summary` and each attempt's `diagnosis` before changing hardware; `gate:*` entries
+flag route-gate failures, `recording_too_quiet` means fix gain/placement first, and a loud route with
+`reference_not_detected` usually means Windows processing, route mismatch, or poor mic placement.
 
 The virtual lab is development evidence only: it writes
 `artifacts/audio_eval/runs/headphone-earpiece-virtual-lab/headphone-virtual-lab-report.json` with
