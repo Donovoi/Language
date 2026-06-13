@@ -13,6 +13,7 @@ import argparse
 import hashlib
 import json
 import math
+import shutil
 import tempfile
 import time
 import wave
@@ -30,6 +31,7 @@ DEFAULT_VIRTUAL_LAB_RUN_ID = "headphone-earpiece-virtual-lab"
 DEFAULT_MANUAL_KIT_RUN_ID = "headphone-earpiece-manual-kit"
 DEFAULT_MANUAL_STATUS_REPORT = "manual-recording-status.json"
 DEFAULT_MANUAL_PLAYBACK_LOG = "manual-playback-log.json"
+DEFAULT_MANUAL_IMPORT_LOG = "manual-import-log.json"
 DEFAULT_ADAPTER_ID = "listener_headphone_earpiece_isolation_measurement_v1"
 DEFAULT_ROUTE_PROBE_ADAPTER_ID = "listener_headphone_earpiece_route_probe_v1"
 DEFAULT_ROUTE_PROBE_SWEEP_ADAPTER_ID = "listener_headphone_earpiece_route_probe_sweep_v1"
@@ -82,6 +84,20 @@ MANUAL_REQUIRED_RECORDINGS = (
     "translated_headphone_recording",
 )
 MANUAL_REQUIRED_REFERENCES = ("source_reference", "translated_playback_reference")
+MANUAL_IMPORT_TAKES = {
+    "source_open_ear_recording": {
+        "argument": "source_open_ear_recording",
+        "summary": "open-ear source control recording",
+    },
+    "source_isolated_ear_recording": {
+        "argument": "source_isolated_ear_recording",
+        "summary": "isolated source recording",
+    },
+    "translated_headphone_recording": {
+        "argument": "translated_headphone_recording",
+        "summary": "translated headphone playback recording",
+    },
+}
 MANUAL_PLAYBACK_TAKES = {
     "source-open": {
         "reference_key": "source_reference",
@@ -382,12 +398,28 @@ def read_mono_wav(path: Path) -> tuple[np.ndarray, int]:
 
 def write_mono_wav(path: Path, samples: np.ndarray, sample_rate_hz: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    pcm = np.round(np.clip(samples, -1.0, 1.0) * 32767.0).astype("<i2")
+    pcm = mono_float_to_pcm16(samples)
     with wave.open(str(path), "wb") as wav:
         wav.setnchannels(1)
         wav.setsampwidth(2)
         wav.setframerate(sample_rate_hz)
         wav.writeframes(pcm.tobytes())
+
+
+def mono_float_to_pcm16(samples: np.ndarray) -> np.ndarray:
+    return np.round(np.clip(samples, -1.0, 1.0) * 32767.0).astype("<i2")
+
+
+def pcm16_bytes_sha256(pcm: np.ndarray) -> str:
+    return hashlib.sha256(pcm.astype("<i2", copy=False).tobytes()).hexdigest()
+
+
+def mono_wav_pcm_sha256(path: Path) -> str:
+    with wave.open(str(path), "rb") as wav:
+        if int(wav.getnchannels()) != 1 or int(wav.getsampwidth()) != 2:
+            raise ValueError(f"{path} must be mono PCM_16 WAV")
+        frames = wav.readframes(int(wav.getnframes()))
+    return hashlib.sha256(frames).hexdigest()
 
 
 def resample_to_rate(audio: np.ndarray, source_rate_hz: int, target_rate_hz: int) -> np.ndarray:
@@ -2710,6 +2742,308 @@ def score_manual_recordings(args: argparse.Namespace) -> int:
     return score(score_args)
 
 
+def read_manual_import_wav(
+    path: Path,
+    *,
+    allow_downmix: bool,
+    expected_sample_rate_hz: int,
+    min_duration_s: float,
+) -> tuple[dict[str, Any], np.ndarray | None]:
+    if not path.exists():
+        raise ValueError(f"{path} is missing")
+    try:
+        with wave.open(str(path), "rb") as wav:
+            channels = int(wav.getnchannels())
+            sample_width = int(wav.getsampwidth())
+            sample_rate_hz = int(wav.getframerate())
+            frame_count = int(wav.getnframes())
+            frames = wav.readframes(frame_count)
+    except (OSError, wave.Error) as exc:
+        raise ValueError(f"{path} must be a readable PCM WAV: {exc}") from exc
+
+    if channels <= 0:
+        raise ValueError(f"{path} must have at least one channel")
+    if sample_width != 2:
+        raise ValueError(f"{path} must be 16-bit PCM WAV before import")
+    if sample_rate_hz != int(expected_sample_rate_hz):
+        raise ValueError(f"{path} sample rate must be {int(expected_sample_rate_hz)} Hz before import")
+    if frame_count <= 0:
+        raise ValueError(f"{path} must contain frames")
+    duration_s = float(frame_count) / float(sample_rate_hz) if sample_rate_hz > 0 else 0.0
+    if duration_s < float(min_duration_s):
+        raise ValueError(f"{path} duration must be >= {float(min_duration_s):.3f}s before import")
+
+    raw = np.frombuffer(frames, dtype="<i2")
+    expected_values = int(frame_count) * int(channels)
+    if raw.size != expected_values:
+        raise ValueError(f"{path} frame data length does not match its WAV header")
+    samples: np.ndarray | None = None
+    conversion_kind = "copy_mono_pcm16"
+    decoded_mono_pcm_sha256 = hashlib.sha256(frames).hexdigest()
+    if channels != 1:
+        if not allow_downmix:
+            raise ValueError(f"{path} has {channels} channels; pass --allow-downmix to import as mono")
+        samples = raw.reshape(frame_count, channels).astype(np.float32) / 32768.0
+        samples = np.mean(samples, axis=1).astype(np.float32)
+        decoded_mono_pcm_sha256 = pcm16_bytes_sha256(mono_float_to_pcm16(samples))
+        conversion_kind = "downmix_to_mono_pcm16"
+
+    return (
+        {
+            "channels": channels,
+            "conversion_kind": conversion_kind,
+            "decoded_mono_pcm_sha256": decoded_mono_pcm_sha256,
+            "duration_s": round(duration_s, 6),
+            "frame_count": frame_count,
+            "input_sha256": sha256_file(path),
+            "sample_rate_hz": sample_rate_hz,
+            "sample_width_bytes": sample_width,
+        },
+        samples,
+    )
+
+
+def build_manual_import_plan(args: argparse.Namespace) -> tuple[Path, dict[str, Any], list[dict[str, Any]]]:
+    manifest_path = Path(args.manifest)
+    manifest = load_manual_manifest(manifest_path)
+    if manifest.get("release_proof") is not False:
+        raise ValueError("manual import manifest must remain release_proof=false")
+    requirements = manifest.get("recording_requirements")
+    requirements = requirements if isinstance(requirements, dict) else {}
+    try:
+        expected_sample_rate_hz = int(
+            requirements.get("sample_rate_hz")
+            or manifest.get("sample_rate_hz")
+            or DEFAULT_SAMPLE_RATE_HZ
+        )
+        if expected_sample_rate_hz <= 0:
+            raise ValueError
+    except (TypeError, ValueError) as exc:
+        raise ValueError("manual import manifest sample_rate_hz must be a positive integer") from exc
+    try:
+        min_duration_s = float(manifest.get("min_artifact_duration_s") or DEFAULT_MIN_MEASUREMENT_DURATION_S)
+        if min_duration_s <= 0.0:
+            raise ValueError
+    except (TypeError, ValueError) as exc:
+        raise ValueError("manual import manifest min_artifact_duration_s must be a positive number") from exc
+    expected_recordings = manifest.get("expected_recording_paths")
+    expected_recordings = expected_recordings if isinstance(expected_recordings, dict) else {}
+    artifact_hashes = manifest.get("artifact_hashes")
+    artifact_hashes = artifact_hashes if isinstance(artifact_hashes, dict) else {}
+    reference_hashes = {
+        str(value)
+        for key, value in artifact_hashes.items()
+        if key in MANUAL_REQUIRED_REFERENCES and isinstance(value, str) and value
+    }
+    reference_pcm_hashes: dict[str, str] = {}
+    artifacts = manifest.get("artifact_paths")
+    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    for key in MANUAL_REQUIRED_REFERENCES:
+        try:
+            reference_pcm_hashes[key] = mono_wav_pcm_sha256(resolve_manual_manifest_path(manifest_path, artifacts.get(key)))
+        except (OSError, ValueError, wave.Error) as exc:
+            raise ValueError(f"{key} reference PCM could not be verified before import: {exc}") from exc
+
+    for field in ("headphone_device_label", "isolation_fixture_label", "measurement_microphone_label"):
+        value = getattr(args, field, None)
+        if isinstance(value, str) and value.strip() and not specific_label(value):
+            raise ValueError(f"{field} must be specific if supplied to import-manual")
+
+    plan: list[dict[str, Any]] = []
+    seen_source_paths: dict[str, str] = {}
+    seen_input_hashes: dict[str, str] = {}
+    for key in MANUAL_REQUIRED_RECORDINGS:
+        take = MANUAL_IMPORT_TAKES[key]
+        source_value = getattr(args, str(take["argument"]))
+        source_path = Path(source_value)
+        target_path = resolve_manual_manifest_path(manifest_path, expected_recordings.get(key))
+        details, downmixed_samples = read_manual_import_wav(
+            source_path,
+            allow_downmix=bool(args.allow_downmix),
+            expected_sample_rate_hz=expected_sample_rate_hz,
+            min_duration_s=min_duration_s,
+        )
+        source_identity = str(source_path.resolve())
+        duplicate_path_key = seen_source_paths.get(source_identity)
+        if duplicate_path_key:
+            raise ValueError(f"{key} reuses the same source file as {duplicate_path_key}: {source_path}")
+        seen_source_paths[source_identity] = key
+        input_sha256 = str(details["input_sha256"])
+        duplicate_hash_key = seen_input_hashes.get(input_sha256)
+        if duplicate_hash_key:
+            raise ValueError(f"{key} has the same raw audio hash as {duplicate_hash_key}; record separate takes")
+        seen_input_hashes[input_sha256] = key
+        if input_sha256 in reference_hashes:
+            raise ValueError(f"{key} matches a manual reference WAV hash; import a listener-ear recording instead")
+        decoded_mono_pcm_sha256 = str(details["decoded_mono_pcm_sha256"])
+        for reference_key, reference_pcm_sha256 in reference_pcm_hashes.items():
+            if decoded_mono_pcm_sha256 == reference_pcm_sha256:
+                raise ValueError(
+                    f"{key} decoded PCM matches {reference_key}; import a listener-ear recording instead"
+                )
+        try:
+            same_file = source_path.resolve() == target_path.resolve()
+        except OSError:
+            same_file = False
+        action = str(details["conversion_kind"])
+        if same_file and action != "copy_mono_pcm16":
+            raise ValueError(f"{key} cannot be downmixed in place; import from a separate source WAV")
+        if same_file:
+            action = "already_in_expected_path"
+        elif target_path.exists() and not bool(args.allow_overwrite):
+            raise ValueError(f"{key} target already exists: {target_path}; pass --allow-overwrite to replace it")
+        event = {
+            **details,
+            "dry_run": bool(args.dry_run),
+            "key": key,
+            "output_channels": 1,
+            "output_sample_rate_hz": expected_sample_rate_hz,
+            "source_path": str(source_path),
+            "summary": str(take["summary"]),
+            "target_path": str(target_path),
+            "write_action": action,
+        }
+        plan.append(
+            {
+                "event": event,
+                "source_path": source_path,
+                "target_path": target_path,
+                "samples": downmixed_samples,
+                "write_action": action,
+            }
+        )
+    return manifest_path, manifest, plan
+
+
+def import_manual_recordings(args: argparse.Namespace) -> int:
+    manifest_path = Path(args.manifest)
+    log_path = Path(args.log) if args.log else manifest_path.parent / DEFAULT_MANUAL_IMPORT_LOG
+    try:
+        manifest_path, manifest, plan = build_manual_import_plan(args)
+    except Exception as exc:
+        log = json_safe(
+            {
+                "schema_version": 1,
+                "generated_at_unix": int(time.time()),
+                "manifest_sha256": sha256_file(manifest_path) if manifest_path.exists() else None,
+                "manifest_path": str(manifest_path),
+                "release_proof": False,
+                "summary": {
+                    "dry_run": bool(args.dry_run),
+                    "error": str(exc),
+                    "error_type": type(exc).__name__,
+                    "manual_import_ready": False,
+                    "release_proof": False,
+                },
+                "import_events": [],
+                "detractor_loop": {
+                    "strongest_objection": (
+                        "A failed import plan does not prove the listener-ear recordings exist or are usable."
+                    ),
+                    "verdict": "Fix the source files or manifest before scoring release evidence.",
+                },
+            }
+        )
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(json.dumps(log, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+        print(f"headphone/earpiece manual import NOT-READY: {type(exc).__name__}: {exc}")
+        print(f"wrote manual import log to {log_path}")
+        return 1
+
+    import_events: list[dict[str, Any]] = []
+    if not args.dry_run:
+        for item in plan:
+            source_path = Path(item["source_path"])
+            target_path = Path(item["target_path"])
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            action = str(item["write_action"])
+            if action == "already_in_expected_path":
+                pass
+            elif action == "copy_mono_pcm16":
+                shutil.copy2(source_path, target_path)
+            elif action == "downmix_to_mono_pcm16":
+                write_mono_wav(target_path, item["samples"], int(item["event"]["output_sample_rate_hz"]))
+            else:
+                raise ValueError(f"unknown manual import write action: {action}")
+            event = dict(item["event"])
+            event["target_sha256"] = sha256_file(target_path)
+            import_events.append(event)
+    else:
+        import_events = [dict(item["event"]) for item in plan]
+
+    status_report = Path(args.status_report) if args.status_report else manifest_path.parent / DEFAULT_MANUAL_STATUS_REPORT
+    post_import_summary: dict[str, Any] = {}
+    post_import_error: str | None = None
+    if not args.dry_run and not args.skip_check:
+        try:
+            check_manual_recordings(
+                argparse.Namespace(
+                    headphone_device_label=args.headphone_device_label,
+                    isolation_fixture_label=args.isolation_fixture_label,
+                    json=False,
+                    manifest=manifest_path,
+                    measurement_microphone_label=args.measurement_microphone_label,
+                    report=status_report,
+                    score_warning_only=True,
+                )
+            )
+            status = json.loads(status_report.read_text(encoding="utf-8"))
+            if isinstance(status, dict) and isinstance(status.get("summary"), dict):
+                post_import_summary = dict(status["summary"])
+            else:
+                post_import_error = "post-import status report did not contain a summary object"
+        except Exception as exc:
+            post_import_error = str(exc)
+    manual_recordings_ready = post_import_summary.get("manual_recordings_ready_for_score_input")
+    post_import_check_failed = bool(post_import_error) or (
+        bool((not args.dry_run) and (not args.skip_check)) and manual_recordings_ready is not True
+    )
+    log = json_safe(
+        {
+            "schema_version": 1,
+            "generated_at_unix": int(time.time()),
+            "manifest_sha256": sha256_file(manifest_path),
+            "manifest_path": str(manifest_path),
+            "release_proof": False,
+            "summary": {
+                "allow_downmix": bool(args.allow_downmix),
+                "allow_overwrite": bool(args.allow_overwrite),
+                "dry_run": bool(args.dry_run),
+                "import_event_count": len(import_events),
+                "manual_import_ready": True,
+                "manual_recordings_ready_for_score_input": manual_recordings_ready,
+                "manual_score_ready": post_import_summary.get("manual_score_ready"),
+                "post_import_check_error": post_import_error,
+                "post_import_check_failed": post_import_check_failed,
+                "post_import_check_run": bool((not args.dry_run) and (not args.skip_check)),
+                "post_import_issue_count": post_import_summary.get("issue_count"),
+                "post_import_warning_count": post_import_summary.get("warning_count"),
+                "release_proof": False,
+                "status_report_path": str(status_report),
+            },
+            "manual_manifest": {
+                "expected_recording_paths": manifest.get("expected_recording_paths", {}),
+                "recording_requirements": manifest.get("recording_requirements", {}),
+                "sample_rate_hz": manifest.get("sample_rate_hz"),
+            },
+            "import_events": import_events,
+            "detractor_loop": {
+                "strongest_objection": (
+                    "This import log proves only local file normalization. It does not prove the recordings "
+                    "came from the listener-ear fixture, that the headset was sealed, or that isolation passed."
+                ),
+                "verdict": "Keep release_proof=false; run check-manual and score-manual before using release evidence.",
+            },
+        }
+    )
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(json.dumps(log, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    mode = "DRY-RUN" if args.dry_run else "DONE"
+    print(f"headphone/earpiece manual import {mode}: recordings={len(import_events)}")
+    print(f"wrote manual import log to {log_path}")
+    return 1 if post_import_check_failed else 0
+
+
 def manual_take_names(values: list[str] | None) -> list[str]:
     requested = values or ["all"]
     if "all" in requested:
@@ -3427,21 +3761,212 @@ def self_test() -> int:
         if missing_score_manual_result == 0:
             raise RuntimeError("score-manual warning-only must not bypass missing listener-ear recordings")
         expected_recordings = manual_manifest.get("expected_recording_paths", {})
+        raw_import_dir = manual_manifest_path.parent / "raw-import-fixtures"
+        raw_import_dir.mkdir(parents=True, exist_ok=True)
+        source_open_import = raw_import_dir / "phone-source-open.wav"
+        source_isolated_import = raw_import_dir / "phone-source-isolated.wav"
+        translated_import = raw_import_dir / "phone-translated-stereo.wav"
+        source_reference_junk_import = raw_import_dir / "source-reference-with-junk-chunk.wav"
+        translated_import_mono = add_padding(translated_recording, sample_rate_hz, 0.1, 0.1)
         write_mono_wav(
-            Path(expected_recordings["source_open_ear_recording"]),
+            source_open_import,
             add_padding(source_open, sample_rate_hz, 0.1, 0.1),
             sample_rate_hz,
         )
         write_mono_wav(
-            Path(expected_recordings["source_isolated_ear_recording"]),
+            source_isolated_import,
             add_padding(source * db_to_linear(-19.0), sample_rate_hz, 0.1, 0.1),
             sample_rate_hz,
         )
-        write_mono_wav(
-            Path(expected_recordings["translated_headphone_recording"]),
-            add_padding(translated_recording, sample_rate_hz, 0.1, 0.1),
-            sample_rate_hz,
+        translated_stereo = np.stack([translated_import_mono, translated_import_mono], axis=1)
+        translated_pcm = np.round(np.clip(translated_stereo, -1.0, 1.0) * 32767.0).astype("<i2")
+        with wave.open(str(translated_import), "wb") as wav:
+            wav.setnchannels(2)
+            wav.setsampwidth(2)
+            wav.setframerate(sample_rate_hz)
+            wav.writeframes(translated_pcm.tobytes())
+        source_reference_path = Path(manual_manifest.get("artifact_paths", {})["source_reference"])
+        source_reference_bytes = source_reference_path.read_bytes()
+        junk_chunk = b"JUNK" + int(4).to_bytes(4, "little") + b"test"
+        riff_size = int.from_bytes(source_reference_bytes[4:8], "little") + len(junk_chunk)
+        source_reference_junk_import.write_bytes(
+            source_reference_bytes[:4]
+            + riff_size.to_bytes(4, "little")
+            + source_reference_bytes[8:12]
+            + junk_chunk
+            + source_reference_bytes[12:]
         )
+        import_without_downmix_result = import_manual_recordings(
+            argparse.Namespace(
+                allow_downmix=False,
+                allow_overwrite=False,
+                dry_run=True,
+                headphone_device_label=None,
+                isolation_fixture_label=None,
+                log=manual_manifest_path.parent / "manual-import-log-no-downmix.json",
+                manifest=manual_manifest_path,
+                measurement_microphone_label=None,
+                skip_check=True,
+                source_isolated_ear_recording=source_isolated_import,
+                source_open_ear_recording=source_open_import,
+                status_report=manual_manifest_path.parent / "manual-recording-status-import-no-downmix.json",
+                translated_headphone_recording=translated_import,
+            )
+        )
+        if import_without_downmix_result == 0:
+            raise RuntimeError("manual import should reject stereo recordings unless --allow-downmix is explicit")
+        duplicate_import_result = import_manual_recordings(
+            argparse.Namespace(
+                allow_downmix=True,
+                allow_overwrite=False,
+                dry_run=True,
+                headphone_device_label=None,
+                isolation_fixture_label=None,
+                log=manual_manifest_path.parent / "manual-import-log-duplicate-source.json",
+                manifest=manual_manifest_path,
+                measurement_microphone_label=None,
+                skip_check=True,
+                source_isolated_ear_recording=source_open_import,
+                source_open_ear_recording=source_open_import,
+                status_report=manual_manifest_path.parent / "manual-recording-status-import-duplicate-source.json",
+                translated_headphone_recording=translated_import,
+            )
+        )
+        if duplicate_import_result == 0:
+            raise RuntimeError("manual import should reject duplicate raw recording files across takes")
+        reference_clone_import_result = import_manual_recordings(
+            argparse.Namespace(
+                allow_downmix=True,
+                allow_overwrite=False,
+                dry_run=True,
+                headphone_device_label=None,
+                isolation_fixture_label=None,
+                log=manual_manifest_path.parent / "manual-import-log-reference-clone.json",
+                manifest=manual_manifest_path,
+                measurement_microphone_label=None,
+                skip_check=True,
+                source_isolated_ear_recording=source_isolated_import,
+                source_open_ear_recording=manual_manifest.get("artifact_paths", {})["source_reference"],
+                status_report=manual_manifest_path.parent / "manual-recording-status-import-reference-clone.json",
+                translated_headphone_recording=translated_import,
+            )
+        )
+        if reference_clone_import_result == 0:
+            raise RuntimeError("manual import should reject exact reference WAV clones as listener-ear recordings")
+        reference_pcm_clone_import_result = import_manual_recordings(
+            argparse.Namespace(
+                allow_downmix=True,
+                allow_overwrite=False,
+                dry_run=True,
+                headphone_device_label=None,
+                isolation_fixture_label=None,
+                log=manual_manifest_path.parent / "manual-import-log-reference-pcm-clone.json",
+                manifest=manual_manifest_path,
+                measurement_microphone_label=None,
+                skip_check=True,
+                source_isolated_ear_recording=source_isolated_import,
+                source_open_ear_recording=source_reference_junk_import,
+                status_report=manual_manifest_path.parent / "manual-recording-status-import-reference-pcm-clone.json",
+                translated_headphone_recording=translated_import,
+            )
+        )
+        if reference_pcm_clone_import_result == 0:
+            raise RuntimeError("manual import should reject reference PCM clones with different WAV containers")
+        placeholder_import_result = import_manual_recordings(
+            argparse.Namespace(
+                allow_downmix=True,
+                allow_overwrite=False,
+                dry_run=True,
+                headphone_device_label="placeholder REPLACE_WITH_HEADPHONE_MODEL",
+                isolation_fixture_label=None,
+                log=manual_manifest_path.parent / "manual-import-log-placeholder-label.json",
+                manifest=manual_manifest_path,
+                measurement_microphone_label=None,
+                skip_check=True,
+                source_isolated_ear_recording=source_isolated_import,
+                source_open_ear_recording=source_open_import,
+                status_report=manual_manifest_path.parent / "manual-recording-status-import-placeholder-label.json",
+                translated_headphone_recording=translated_import,
+            )
+        )
+        if placeholder_import_result == 0:
+            raise RuntimeError("manual import should reject placeholder labels when labels are supplied")
+        dry_run_import_result = import_manual_recordings(
+            argparse.Namespace(
+                allow_downmix=True,
+                allow_overwrite=False,
+                dry_run=True,
+                headphone_device_label=None,
+                isolation_fixture_label=None,
+                log=manual_manifest_path.parent / "manual-import-log-dry-run.json",
+                manifest=manual_manifest_path,
+                measurement_microphone_label=None,
+                skip_check=True,
+                source_isolated_ear_recording=source_isolated_import,
+                source_open_ear_recording=source_open_import,
+                status_report=manual_manifest_path.parent / "manual-recording-status-import-dry-run.json",
+                translated_headphone_recording=translated_import,
+            )
+        )
+        if dry_run_import_result != 0:
+            raise RuntimeError("expected manual import dry-run to pass with explicit downmix")
+        dry_run_import_log = json.loads(
+            (manual_manifest_path.parent / "manual-import-log-dry-run.json").read_text(encoding="utf-8")
+        )
+        if dry_run_import_log.get("release_proof") is not False:
+            raise RuntimeError("manual import dry-run log must not set release_proof")
+        if int(dry_run_import_log.get("summary", {}).get("import_event_count") or 0) != 3:
+            raise RuntimeError("manual import dry-run should plan all three recordings")
+        if any(Path(path).exists() for path in expected_recordings.values()):
+            raise RuntimeError("manual import dry-run must not write expected recording paths")
+        import_result = import_manual_recordings(
+            argparse.Namespace(
+                allow_downmix=True,
+                allow_overwrite=False,
+                dry_run=False,
+                headphone_device_label=None,
+                isolation_fixture_label=None,
+                log=manual_manifest_path.parent / "manual-import-log.json",
+                manifest=manual_manifest_path,
+                measurement_microphone_label=None,
+                skip_check=False,
+                source_isolated_ear_recording=source_isolated_import,
+                source_open_ear_recording=source_open_import,
+                status_report=manual_manifest_path.parent / "manual-recording-status-import.json",
+                translated_headphone_recording=translated_import,
+            )
+        )
+        if import_result != 0:
+            raise RuntimeError("expected manual import to write valid listener-ear recording WAVs")
+        import_log = json.loads((manual_manifest_path.parent / "manual-import-log.json").read_text(encoding="utf-8"))
+        if import_log.get("release_proof") is not False:
+            raise RuntimeError("manual import log must not set release_proof")
+        import_actions = {event.get("key"): event.get("write_action") for event in import_log.get("import_events", [])}
+        if import_actions.get("translated_headphone_recording") != "downmix_to_mono_pcm16":
+            raise RuntimeError("manual import should record the explicit translated stereo downmix action")
+        if import_log.get("summary", {}).get("manual_recordings_ready_for_score_input") is not True:
+            raise RuntimeError("manual import log should expose post-import score-input readiness")
+        if import_log.get("summary", {}).get("manual_score_ready") is not False:
+            raise RuntimeError("manual import log should not claim score-ready when labels are still pending")
+        repeated_import_result = import_manual_recordings(
+            argparse.Namespace(
+                allow_downmix=True,
+                allow_overwrite=False,
+                dry_run=True,
+                headphone_device_label=None,
+                isolation_fixture_label=None,
+                log=manual_manifest_path.parent / "manual-import-log-existing-target.json",
+                manifest=manual_manifest_path,
+                measurement_microphone_label=None,
+                skip_check=True,
+                source_isolated_ear_recording=source_isolated_import,
+                source_open_ear_recording=source_open_import,
+                status_report=manual_manifest_path.parent / "manual-recording-status-import-existing-target.json",
+                translated_headphone_recording=translated_import,
+            )
+        )
+        if repeated_import_result == 0:
+            raise RuntimeError("manual import should fail closed before replacing existing target recordings")
         ready_manual_result = check_manual_recordings(
             argparse.Namespace(
                 json=False,
@@ -4169,6 +4694,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     play_manual_parser.add_argument("--repeat", type=int, default=1)
     play_manual_parser.add_argument("--non-interactive", action="store_true")
     play_manual_parser.add_argument("--dry-run", action="store_true")
+    import_manual_parser = subparsers.add_parser(
+        "import-manual",
+        help="import externally recorded listener-ear WAVs into the manual kit paths",
+    )
+    import_manual_parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR
+        / "runs"
+        / DEFAULT_MANUAL_KIT_RUN_ID
+        / "manual-recording-manifest.json",
+    )
+    import_manual_parser.add_argument("--log", type=Path)
+    import_manual_parser.add_argument("--status-report", type=Path)
+    import_manual_parser.add_argument("--source-open-ear-recording", type=Path, required=True)
+    import_manual_parser.add_argument("--source-isolated-ear-recording", type=Path, required=True)
+    import_manual_parser.add_argument("--translated-headphone-recording", type=Path, required=True)
+    import_manual_parser.add_argument("--headphone-device-label")
+    import_manual_parser.add_argument("--isolation-fixture-label")
+    import_manual_parser.add_argument("--measurement-microphone-label")
+    import_manual_parser.add_argument("--allow-downmix", action="store_true")
+    import_manual_parser.add_argument("--allow-overwrite", action="store_true")
+    import_manual_parser.add_argument("--skip-check", action="store_true")
+    import_manual_parser.add_argument("--dry-run", action="store_true")
     score_manual_parser = subparsers.add_parser(
         "score-manual",
         help="validate a manual recording manifest and score its listener-ear WAV artifacts",
@@ -4426,6 +4975,8 @@ def main(argv: list[str] | None = None) -> int:
         return check_manual_recordings(args)
     if args.command == "play-manual":
         return play_manual_references(args)
+    if args.command == "import-manual":
+        return import_manual_recordings(args)
     if args.command == "score-manual":
         return score_manual_recordings(args)
     if args.command == "capture":

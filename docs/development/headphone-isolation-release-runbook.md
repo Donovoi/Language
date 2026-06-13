@@ -185,10 +185,10 @@ earcup/earpiece over the recorder mic. For `translated-headphone-recording.wav`,
 play the translated reference through the headset. Keep the playback level comfortable and avoid
 clipping on the recorder; it is better to repeat the take than to rescue distorted audio later.
 
-Record the three expected WAVs named in the manifest with the mic at the listener-ear position. Export
-each recording as mono 16-bit PCM WAV at the kit sample rate, and trim pre-roll so the played
-reference begins within 500 ms of the recording start. The release gate recomputes alignment with the
-same 500 ms window; use a wider alignment window only for diagnosis, not release proof.
+Record the three expected takes with the mic at the listener-ear position. Export each recording as
+16-bit PCM WAV at the kit sample rate, and trim pre-roll so the played reference begins within 500 ms
+of the recording start. The release gate recomputes alignment with the same 500 ms window; use a
+wider alignment window only for diagnosis, not release proof.
 
 - `source-open-ear-recording.wav`: source reference through the original speaker, headphone/earpiece
   removed or isolation disabled.
@@ -210,6 +210,19 @@ The playback helper requires explicit source/headphone output devices, or one de
 
 This writes `manual-playback-log.json` with `release_proof=false`. It is only an operator trace; the
 release evidence still comes from the scored listener-ear WAV recordings.
+
+If your recorder exports arbitrary filenames, import them into the manifest's expected paths before
+checking or scoring:
+
+```powershell
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-import-manual --source-open-ear-recording RAW_SOURCE_OPEN.wav --source-isolated-ear-recording RAW_SOURCE_ISOLATED.wav --translated-headphone-recording RAW_TRANSLATED.wav --allow-downmix
+```
+
+`--allow-downmix` is only a channel-format policy for stereo recorder exports. The importer does not
+normalize loudness, denoise, repair clipping, resample, auto-select best takes, or trim for score. It
+rejects exact reference clones, duplicate raw takes, placeholder labels supplied to the importer, and
+target overwrites unless `--allow-overwrite` is explicit. It writes `manual-import-log.json` with
+`release_proof=false`; only `score-manual` can produce release evidence.
 
 Then run the manual-recording doctor without warning-only and with the real labels you will use for
 scoring. It checks that the kit manifest remains `release_proof=false`, both reference WAVs exist and
