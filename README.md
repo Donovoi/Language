@@ -353,8 +353,9 @@ Use `sweep-devices` only to find a candidate device path cheaply. It writes
 `release_proof=false`, every attempted pair, lag margins, device fingerprints, and failed gates.
 Any candidate from the sweep must be rerun with the full `check` command and then
 `scripts/release_audio_gate.py`. The gate writes both `artifacts/release/audio-gate-report.json`
-and the operator-readable `artifacts/release/audio-gate-report.md`; use the Markdown for handoff,
-but treat the JSON as the authoritative pass/fail evidence.
+and the operator-readable `artifacts/release/audio-gate-report.md`; use the Markdown for blocker
+handoff and physical-evidence command hints, but treat the JSON as the authoritative pass/fail
+evidence.
 
 The real microphone capture check runs on the host audio stack, not inside Docker:
 

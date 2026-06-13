@@ -2454,6 +2454,47 @@ def write_report(report: dict[str, Any], path: Path) -> None:
     path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def playback_source_suppression_handoff_lines() -> list[str]:
+    return [
+        "",
+        "### Playback/Source Suppression Evidence Collection",
+        "",
+        "Hardware setup:",
+        "",
+        "- Use a USB/lavalier microphone or phone/external recorder physically at the listener-ear point, inside or flush with the headphone/earpiece seal.",
+        "- Use the laptop built-in microphone only for `route_probe_triage_only`; it is not final release evidence.",
+        "- Keep the source speaker, headphone/earpiece seal, playback gain, and listener-ear microphone position fixed between matching takes.",
+        "- Export manual-recorder takes as mono 16-bit PCM WAV at the kit sample rate, or import stereo recorder exports with `--allow-downmix`.",
+        "",
+        "Guided host path, only when preflight finds a capture-ready external listener-ear input:",
+        "",
+        "```powershell",
+        "$env:LANGUAGE_PYTHON = \"C:\\Path\\To\\python.exe\"",
+        "$headphoneLabel = \"REPLACE_WITH_HEADPHONE_MODEL\"",
+        "$fixtureLabel = \"REPLACE_WITH_EARCUP_AND_MIC_POSITION\"",
+        "$microphoneLabel = \"REPLACE_WITH_MIC_MODEL_AND_POSITION\"",
+        "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2",
+        "# If the preflight report emits confirm_physical_input_preflight and capture commands, run those generated commands exactly.",
+        "python scripts/release_audio_gate.py --json",
+        "```",
+        "",
+        "Manual recorder fallback when host routing is unreliable or no capture-ready input is available:",
+        "",
+        "```powershell",
+        "$env:LANGUAGE_PYTHON = \"C:\\Path\\To\\python.exe\"",
+        "$headphoneLabel = \"REPLACE_WITH_HEADPHONE_MODEL\"",
+        "$fixtureLabel = \"REPLACE_WITH_EARCUP_AND_MIC_POSITION\"",
+        "$microphoneLabel = \"REPLACE_WITH_MIC_MODEL_AND_POSITION\"",
+        "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action prepare-manual -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --playback-gain-db -18",
+        "# Record the three listener-ear WAVs named in manual-recording-checklist.md, or import raw recorder exports:",
+        "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action import-manual -Python $env:LANGUAGE_PYTHON --source-open-ear-recording RAW_SOURCE_OPEN.wav --source-isolated-ear-recording RAW_SOURCE_ISOLATED.wav --translated-headphone-recording RAW_TRANSLATED.wav --allow-downmix",
+        "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action check-manual -Python $env:LANGUAGE_PYTHON --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel",
+        "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action score-manual -Python $env:LANGUAGE_PYTHON --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel",
+        "python scripts/release_audio_gate.py --json",
+        "```",
+    ]
+
+
 def render_markdown_report(report: dict[str, Any]) -> str:
     summary = report.get("summary", {})
     summary = summary if isinstance(summary, dict) else {}
@@ -2525,6 +2566,7 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             "- Treat this Markdown as a readable handoff; the JSON report remains the authoritative artifact.",
         ]
     )
+    included_playback_collection = False
     if failed_release_gates:
         lines.append("- Do not ship a realtime audio-loop release while any release-blocking gate is FAIL.")
         failed_names = {str(gate.get("name", "")) for gate in failed_release_gates}
@@ -2533,17 +2575,19 @@ def render_markdown_report(report: dict[str, Any]) -> str:
                 "- For the current playback/source suppression blocker, provide either a passing real-room "
                 "cancellation report or a passing physical headphone/earpiece listener-ear isolation report."
             )
+            lines.extend(playback_source_suppression_handoff_lines())
+            included_playback_collection = True
         else:
             lines.append("- Address each failed release-blocking gate above, then rerun the gate.")
     else:
         lines.append("- All release-blocking gates passed in this report; preserve the referenced evidence artifacts.")
         lines.append("- Rerun this gate for the exact commit and artifact set before publishing.")
-    lines.extend(
-        [
-            "- When collecting headphone/earpiece evidence, laptop built-in microphones are route triage only; final evidence needs a real listener-ear microphone/recorder path.",
-            "",
-        ]
-    )
+    if not included_playback_collection:
+        lines.append(
+            "- When collecting headphone/earpiece evidence, laptop built-in microphones are route triage only; "
+            "final evidence needs a real listener-ear microphone/recorder path."
+        )
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -3633,6 +3677,8 @@ def self_test() -> None:
             raise AssertionError("passed Markdown handoff must not describe a current playback blocker")
         if "All release-blocking gates passed" not in complete_handoff:
             raise AssertionError("passed Markdown handoff should explain that release gates passed")
+        if "Playback/Source Suppression Evidence Collection" in complete_handoff:
+            raise AssertionError("passed Markdown handoff must not include blocker collection commands")
 
         stub_args = argparse.Namespace(
             live_capture_report=stub,
@@ -3910,8 +3956,18 @@ def self_test() -> None:
             raise AssertionError("expected Markdown report to include operator handoff")
         if "playback_source_suppression_evidence" not in markdown:
             raise AssertionError("expected Markdown report to include playback/source suppression blocker")
-        if "laptop built-in microphones are route triage only" not in markdown:
+        if "laptop built-in microphone" not in markdown.lower() or "route_probe_triage_only" not in markdown:
             raise AssertionError("expected Markdown handoff to preserve laptop mic triage warning")
+        if "Playback/Source Suppression Evidence Collection" not in markdown:
+            raise AssertionError("expected Markdown handoff to include physical evidence collection section")
+        if "headphone_isolation_local.ps1 -Action prepare-manual" not in markdown:
+            raise AssertionError("expected Markdown handoff to include manual recorder command path")
+        if "headphone_isolation_local.ps1 -Action import-manual" not in markdown:
+            raise AssertionError("expected Markdown handoff to include manual recording import command")
+        if "confirm_physical_input_preflight" not in markdown:
+            raise AssertionError("expected Markdown handoff to point at generated guided capture confirmation")
+        if "$headphoneLabel" not in markdown or "$fixtureLabel" not in markdown or "$microphoneLabel" not in markdown:
+            raise AssertionError("expected Markdown handoff to define generated guided capture label variables")
         markdown_report = root / "audio-gate-report.md"
         write_markdown_report(report, markdown_report)
         if "Release-Blocking Gates" not in markdown_report.read_text(encoding="utf-8"):
