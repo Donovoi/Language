@@ -196,7 +196,7 @@ HEADPHONE_MAX_TRANSLATED_DISTORTION_DB = 12.0
 HEADPHONE_DB_TOLERANCE = 0.075
 HEADPHONE_CORRELATION_TOLERANCE = 0.001
 HEADPHONE_DURATION_TOLERANCE_S = 0.001
-PLACEHOLDER_LABEL_PREFIXES = ("unspecified", "unknown", "todo", "placeholder")
+PLACEHOLDER_LABEL_PREFIXES = ("unspecified", "unknown", "todo", "placeholder", "virtual", "simulated", "synthetic")
 
 
 @dataclass(frozen=True)
@@ -2624,6 +2624,7 @@ def self_test() -> None:
         guided_headphone = root / "guided-headphone.json"
         mismatched_guided_headphone = root / "mismatched-guided-headphone.json"
         hybrid_capture_headphone = root / "hybrid-capture-headphone.json"
+        virtual_lab_headphone = root / "virtual-lab-headphone.json"
         qualification_room = root / "qualification-room.json"
         sweep_room = root / "sweep-room.json"
         route_probe_room = root / "route-probe-room.json"
@@ -2732,6 +2733,30 @@ def self_test() -> None:
             mismatch_guided_fingerprint=True,
         )
         _write_headphone_isolation_fixture_report(hybrid_capture_headphone, hybrid_capture_source=True)
+        _write_headphone_isolation_fixture_report(virtual_lab_headphone)
+        virtual_lab_payload = json.loads(virtual_lab_headphone.read_text(encoding="utf-8"))
+        virtual_lab_benchmark = virtual_lab_payload["benchmarks"].pop(HEADPHONE_REQUIRED_BENCHMARK_NAME)
+        virtual_lab_summary = virtual_lab_benchmark["summary"]
+        virtual_lab_summary.update(
+            {
+                "capture_backend": "simulated_virtual_listener_ear",
+                "capture_source_kind": "synthetic_room_headphone_model",
+                "measurement_kind": "headphone_earpiece_virtual_lab",
+                "release_proof": False,
+                "translated_audio_is_surrogate": True,
+            }
+        )
+        virtual_lab_payload.update(
+            {
+                "fixture_kind": "headphone_earpiece_virtual_lab",
+                "measurement_kind": "headphone_earpiece_virtual_lab",
+                "release_proof": False,
+            }
+        )
+        virtual_lab_payload["summary"]["passed"] = True
+        virtual_lab_payload["summary"]["release_proof"] = False
+        virtual_lab_payload["benchmarks"]["headphone_earpiece_virtual_lab"] = virtual_lab_benchmark
+        _write_json(virtual_lab_headphone, virtual_lab_payload)
         mismatched_payload = json.loads(mismatched_room.read_text(encoding="utf-8"))
         mismatched_loopback_path = Path(mismatched_payload["artifact_paths"]["room_loopback_recording"])
         _write_unit_pcm16_wav(mismatched_loopback_path, 16_000, 16_000)
@@ -2946,6 +2971,18 @@ def self_test() -> None:
         report = build_report(release_results, prototype_results)
         if report["summary"]["passed"]:
             raise AssertionError("expected hybrid headphone capture backend/source metadata to fail")
+
+        virtual_lab_headphone_args = argparse.Namespace(**vars(complete_args))
+        virtual_lab_headphone_args.room_suppression_report = forged_room
+        virtual_lab_headphone_args.headphone_isolation_report = virtual_lab_headphone
+        release_results, prototype_results = evaluate(virtual_lab_headphone_args)
+        report = build_report(release_results, prototype_results)
+        failed = {gate.name: gate.message for gate in release_results if not gate.passed}
+        virtual_lab_message = failed.get("playback_source_suppression_evidence", "")
+        if report["summary"]["passed"] or not virtual_lab_message:
+            raise AssertionError("expected virtual headphone listener-ear lab report to fail release gate")
+        if "fixture_kind" not in virtual_lab_message or "release_proof" not in virtual_lab_message:
+            raise AssertionError("expected virtual headphone listener-ear lab rejection to cite release metadata")
 
         mismatched_room_args = argparse.Namespace(**vars(complete_args))
         mismatched_room_args.room_suppression_report = mismatched_room

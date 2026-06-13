@@ -120,6 +120,7 @@ make real-room-playback-suppression-check
 make headphone-isolation-contract-check
 make headphone-isolation-list-devices
 HEADPHONE_ISOLATION_PROBE_ROUTE_ARGS='--measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT' make headphone-isolation-probe-route
+make headphone-isolation-virtual-lab
 make audio-eval-purge
 ```
 
@@ -169,6 +170,7 @@ pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-c
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-list-devices
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-virtual-lab
 ```
 
 The June 12, 2026 SoundWire/WASAPI measurements currently fail release: the 48 kHz device
@@ -194,10 +196,28 @@ only when collecting a failure report from a known-bad route. The guided capture
 source control, isolated source, and translated headphone playback with explicit PortAudio device
 identities, then feeds those WAVs into the release-gated scorer:
 
+Development-only virtual listener-ear lab:
+
+```powershell
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-virtual-lab
+python scripts/release_audio_gate.py --headphone-isolation-report artifacts/audio_eval/runs/headphone-earpiece-virtual-lab/headphone-virtual-lab-report.json --json *> artifacts/audio_eval/runs/headphone-earpiece-virtual-lab/release-gate-virtual-rejection.json
+if ($LASTEXITCODE -eq 0) { throw "expected release gate to reject the virtual listener-ear report" }
+"release gate rejected the virtual listener-ear report as expected"
+```
+
+The virtual lab should pass its own scorer gates and fail the release gate. For physical release
+evidence, use real device indexes from `headphone-isolation-list-devices`, then run:
+
 ```powershell
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --headphone-device-label "measured headphones" --isolation-fixture-label "sealed listener-ear coupler" --measurement-microphone-label "listener-ear measurement mic"
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --headphone-device-label "Sony WH-1000XM6 over-ear headphones" --isolation-fixture-label "WH-1000XM6 left earcup sealed around listener-ear microphone" --measurement-microphone-label "USB/lavalier listener-ear microphone placed inside earcup"
 ```
+
+The virtual lab is development evidence only: it writes
+`artifacts/audio_eval/runs/headphone-earpiece-virtual-lab/headphone-virtual-lab-report.json` with
+`release_proof=false`, and the release gate must reject it. The physical release procedure and
+current-hardware setup guidance live in
+`docs/development/headphone-isolation-release-runbook.md`.
 
 Use `sweep-routes` when the host route itself is uncertain. It writes
 `artifacts/audio_eval/runs/real-room-route-probe-sweep/route-probe-sweep-report.json` with
