@@ -104,9 +104,11 @@ The wrapper creates `.venv-audio-local/` and installs only the packages needed f
 action. Device-listing, preflight, route-probe, sweep, capture, and manual-playback actions also
 install `sounddevice`; pure manifest/scoring actions need only `numpy`. Preflight is no-audio
 hardware planning only and writes `release_proof=false` reports under
-`artifacts/audio_eval/runs/headphone-earpiece-preflight/`. For an improvised laptop-mic release
-attempt, place the headphone earcup over the laptop mic opening and rerun preflight with
-`--confirm-physical-listener-ear-input` before guided capture.
+`artifacts/audio_eval/runs/headphone-earpiece-preflight/`. Laptop built-in microphones are useful
+only for route triage: place the headphone earcup over the laptop mic opening only when following a
+generated `route_probe_triage_only` command. Guided capture requires a capture-ready external
+listener-ear input and the generated `--preflight-report`; otherwise use the manual recorder kit and
+score the real listener-ear WAVs.
 
 The smoke script uses non-mutating `mode=FOCUS` preview requests for the session and SSE checks so the result stays deterministic even if the in-memory session was changed earlier during local testing.
 

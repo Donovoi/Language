@@ -25,6 +25,7 @@ from typing import Any
 
 DEFAULT_AUDIO_EVAL_DIR = Path("artifacts/audio_eval")
 DEFAULT_RELEASE_REPORT = Path("artifacts/release/audio-gate-report.json")
+DEFAULT_RELEASE_MARKDOWN_REPORT = Path("artifacts/release/audio-gate-report.md")
 DEFAULT_LIVE_CAPTURE_REPORT = (
     DEFAULT_AUDIO_EVAL_DIR / "runs/live-microphone-capture/live-microphone-capture-report.json"
 )
@@ -2453,7 +2454,105 @@ def write_report(report: dict[str, Any], path: Path) -> None:
     path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
 
 
-def print_summary(report: dict[str, Any], report_path: Path) -> None:
+def render_markdown_report(report: dict[str, Any]) -> str:
+    summary = report.get("summary", {})
+    summary = summary if isinstance(summary, dict) else {}
+    passed = bool(summary.get("passed"))
+    status = "PASS" if passed else "FAIL"
+    lines = [
+        "# Language Release Audio Gate",
+        "",
+        f"- Status: **{status}**",
+        f"- Release-blocking gates: {summary.get('release_blocking_gate_count', 0)}",
+        f"- Release-blocking failures: {summary.get('release_blocking_failure_count', 0)}",
+        f"- Prototype evidence gates: {summary.get('prototype_evidence_gate_count', 0)}",
+        "",
+    ]
+    detractor = report.get("detractor_loop", {})
+    if isinstance(detractor, dict):
+        lines.extend(
+            [
+                "## Detractor Verdict",
+                "",
+                str(detractor.get("verdict", "")).strip(),
+                "",
+                f"Strongest current objection: {str(detractor.get('strongest_current_objection', '')).strip()}",
+                "",
+            ]
+        )
+    lines.extend(["## Release-Blocking Gates", ""])
+    for gate in report.get("release_blocking_gates", []):
+        if not isinstance(gate, dict):
+            continue
+        gate_status = "PASS" if gate.get("passed") else "FAIL"
+        lines.extend(
+            [
+                f"### {gate_status} {gate.get('name', 'unnamed_gate')}",
+                "",
+                f"- Message: {gate.get('message', '')}",
+                f"- Evidence path: `{gate.get('path', '')}`",
+            ]
+        )
+        if gate.get("passed"):
+            lines.append("- Evidence status: accepted by this release gate.")
+        else:
+            lines.append(f"- Next step: {gate.get('next_step', '')}")
+        lines.append("")
+    lines.extend(["## Prototype Evidence", ""])
+    for gate in report.get("prototype_evidence_gates", []):
+        if not isinstance(gate, dict):
+            continue
+        gate_status = "PASS" if gate.get("passed") else "FAIL"
+        lines.extend(
+            [
+                f"### {gate_status} {gate.get('name', 'unnamed_gate')}",
+                "",
+                f"- Message: {gate.get('message', '')}",
+                f"- Evidence path: `{gate.get('path', '')}`",
+                f"- Next step: {gate.get('next_step', '')}",
+                "",
+            ]
+        )
+    failed_release_gates = [
+        gate
+        for gate in report.get("release_blocking_gates", [])
+        if isinstance(gate, dict) and not bool(gate.get("passed"))
+    ]
+    lines.extend(
+        [
+            "## Operator Handoff",
+            "",
+            "- Treat this Markdown as a readable handoff; the JSON report remains the authoritative artifact.",
+        ]
+    )
+    if failed_release_gates:
+        lines.append("- Do not ship a realtime audio-loop release while any release-blocking gate is FAIL.")
+        failed_names = {str(gate.get("name", "")) for gate in failed_release_gates}
+        if "playback_source_suppression_evidence" in failed_names:
+            lines.append(
+                "- For the current playback/source suppression blocker, provide either a passing real-room "
+                "cancellation report or a passing physical headphone/earpiece listener-ear isolation report."
+            )
+        else:
+            lines.append("- Address each failed release-blocking gate above, then rerun the gate.")
+    else:
+        lines.append("- All release-blocking gates passed in this report; preserve the referenced evidence artifacts.")
+        lines.append("- Rerun this gate for the exact commit and artifact set before publishing.")
+    lines.extend(
+        [
+            "- When collecting headphone/earpiece evidence, laptop built-in microphones are route triage only; final evidence needs a real listener-ear microphone/recorder path.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def write_markdown_report(report: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_markdown_report(report), encoding="utf-8")
+
+
+def print_summary(report: dict[str, Any], report_path: Path, markdown_report_path: Path | None = None) -> None:
     status = "PASS" if report["summary"]["passed"] else "FAIL"
     print(f"release audio gate {status}")
     for gate in report["release_blocking_gates"]:
@@ -2465,6 +2564,8 @@ def print_summary(report: dict[str, Any], report_path: Path) -> None:
         gate_status = "PASS" if gate["passed"] else "FAIL"
         print(f"  [prototype {gate_status}] {gate['name']}: {gate['message']}")
     print(f"wrote release audio gate report to {report_path}")
+    if markdown_report_path is not None:
+        print(f"wrote release audio gate handoff to {markdown_report_path}")
 
 
 def _report(passed: bool, gates: list[dict[str, Any]] | None = None, **extra: Any) -> dict[str, Any]:
@@ -3523,6 +3624,15 @@ def self_test() -> None:
         report = build_report(release_results, prototype_results)
         if not report["summary"]["passed"]:
             raise AssertionError("expected complete evidence set to pass")
+        complete_markdown = render_markdown_report(report)
+        complete_release_section = complete_markdown.split("## Prototype Evidence", 1)[0]
+        if "Next step:" in complete_release_section:
+            raise AssertionError("passed release gates should not show next-step text in Markdown handoff")
+        complete_handoff = complete_markdown.split("## Operator Handoff", 1)[1]
+        if "current playback/source suppression blocker" in complete_handoff:
+            raise AssertionError("passed Markdown handoff must not describe a current playback blocker")
+        if "All release-blocking gates passed" not in complete_handoff:
+            raise AssertionError("passed Markdown handoff should explain that release gates passed")
 
         stub_args = argparse.Namespace(
             live_capture_report=stub,
@@ -3795,6 +3905,17 @@ def self_test() -> None:
             raise AssertionError("expected fixture capture to fail product capture gate")
         if "playback_source_suppression_evidence" not in failed:
             raise AssertionError("expected playback prototype to fail source suppression evidence gate")
+        markdown = render_markdown_report(report)
+        if "## Operator Handoff" not in markdown:
+            raise AssertionError("expected Markdown report to include operator handoff")
+        if "playback_source_suppression_evidence" not in markdown:
+            raise AssertionError("expected Markdown report to include playback/source suppression blocker")
+        if "laptop built-in microphones are route triage only" not in markdown:
+            raise AssertionError("expected Markdown handoff to preserve laptop mic triage warning")
+        markdown_report = root / "audio-gate-report.md"
+        write_markdown_report(report, markdown_report)
+        if "Release-Blocking Gates" not in markdown_report.read_text(encoding="utf-8"):
+            raise AssertionError("expected Markdown report file to be written")
 
         failing_args = argparse.Namespace(**vars(complete_args))
         failing_args.voice_report = failing
@@ -3809,6 +3930,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--self-test", action="store_true", help="validate gate helper behavior")
     parser.add_argument("--json", action="store_true", help="print the full JSON report")
     parser.add_argument("--report", type=Path, default=DEFAULT_RELEASE_REPORT)
+    parser.add_argument("--markdown-report", type=Path, default=DEFAULT_RELEASE_MARKDOWN_REPORT)
     parser.add_argument("--live-capture-report", type=Path, default=DEFAULT_LIVE_CAPTURE_REPORT)
     parser.add_argument("--causal-diarization-report", type=Path, default=DEFAULT_CAUSAL_DIARIZATION_REPORT)
     parser.add_argument("--tse-report", type=Path, default=DEFAULT_TSE_REPORT)
@@ -3831,10 +3953,11 @@ def main(argv: list[str] | None = None) -> int:
     release_results, prototype_results = evaluate(args)
     report = build_report(release_results, prototype_results)
     write_report(report, args.report)
+    write_markdown_report(report, args.markdown_report)
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     else:
-        print_summary(report, args.report)
+        print_summary(report, args.report, args.markdown_report)
     return 0 if report["summary"]["passed"] else 1
 
 

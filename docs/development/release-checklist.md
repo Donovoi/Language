@@ -43,6 +43,8 @@ than by inventing a second package version line.
 	- `make live-microphone-capture-check` on the release host or target capture device
 	- `make release-audio-gate`
 	- Treat any missing, warning-only, or failing audio report as a release blocker.
+	- Review `artifacts/release/audio-gate-report.md` for the operator handoff, but keep
+	  `artifacts/release/audio-gate-report.json` as the authoritative pass/fail artifact.
 	- Confirm live microphone evidence has matching WAV/chunk JSONL artifacts that the gate validates.
 	- Confirm prototype-only evidence is listed separately and is not being used to satisfy live
 	  microphone capture, causal diarization, real TSE/separation, streaming speech translation,
