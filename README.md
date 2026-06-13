@@ -87,6 +87,17 @@ pwsh -NoProfile -File scripts/smoke_local_demo.ps1
 
 The PowerShell smoke honors the same `GATEWAY_HOST`, `GATEWAY_PORT`, `GATEWAY_PYTHON`,
 `REQUEST_TIMEOUT_SECONDS`, and `SMOKE_START_TIMEOUT_SECONDS` environment overrides as the Bash path.
+For the wider repository check path on Windows, use:
+
+```powershell
+pwsh -NoProfile -File scripts/check_local.ps1
+```
+
+Use `-SkipFlutter` only for partial host validation when Flutter is not installed; it is not a full
+replacement for `make check`. The plain command refreshes `services/gateway/.venv` like the Make
+target; pass `-UseExistingGatewayVenv` only when you deliberately want to reuse the current venv.
+The gateway currently supports Python `>=3.11,<3.14`; if `python` points elsewhere, pass
+`-Python <path-to-python-3.11-through-3.13>`.
 
 ### Disposable core test environment
 

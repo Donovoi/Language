@@ -57,6 +57,18 @@ pwsh -NoProfile -File scripts/smoke_local_demo.ps1
 
 It honors the same `GATEWAY_HOST`, `GATEWAY_PORT`, `GATEWAY_PYTHON`, `REQUEST_TIMEOUT_SECONDS`, and
 `SMOKE_START_TIMEOUT_SECONDS` environment overrides as `make smoke-local-demo`.
+The matching Windows-native repository validation command is:
+
+```powershell
+pwsh -NoProfile -File scripts/check_local.ps1
+```
+
+Pass `-SkipFlutter` only to document a partial host run when Flutter is not available. Full release
+validation still requires Flutter checks to pass locally or in `.github/workflows/release.yml`.
+The plain PowerShell command refreshes `services/gateway/.venv` like the Make target; pass
+`-UseExistingGatewayVenv` only for a deliberate fast local reuse run.
+The gateway currently supports Python `>=3.11,<3.14`; pass `-Python <path-to-supported-python>` if
+the host's default `python` is outside that range.
 
 For a release that claims the full realtime audio product goal, add the strict evidence gate after
 the relevant audio-eval reports have been generated:
