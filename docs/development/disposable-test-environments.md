@@ -372,8 +372,9 @@ pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-s
 pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-check
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-list-devices
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-virtual-lab
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --headphone-device-label "measured headphones" --isolation-fixture-label "sealed listener-ear coupler" --measurement-microphone-label "listener-ear measurement mic"
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --headphone-device-label "Sony WH-1000XM6 over-ear headphones" --isolation-fixture-label "WH-1000XM6 left earcup sealed around listener-ear microphone" --measurement-microphone-label "USB/lavalier listener-ear microphone placed inside earcup"
 python scripts/run_real_room_playback_suppression.py probe-route --input-device 1 --output-device 3 --sample-rate-hz 16000 --duration-s 2 --playback-gain-db -18 --score-warning-only
 python scripts/run_real_room_playback_suppression.py sweep-routes --pair 1:3 --pair 17:14 --sample-rate-hz 16000 --sample-rate-hz 48000 --channel-config 1:2 --channel-config 2:2 --max-attempts 8 --playback-gain-db -18 --score-warning-only
 python scripts/run_real_room_playback_suppression.py sweep-devices --pair 12:10 --sample-rate-hz 48000 --max-reference-duration-s 3 --playback-gain-db -18 --score-warning-only
@@ -388,6 +389,18 @@ calibration recordings, the stereo cancellation render, the room loopback record
 `room-playback-suppression-report.json`. The release gate reopens the WAV artifacts, aligns separate
 recordings within a bounded lag window, and recomputes calibration/reference fidelity and room
 metrics instead of trusting JSON fields alone.
+The `headphone-isolation-virtual-lab` command is a development-only scorer and artifact-plumbing
+check. It should pass its own virtual gates and be rejected by `release_audio_gate.py`; physical
+release evidence must come from `headphone-isolation-probe-route` and `headphone-isolation-capture`
+with real listener-ear recording hardware.
+Use an explicit expected-failure assertion when checking the release gate rejection:
+
+```powershell
+python scripts/release_audio_gate.py --headphone-isolation-report artifacts/audio_eval/runs/headphone-earpiece-virtual-lab/headphone-virtual-lab-report.json --json *> artifacts/audio_eval/runs/headphone-earpiece-virtual-lab/release-gate-virtual-rejection.json
+if ($LASTEXITCODE -eq 0) { throw "expected release gate to reject the virtual listener-ear report" }
+"release gate rejected the virtual listener-ear report as expected"
+```
+
 The qualification command writes a smaller report under
 `artifacts/audio_eval/runs/real-room-device-qualification/` that proves only whether the device path
 can reproduce known references faithfully enough for a later room-suppression measurement.
@@ -421,6 +434,11 @@ For an honest private-listener release path, collect headphone/earpiece evidence
 WAV artifacts come from a separate lab recorder. It requires a source reference, open-ear source
 control recording, isolated-ear source recording, translated playback reference, and translated
 headphone recording, plus specific headphone, listener-ear microphone, and physical fixture labels.
+Use `virtual-lab` only for development and CI regression. It writes
+`artifacts/audio_eval/runs/headphone-earpiece-virtual-lab/headphone-virtual-lab-report.json` with
+`fixture_kind=headphone_earpiece_virtual_lab` and `release_proof=false`; `release_audio_gate.py` must
+reject it. The physical setup details are in
+`docs/development/headphone-isolation-release-runbook.md`.
 Run `probe-route` first when the source/headphone/measurement route is uncertain; it writes
 `artifacts/audio_eval/runs/headphone-earpiece-route-probe/headphone-route-probe-report.json` with
 `measurement_kind=headphone_earpiece_route_probe_triage`, `release_proof=false`, route-open errors,

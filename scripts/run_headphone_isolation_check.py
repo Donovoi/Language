@@ -25,8 +25,10 @@ import numpy as np
 DEFAULT_OUTPUT_DIR = Path("artifacts/audio_eval")
 DEFAULT_RUN_ID = "headphone-earpiece-isolation"
 DEFAULT_ROUTE_PROBE_RUN_ID = "headphone-earpiece-route-probe"
+DEFAULT_VIRTUAL_LAB_RUN_ID = "headphone-earpiece-virtual-lab"
 DEFAULT_ADAPTER_ID = "listener_headphone_earpiece_isolation_measurement_v1"
 DEFAULT_ROUTE_PROBE_ADAPTER_ID = "listener_headphone_earpiece_route_probe_v1"
+DEFAULT_VIRTUAL_LAB_ADAPTER_ID = "listener_headphone_earpiece_virtual_lab_v1"
 DEFAULT_TTS_REPORT = DEFAULT_OUTPUT_DIR / "runs/same-voice-tts/voice-clone-report.json"
 DEFAULT_SAMPLE_RATE_HZ = 16000
 DEFAULT_CAPTURE_OUTPUT_CHANNELS = 2
@@ -51,15 +53,20 @@ DEFAULT_MAX_ALIGNMENT_LAG_MS = 500.0
 FIXTURE_KIND = "headphone_earpiece_isolation"
 BENCHMARK_NAME = "headphone_earpiece_isolation"
 MEASUREMENT_KIND = "headphone_earpiece_isolation"
+VIRTUAL_FIXTURE_KIND = "headphone_earpiece_virtual_lab"
+VIRTUAL_BENCHMARK_NAME = "headphone_earpiece_virtual_lab"
+VIRTUAL_MEASUREMENT_KIND = "headphone_earpiece_virtual_lab"
 SUPPRESSION_MODE = "HEADPHONE_ISOLATED"
 SUPPRESSION_CLAIM = "headphone_isolated_not_true_cancellation"
 CAPTURE_BACKEND_EXTERNAL = "external_wav_measurement"
 CAPTURE_BACKEND_PORTAUDIO = "sounddevice_portaudio_guided_playrec"
+CAPTURE_BACKEND_VIRTUAL = "simulated_virtual_listener_ear"
 CAPTURE_SOURCE_KIND_EXTERNAL = "external_listener_ear_wav_measurement"
 CAPTURE_SOURCE_KIND_PORTAUDIO = "host_guided_listener_ear_playrec_measurement"
+CAPTURE_SOURCE_KIND_VIRTUAL = "synthetic_room_headphone_model"
 CAPTURE_BACKENDS = {CAPTURE_BACKEND_EXTERNAL, CAPTURE_BACKEND_PORTAUDIO}
 CAPTURE_SOURCE_KINDS = {CAPTURE_SOURCE_KIND_EXTERNAL, CAPTURE_SOURCE_KIND_PORTAUDIO}
-PLACEHOLDER_LABEL_PREFIXES = ("unspecified", "unknown", "todo", "placeholder")
+PLACEHOLDER_LABEL_PREFIXES = ("unspecified", "unknown", "todo", "placeholder", "virtual", "simulated", "synthetic")
 
 
 def linear_to_db(value: float) -> float:
@@ -313,6 +320,45 @@ def build_route_probe_signal(sample_rate_hz: int, duration_s: float) -> np.ndarr
         signal[:fade_samples] *= ramp
         signal[-fade_samples:] *= ramp[::-1]
     return signal.astype(np.float32)
+
+
+def build_virtual_speech_like_track(sample_rate_hz: int, duration_s: float, *, base_hz: float) -> np.ndarray:
+    frame_count = max(1, int(round(float(sample_rate_hz) * float(duration_s))))
+    t = np.arange(frame_count, dtype=np.float64) / float(sample_rate_hz)
+    carrier = (
+        np.sin(2.0 * math.pi * base_hz * t)
+        + 0.45 * np.sin(2.0 * math.pi * base_hz * 2.07 * t + 0.4)
+        + 0.22 * np.sin(2.0 * math.pi * base_hz * 3.91 * t + 1.1)
+    )
+    syllables = 0.58 + 0.42 * np.sin(2.0 * math.pi * 3.7 * t) ** 2
+    phrase = 0.72 + 0.28 * np.sin(2.0 * math.pi * 0.83 * t + 0.6)
+    signal = carrier * syllables * phrase
+    peak = float(np.max(np.abs(signal))) if signal.size else 1.0
+    if peak > 0.0:
+        signal = signal / peak
+    return (signal * 0.30).astype(np.float32)
+
+
+def simulate_virtual_listener_recording(
+    reference: np.ndarray,
+    *,
+    sample_rate_hz: int,
+    gain_db: float,
+    lag_ms: float,
+    noise_dbfs: float,
+    reflection_db: float,
+    seed: int,
+) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    lag_samples = max(0, int(round(float(lag_ms) * float(sample_rate_hz) / 1000.0)))
+    reflection_samples = max(1, int(round(0.018 * float(sample_rate_hz))))
+    padded = np.concatenate([np.zeros(lag_samples, dtype=np.float32), reference]).astype(np.float32)
+    rendered = padded[: reference.size].copy()
+    if reflection_samples < rendered.size:
+        rendered[reflection_samples:] += rendered[:-reflection_samples] * db_to_linear(float(reflection_db))
+    rendered *= db_to_linear(float(gain_db))
+    noise = rng.normal(0.0, db_to_linear(float(noise_dbfs)), size=reference.size).astype(np.float32)
+    return (rendered + noise).astype(np.float32)
 
 
 def portaudio_device_identity(device: int | str | None, *, kind: str) -> dict[str, Any]:
@@ -1277,6 +1323,272 @@ def score(args: argparse.Namespace) -> int:
     return 0 if report["summary"]["passed"] or args.score_warning_only else 1
 
 
+def virtual_lab_gates(summary: dict[str, Any], args: argparse.Namespace) -> list[dict[str, Any]]:
+    source_open_corr = float(summary["source_open_reference_correlation"])
+    source_isolation = float(summary["source_isolation_db"])
+    translated_corr = float(summary["translated_headphone_reference_correlation"])
+    translated_distortion = float(summary["translated_headphone_reference_distortion_db"])
+    source_open_level = float(summary["source_open_recording_dbfs"])
+    translated_level = float(summary["translated_headphone_recording_dbfs"])
+    hashes = bool(summary["all_artifact_hashes_present"])
+    clones = {
+        "source_isolated_recording_matches_reference": bool(summary["source_isolated_recording_matches_reference"]),
+        "source_open_recording_matches_reference": bool(summary["source_open_recording_matches_reference"]),
+        "translated_headphone_recording_matches_reference": bool(
+            summary["translated_headphone_recording_matches_reference"]
+        ),
+    }
+    return [
+        {
+            "name": "virtual_lab_not_release_proof",
+            "passed": summary.get("release_proof") is False,
+            "threshold": "virtual listener-ear lab must remain non-release evidence",
+            "value": summary.get("release_proof"),
+        },
+        {
+            "name": "virtual_capture_source_declared",
+            "passed": (
+                summary.get("capture_backend") == CAPTURE_BACKEND_VIRTUAL
+                and summary.get("capture_source_kind") == CAPTURE_SOURCE_KIND_VIRTUAL
+            ),
+            "threshold": "virtual capture backend/source identify synthetic room-headphone model",
+            "value": {
+                "capture_backend": summary.get("capture_backend"),
+                "capture_source_kind": summary.get("capture_source_kind"),
+            },
+        },
+        {
+            "name": "virtual_source_open_reference_fidelity",
+            "passed": (
+                source_open_level >= float(args.min_source_open_dbfs)
+                and source_open_corr >= float(args.min_source_open_correlation)
+            ),
+            "threshold": (
+                f"source-open level >= {float(args.min_source_open_dbfs):.3f} dBFS and "
+                f"correlation >= {float(args.min_source_open_correlation):.3f}"
+            ),
+            "value": {
+                "source_open_recording_dbfs": source_open_level,
+                "source_open_reference_correlation": source_open_corr,
+            },
+        },
+        {
+            "name": "virtual_source_isolation_model_applied",
+            "passed": source_isolation >= float(args.min_source_isolation_db),
+            "threshold": f"simulated source attenuation >= {float(args.min_source_isolation_db):.3f} dB",
+            "value": source_isolation,
+        },
+        {
+            "name": "virtual_translated_headphone_reference_fidelity",
+            "passed": (
+                translated_level >= float(args.min_translated_dbfs)
+                and translated_corr >= float(args.min_translated_correlation)
+                and translated_distortion <= float(args.max_translated_distortion_db)
+            ),
+            "threshold": (
+                f"translated level >= {float(args.min_translated_dbfs):.3f} dBFS, "
+                f"correlation >= {float(args.min_translated_correlation):.3f}, "
+                f"distortion <= {float(args.max_translated_distortion_db):.3f} dB"
+            ),
+            "value": {
+                "translated_headphone_recording_dbfs": translated_level,
+                "translated_headphone_reference_correlation": translated_corr,
+                "translated_headphone_reference_distortion_db": translated_distortion,
+            },
+        },
+        {
+            "name": "virtual_artifacts_hashed",
+            "passed": hashes,
+            "threshold": "all virtual listener-ear WAV artifacts have SHA-256 hashes",
+            "value": hashes,
+        },
+        {
+            "name": "virtual_recordings_not_reference_clones",
+            "passed": not any(clones.values()),
+            "threshold": "virtual recordings include delay/noise/modeling and are not byte-identical references",
+            "value": clones,
+        },
+    ]
+
+
+def virtual_lab(args: argparse.Namespace) -> int:
+    run_dir = Path(args.output_dir) / "runs" / args.run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    sample_rate_hz = int(args.sample_rate_hz)
+    source_reference = add_padding(
+        build_virtual_speech_like_track(sample_rate_hz, float(args.duration_s), base_hz=210.0),
+        sample_rate_hz,
+        float(args.lead_s),
+        float(args.tail_s),
+    )
+    translated_reference = add_padding(
+        build_virtual_speech_like_track(sample_rate_hz, float(args.duration_s), base_hz=330.0),
+        sample_rate_hz,
+        float(args.lead_s),
+        float(args.tail_s),
+    )
+    source_open = simulate_virtual_listener_recording(
+        source_reference,
+        sample_rate_hz=sample_rate_hz,
+        gain_db=float(args.source_open_gain_db),
+        lag_ms=float(args.source_lag_ms),
+        noise_dbfs=float(args.noise_dbfs),
+        reflection_db=float(args.reflection_db),
+        seed=11,
+    )
+    source_isolated = simulate_virtual_listener_recording(
+        source_reference,
+        sample_rate_hz=sample_rate_hz,
+        gain_db=float(args.source_open_gain_db) - float(args.source_isolation_db),
+        lag_ms=float(args.source_lag_ms),
+        noise_dbfs=float(args.noise_dbfs),
+        reflection_db=float(args.reflection_db),
+        seed=17,
+    )
+    translated_recording = simulate_virtual_listener_recording(
+        translated_reference,
+        sample_rate_hz=sample_rate_hz,
+        gain_db=float(args.translated_gain_db),
+        lag_ms=float(args.translated_lag_ms),
+        noise_dbfs=float(args.noise_dbfs),
+        reflection_db=float(args.reflection_db),
+        seed=23,
+    )
+
+    artifact_paths = {
+        "source_reference": str(run_dir / "source-reference.wav"),
+        "source_open_ear_recording": str(run_dir / "source-open-ear-recording.wav"),
+        "source_isolated_ear_recording": str(run_dir / "source-isolated-ear-recording.wav"),
+        "translated_playback_reference": str(run_dir / "translated-playback-reference.wav"),
+        "translated_headphone_recording": str(run_dir / "translated-headphone-recording.wav"),
+    }
+    audio = {
+        "source_reference": source_reference,
+        "source_open_ear_recording": source_open,
+        "source_isolated_ear_recording": source_isolated,
+        "translated_playback_reference": translated_reference,
+        "translated_headphone_recording": translated_recording,
+    }
+    for key, path in artifact_paths.items():
+        write_mono_wav(Path(path), audio[key], sample_rate_hz)
+
+    source_open_metrics = reference_metrics(
+        source_open,
+        source_reference,
+        sample_rate_hz,
+        float(args.max_alignment_lag_ms),
+    )
+    source_isolated_metrics = reference_metrics(
+        source_isolated,
+        source_reference,
+        sample_rate_hz,
+        float(args.max_alignment_lag_ms),
+    )
+    translated_metrics = reference_metrics(
+        translated_recording,
+        translated_reference,
+        sample_rate_hz,
+        float(args.max_alignment_lag_ms),
+    )
+    artifact_hashes = {key: sha256_file(Path(value)) for key, value in artifact_paths.items()}
+    source_isolation_db = float(source_open_metrics["gain_db"]) - float(source_isolated_metrics["gain_db"])
+    min_artifact_duration_s = min(float(samples.size) / float(sample_rate_hz) for samples in audio.values())
+    summary: dict[str, Any] = {
+        "all_artifact_hashes_present": all(len(value) == 64 for value in artifact_hashes.values()),
+        "artifact_frame_counts": {key: int(value.size) for key, value in audio.items()},
+        "capture_backend": CAPTURE_BACKEND_VIRTUAL,
+        "capture_source_kind": CAPTURE_SOURCE_KIND_VIRTUAL,
+        "headphone_device_label": "virtual headphone transfer function",
+        "isolation_fixture_label": "virtual sealed listener-ear coupler",
+        "measurement_kind": VIRTUAL_MEASUREMENT_KIND,
+        "measurement_microphone_label": "virtual listener-ear microphone",
+        "min_artifact_duration_s": round(min_artifact_duration_s, 6),
+        "model_parameters": {
+            "noise_dbfs": float(args.noise_dbfs),
+            "reflection_db": float(args.reflection_db),
+            "source_isolation_db": float(args.source_isolation_db),
+            "source_lag_ms": float(args.source_lag_ms),
+            "source_open_gain_db": float(args.source_open_gain_db),
+            "translated_gain_db": float(args.translated_gain_db),
+            "translated_lag_ms": float(args.translated_lag_ms),
+        },
+        "procedure_note": "synthetic virtual listener-ear lab; not physical release evidence",
+        "release_proof": False,
+        "sample_rate_hz": sample_rate_hz,
+        "source_isolated_gain_db": source_isolated_metrics["gain_db"],
+        "source_isolated_recording_dbfs": source_isolated_metrics["recording_dbfs"],
+        "source_isolated_recording_matches_reference": (
+            artifact_hashes["source_isolated_ear_recording"] == artifact_hashes["source_reference"]
+        ),
+        "source_isolated_reference_correlation": source_isolated_metrics["correlation"],
+        "source_isolated_reference_distortion_db": source_isolated_metrics["distortion_db"],
+        "source_isolated_reference_lag_samples": source_isolated_metrics["lag_samples"],
+        "source_isolation_db": round(source_isolation_db, 3),
+        "source_open_gain_db": source_open_metrics["gain_db"],
+        "source_open_recording_dbfs": source_open_metrics["recording_dbfs"],
+        "source_open_recording_matches_reference": (
+            artifact_hashes["source_open_ear_recording"] == artifact_hashes["source_reference"]
+        ),
+        "source_open_reference_correlation": source_open_metrics["correlation"],
+        "source_open_reference_distortion_db": source_open_metrics["distortion_db"],
+        "source_open_reference_lag_samples": source_open_metrics["lag_samples"],
+        "source_suppression_mode": SUPPRESSION_MODE,
+        "suppression_claim": SUPPRESSION_CLAIM,
+        "translated_audio_is_surrogate": True,
+        "translated_headphone_gain_db": translated_metrics["gain_db"],
+        "translated_headphone_recording_dbfs": translated_metrics["recording_dbfs"],
+        "translated_headphone_recording_matches_reference": (
+            artifact_hashes["translated_headphone_recording"] == artifact_hashes["translated_playback_reference"]
+        ),
+        "translated_headphone_reference_correlation": translated_metrics["correlation"],
+        "translated_headphone_reference_distortion_db": translated_metrics["distortion_db"],
+        "translated_headphone_reference_lag_samples": translated_metrics["lag_samples"],
+    }
+    gates = virtual_lab_gates(summary, args)
+    report = {
+        "schema_version": 1,
+        "generated_at_unix": int(time.time()),
+        "fixture_kind": VIRTUAL_FIXTURE_KIND,
+        "measurement_kind": VIRTUAL_MEASUREMENT_KIND,
+        "output_dir": str(args.output_dir),
+        "release_proof": False,
+        "summary": {
+            "passed": all(bool(gate["passed"]) for gate in gates),
+            "quality_gates": gates,
+            "release_proof": False,
+        },
+        "benchmarks": {
+            VIRTUAL_BENCHMARK_NAME: {
+                "adapter_id": args.adapter_id,
+                "summary": summary,
+            }
+        },
+        "artifact_hashes": artifact_hashes,
+        "artifact_paths": artifact_paths,
+        "detractor_loop": {
+            "strongest_objection": (
+                "This virtual lab proves scorer and artifact plumbing only. It does not prove "
+                "real listener-ear isolation, microphone placement, Bluetooth behavior, or room acoustics."
+            ),
+            "verdict": "Keep release_proof=false; run physical listener-ear capture for release.",
+        },
+    }
+    report = json_safe(report)
+    report_path = run_dir / "headphone-virtual-lab-report.json"
+    report_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    status = "PASS" if report["summary"]["passed"] else "FAIL"
+    print(
+        f"headphone/earpiece virtual lab {status}: "
+        f"simulated_isolation_db={summary['source_isolation_db']}, "
+        f"translated_corr={summary['translated_headphone_reference_correlation']}"
+    )
+    print(f"wrote headphone virtual lab report to {report_path}")
+    return 0 if report["summary"]["passed"] or args.score_warning_only else 1
+
+
 def _capture_reference_tracks(args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray, str, list[dict[str, Any]]]:
     if bool(args.source_reference) != bool(args.translated_playback_reference):
         raise ValueError("--source-reference and --translated-playback-reference must be provided together")
@@ -1731,6 +2043,49 @@ def self_test() -> int:
             globals()["portaudio_device_identity"] = original_portaudio_device_identity
         if preflight_report_path.exists():
             raise RuntimeError("route probe preflight failure should remove stale reports")
+        virtual_result = virtual_lab(
+            argparse.Namespace(
+                adapter_id=DEFAULT_VIRTUAL_LAB_ADAPTER_ID,
+                duration_s=1.25,
+                lead_s=0.1,
+                max_alignment_lag_ms=DEFAULT_MAX_ALIGNMENT_LAG_MS,
+                max_translated_distortion_db=DEFAULT_MAX_TRANSLATED_DISTORTION_DB,
+                min_source_isolation_db=DEFAULT_MIN_SOURCE_ISOLATION_DB,
+                min_source_open_correlation=DEFAULT_MIN_SOURCE_OPEN_CORRELATION,
+                min_source_open_dbfs=DEFAULT_MIN_SOURCE_OPEN_DBFS,
+                min_translated_correlation=DEFAULT_MIN_TRANSLATED_CORRELATION,
+                min_translated_dbfs=DEFAULT_MIN_TRANSLATED_DBFS,
+                noise_dbfs=-72.0,
+                output_dir=root / "virtual-out",
+                reflection_db=-60.0,
+                run_id=DEFAULT_VIRTUAL_LAB_RUN_ID,
+                sample_rate_hz=sample_rate_hz,
+                score_warning_only=False,
+                source_isolation_db=18.0,
+                source_lag_ms=0.0,
+                source_open_gain_db=-3.0,
+                tail_s=0.1,
+                translated_gain_db=-3.0,
+                translated_lag_ms=0.0,
+            )
+        )
+        if virtual_result != 0:
+            raise RuntimeError("expected virtual listener-ear lab self-test fixture to pass")
+        virtual_report_path = (
+            root
+            / "virtual-out"
+            / "runs"
+            / DEFAULT_VIRTUAL_LAB_RUN_ID
+            / "headphone-virtual-lab-report.json"
+        )
+        virtual_report = json.loads(virtual_report_path.read_text(encoding="utf-8"))
+        if virtual_report.get("release_proof") is not False:
+            raise RuntimeError("virtual listener-ear lab must not set release_proof")
+        if virtual_report.get("fixture_kind") == FIXTURE_KIND:
+            raise RuntimeError("virtual listener-ear lab must not use release fixture_kind")
+        if not bool(virtual_report.get("summary", {}).get("passed")):
+            raise RuntimeError("expected virtual listener-ear lab quality gates to pass")
+        json.dumps(virtual_report, allow_nan=False)
     print("headphone/earpiece isolation contract self-test PASS")
     return 0
 
@@ -1886,6 +2241,48 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="allow source and headphone outputs to resolve to the same PortAudio device for explicit multi-channel hardware tests",
     )
     probe_parser.add_argument("--score-warning-only", action="store_true")
+    virtual_parser = subparsers.add_parser(
+        "virtual-lab",
+        help="generate a deterministic synthetic listener-ear lab report that is never release proof",
+    )
+    virtual_parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    virtual_parser.add_argument("--run-id", default=DEFAULT_VIRTUAL_LAB_RUN_ID)
+    virtual_parser.add_argument("--adapter-id", default=DEFAULT_VIRTUAL_LAB_ADAPTER_ID)
+    virtual_parser.add_argument("--sample-rate-hz", type=int, default=DEFAULT_SAMPLE_RATE_HZ)
+    virtual_parser.add_argument("--duration-s", type=float, default=2.5)
+    virtual_parser.add_argument("--lead-s", type=float, default=DEFAULT_LEAD_S)
+    virtual_parser.add_argument("--tail-s", type=float, default=DEFAULT_TAIL_S)
+    virtual_parser.add_argument("--source-open-gain-db", type=float, default=-3.0)
+    virtual_parser.add_argument("--source-isolation-db", type=float, default=18.0)
+    virtual_parser.add_argument("--translated-gain-db", type=float, default=-3.0)
+    virtual_parser.add_argument("--source-lag-ms", type=float, default=0.0)
+    virtual_parser.add_argument("--translated-lag-ms", type=float, default=0.0)
+    virtual_parser.add_argument("--noise-dbfs", type=float, default=-72.0)
+    virtual_parser.add_argument("--reflection-db", type=float, default=-60.0)
+    virtual_parser.add_argument("--min-source-open-dbfs", type=float, default=DEFAULT_MIN_SOURCE_OPEN_DBFS)
+    virtual_parser.add_argument("--min-translated-dbfs", type=float, default=DEFAULT_MIN_TRANSLATED_DBFS)
+    virtual_parser.add_argument(
+        "--min-source-open-correlation",
+        type=float,
+        default=DEFAULT_MIN_SOURCE_OPEN_CORRELATION,
+    )
+    virtual_parser.add_argument(
+        "--min-translated-correlation",
+        type=float,
+        default=DEFAULT_MIN_TRANSLATED_CORRELATION,
+    )
+    virtual_parser.add_argument(
+        "--min-source-isolation-db",
+        type=float,
+        default=DEFAULT_MIN_SOURCE_ISOLATION_DB,
+    )
+    virtual_parser.add_argument(
+        "--max-translated-distortion-db",
+        type=float,
+        default=DEFAULT_MAX_TRANSLATED_DISTORTION_DB,
+    )
+    virtual_parser.add_argument("--max-alignment-lag-ms", type=float, default=DEFAULT_MAX_ALIGNMENT_LAG_MS)
+    virtual_parser.add_argument("--score-warning-only", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -1901,6 +2298,8 @@ def main(argv: list[str] | None = None) -> int:
         return capture(args)
     if args.command == "probe-route":
         return route_probe(args)
+    if args.command == "virtual-lab":
+        return virtual_lab(args)
     raise AssertionError(f"unhandled command: {args.command}")
 
 
