@@ -56,6 +56,7 @@ than by inventing a second package version line.
 - [ ] Build the local artifacts that are practical on your host:
 	- `make gateway-package`
 	- `make source-bundle`
+	- Windows without `make`: `pwsh -NoProfile -File scripts/package_local.ps1 -Python <path-to-supported-python>`
 	- `make flutter-release-android` (only when Flutter + Android SDK are available locally)
 - [ ] Use `.github/workflows/release.yml` for the complete artifact matrix:
 	- `workflow_dispatch` with `channel=internal-beta` for internal candidate builds

@@ -30,7 +30,7 @@ Use the guidance in `docs/development/versioning.md` and the checklist in `docs/
 | Artifact | Primary build path | Output | Smoke-verification status | Notes |
 | --- | --- | --- | --- | --- |
 | Source bundle | `make source-bundle` or workflow `source-bundle` job | `dist/language-<version>-source.tar.gz`, `dist/language-<version>-source.zip` | Supported | Easiest way to hand a reviewer the exact candidate source. |
-| Gateway packages | `make gateway-package` or workflow `gateway-package` job | `services/gateway/dist/*.tar.gz`, `services/gateway/dist/*.whl` | Packaging verified | The repo does not yet ship a dedicated packaged CLI wrapper; the smoke path still uses a checkout or unpacked source bundle to run the gateway. |
+| Gateway packages | `make gateway-package` or workflow `gateway-package` job | Local: `services/gateway/dist/*.tar.gz`, `services/gateway/dist/*.whl`; workflow artifact: `language-gateway-<version>.tar.gz` plus wheel | Packaging verified | The repo does not yet ship a dedicated packaged CLI wrapper; the smoke path still uses a checkout or unpacked source bundle to run the gateway. |
 | Android release app | `make flutter-release-android` or workflow `flutter-android` job | release APK + AAB | **Primary smoke path** | Default Android build targets the emulator/local-host path. Set `FIELD_APP_API_BASE_URL` at workflow-dispatch time for device or hosted-gateway testing. |
 | iOS unsigned app bundle | workflow `flutter-ios` job on `macos-latest` | zipped `Runner.app` | Manual follow-up | Unsigned only; build requires a macOS runner. |
 | macOS app bundle | workflow `flutter-macos` job on `macos-latest` | zipped `.app` bundle | Manual follow-up | Unsigned/unnotarized. |
@@ -69,6 +69,17 @@ The plain PowerShell command refreshes `services/gateway/.venv` like the Make ta
 `-UseExistingGatewayVenv` only for a deliberate fast local reuse run.
 The gateway currently supports Python `>=3.11,<3.14`; pass `-Python <path-to-supported-python>` if
 the host's default `python` is outside that range.
+To build the local source bundle and gateway packages on Windows without `make`, run:
+
+```powershell
+pwsh -NoProfile -File scripts/package_local.ps1 -Python <path-to-supported-python>
+```
+
+The packaging script refuses a dirty tree by default because the source bundle is built from
+`HEAD`. Pass `-AllowDirty` only for a deliberate local throwaway artifact.
+When building gateway packages, the script deletes and recreates `services/gateway/dist/` and
+refreshes `services/gateway/.venv`. Use `-Action source-bundle` when you only need source archives and
+do not want Python or gateway venv changes.
 
 For a release that claims the full realtime audio product goal, add the strict evidence gate after
 the relevant audio-eval reports have been generated:

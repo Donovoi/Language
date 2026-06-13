@@ -77,6 +77,14 @@ Pass `-SkipFlutter` only for a partial host run when Flutter is not installed. T
 refreshes `services/gateway/.venv` like `make check`; pass `-UseExistingGatewayVenv` only when you
 deliberately want a faster reuse run. The gateway currently supports Python `>=3.11,<3.14`; pass
 `-Python <path-to-supported-python>` if the host's default `python` is outside that range.
+For local source and gateway package artifacts on Windows:
+
+```powershell
+pwsh -NoProfile -File scripts/package_local.ps1 -Python <path-to-supported-python>
+```
+
+That command refreshes `services/gateway/.venv` and rebuilds `services/gateway/dist/`; use
+`-Action source-bundle` for source archives only.
 
 The smoke script uses non-mutating `mode=FOCUS` preview requests for the session and SSE checks so the result stays deterministic even if the in-memory session was changed earlier during local testing.
 
