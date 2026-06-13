@@ -83,6 +83,19 @@ function Invoke-GitCommand {
         -WorkingDirectory $RepoRoot
 }
 
+function Invoke-GitCapture {
+    param(
+        [string]$RepoRoot,
+        [string[]]$Arguments
+    )
+
+    $output = & git -c "safe.directory=$RepoRoot" -C $RepoRoot @Arguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "git $($Arguments -join ' ') failed with exit code $LASTEXITCODE."
+    }
+    return (($output | Out-String).Trim())
+}
+
 function Get-ReleaseVersion {
     param([string]$RepoRoot, [string]$OverrideVersion)
 
@@ -118,7 +131,11 @@ function Assert-CleanGitTree {
 }
 
 function Build-SourceBundle {
-    param([string]$RepoRoot, [string]$ReleaseVersion)
+    param(
+        [string]$RepoRoot,
+        [string]$ReleaseVersion,
+        [System.Collections.Generic.List[string]]$ArtifactPaths
+    )
 
     $distDir = Join-Path $RepoRoot "dist"
     New-Item -ItemType Directory -Path $distDir -Force | Out-Null
@@ -137,10 +154,16 @@ function Build-SourceBundle {
 
     Write-Host "Wrote $tarPath"
     Write-Host "Wrote $zipPath"
+    $ArtifactPaths.Add($tarPath)
+    $ArtifactPaths.Add($zipPath)
 }
 
 function Build-GatewayPackage {
-    param([string]$RepoRoot, [string]$PythonPath)
+    param(
+        [string]$RepoRoot,
+        [string]$PythonPath,
+        [System.Collections.Generic.List[string]]$ArtifactPaths
+    )
 
     $gatewayDir = Join-Path $RepoRoot "services\gateway"
     $distDir = Join-Path $gatewayDir "dist"
@@ -194,6 +217,101 @@ function Build-GatewayPackage {
 
     Write-Host "Wrote $($sdists[0].FullName)"
     Write-Host "Wrote $($wheels[0].FullName)"
+    $ArtifactPaths.Add($sdists[0].FullName)
+    $ArtifactPaths.Add($wheels[0].FullName)
+}
+
+function Write-LocalArtifactManifest {
+    param(
+        [string]$RepoRoot,
+        [string]$ReleaseVersion,
+        [string]$ActionName,
+        [string[]]$ArtifactPaths,
+        [bool]$AllowDirtyTree
+    )
+
+    if ($ArtifactPaths.Count -eq 0) {
+        throw "No local artifacts were built."
+    }
+
+    $artifactRoot = Join-Path $RepoRoot "dist\local-release-artifacts"
+    if (Test-Path -LiteralPath $artifactRoot) {
+        Remove-Item -LiteralPath $artifactRoot -Recurse -Force -ErrorAction Stop
+    }
+    if (Test-Path -LiteralPath $artifactRoot) {
+        throw "Could not clear previous local artifact handoff directory: $artifactRoot"
+    }
+    New-Item -ItemType Directory -Path $artifactRoot -Force -ErrorAction Stop | Out-Null
+
+    $copiedFiles = New-Object System.Collections.Generic.List[System.IO.FileInfo]
+    foreach ($artifactPath in $ArtifactPaths) {
+        if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
+            throw "Built artifact was not found: $artifactPath"
+        }
+        $sourceFile = Get-Item -LiteralPath $artifactPath -ErrorAction Stop
+        $destinationName = $sourceFile.Name
+        if ($destinationName -eq "language_gateway-$ReleaseVersion.tar.gz") {
+            $destinationName = "language-gateway-$ReleaseVersion.tar.gz"
+        }
+        $destinationPath = Join-Path $artifactRoot $destinationName
+        Copy-Item -LiteralPath $sourceFile.FullName -Destination $destinationPath -Force -ErrorAction Stop
+        $copiedFiles.Add((Get-Item -LiteralPath $destinationPath -ErrorAction Stop))
+    }
+
+    $files = @($copiedFiles | Sort-Object Name)
+    if ($files.Count -eq 0) {
+        throw "No files were copied into $artifactRoot."
+    }
+
+    $checksumLines = New-Object System.Collections.Generic.List[string]
+    $artifactLines = New-Object System.Collections.Generic.List[string]
+    foreach ($file in $files) {
+        $digest = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+        $checksumLines.Add("$digest  $($file.Name)")
+        $artifactLines.Add("- ``$($file.Name)``")
+    }
+
+    $checksumPath = Join-Path $artifactRoot "SHA256SUMS.txt"
+    Set-Content -LiteralPath $checksumPath -Value ($checksumLines -join "`n") -Encoding UTF8
+    Add-Content -LiteralPath $checksumPath -Value "" -Encoding UTF8
+
+    $commit = Invoke-GitCapture -RepoRoot $RepoRoot -Arguments @("rev-parse", "HEAD")
+    $ref = Invoke-GitCapture -RepoRoot $RepoRoot -Arguments @("rev-parse", "--abbrev-ref", "HEAD")
+    $dirtyStatus = & git -c "safe.directory=$RepoRoot" -C $RepoRoot status --porcelain
+    if ($LASTEXITCODE -ne 0) {
+        throw "git status --porcelain failed with exit code $LASTEXITCODE."
+    }
+    $dirtyTree = [bool]$dirtyStatus
+    $generatedAt = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+    $scope = switch ($ActionName) {
+        "source-bundle" { "local source bundle artifacts only" }
+        "gateway-package" { "local gateway package artifacts only" }
+        default { "local source bundle and gateway package artifacts only" }
+    }
+    $manifestLines = @(
+        "# local artifact manifest",
+        "",
+        "- version: ``$ReleaseVersion``",
+        "- channel: ``local``",
+        "- scope: ``$scope``",
+        "- commit: ``$commit``",
+        "- ref: ``$ref``",
+        "- dirty_tree: ``$($dirtyTree.ToString().ToLowerInvariant())``",
+        "- allow_dirty: ``$($AllowDirtyTree.ToString().ToLowerInvariant())``",
+        "- generated_at_utc: ``$generatedAt``",
+        "- smoke runbook: ``docs/development/internal-beta-smoke-runbook.md``",
+        "- auth note: keep ``LANGUAGE_GATEWAY_AUTH_TOKEN`` unset for packaged-app smoke tests that need write controls",
+        "- limitation: this is not the full GitHub Actions release manifest; Flutter artifacts, workflow run metadata, and publish-release assets are not included",
+        "",
+        "## Files"
+    ) + $artifactLines
+
+    $manifestPath = Join-Path $artifactRoot "manifest.md"
+    Set-Content -LiteralPath $manifestPath -Value ($manifestLines -join "`n") -Encoding UTF8
+    Add-Content -LiteralPath $manifestPath -Value "" -Encoding UTF8
+
+    Write-Host "Wrote $manifestPath"
+    Write-Host "Wrote $checksumPath"
 }
 
 $repoRoot = Resolve-RepoRoot
@@ -204,14 +322,22 @@ if ($Action -eq "all" -or $Action -eq "gateway-package") {
 }
 $releaseVersion = Get-ReleaseVersion -RepoRoot $repoRoot -OverrideVersion $Version
 Assert-CleanGitTree -RepoRoot $repoRoot -AllowDirtyTree $AllowDirty.IsPresent
+$builtArtifacts = New-Object System.Collections.Generic.List[string]
 
 if ($Action -eq "all" -or $Action -eq "source-bundle") {
-    Build-SourceBundle -RepoRoot $repoRoot -ReleaseVersion $releaseVersion
+    Build-SourceBundle -RepoRoot $repoRoot -ReleaseVersion $releaseVersion -ArtifactPaths $builtArtifacts
 }
 
 if ($Action -eq "all" -or $Action -eq "gateway-package") {
-    Build-GatewayPackage -RepoRoot $repoRoot -PythonPath $pythonPath
+    Build-GatewayPackage -RepoRoot $repoRoot -PythonPath $pythonPath -ArtifactPaths $builtArtifacts
 }
+
+Write-LocalArtifactManifest `
+    -RepoRoot $repoRoot `
+    -ReleaseVersion $releaseVersion `
+    -ActionName $Action `
+    -ArtifactPaths $builtArtifacts.ToArray() `
+    -AllowDirtyTree $AllowDirty.IsPresent
 
 Write-Host ""
 Write-Host "Local package build passed."

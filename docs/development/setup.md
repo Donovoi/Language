@@ -84,7 +84,8 @@ pwsh -NoProfile -File scripts/package_local.ps1 -Python <path-to-supported-pytho
 ```
 
 That command refreshes `services/gateway/.venv` and rebuilds `services/gateway/dist/`; use
-`-Action source-bundle` for source archives only.
+`-Action source-bundle` for source archives only. It writes a scope-specific local artifact handoff
+manifest and `SHA256SUMS.txt` under `dist/local-release-artifacts/`.
 
 The smoke script uses non-mutating `mode=FOCUS` preview requests for the session and SSE checks so the result stays deterministic even if the in-memory session was changed earlier during local testing.
 
