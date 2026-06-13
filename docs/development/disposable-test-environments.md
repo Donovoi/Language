@@ -432,7 +432,7 @@ pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-prepare-manu
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-check-manual --score-warning-only
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-sweep-routes --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --headphone-device-label "placeholder REPLACE_WITH_HEADPHONE_MODEL" --isolation-fixture-label "placeholder REPLACE_WITH_EARCUP_AND_MIC_POSITION" --measurement-microphone-label "placeholder REPLACE_WITH_MIC_MODEL_AND_POSITION"
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --preflight-report artifacts/audio_eval/runs/headphone-earpiece-preflight/headphone-preflight-report.json --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --headphone-device-label "placeholder REPLACE_WITH_HEADPHONE_MODEL" --isolation-fixture-label "placeholder REPLACE_WITH_EARCUP_AND_MIC_POSITION" --measurement-microphone-label "placeholder REPLACE_WITH_MIC_MODEL_AND_POSITION"
 python scripts/run_real_room_playback_suppression.py probe-route --input-device 1 --output-device 3 --sample-rate-hz 16000 --duration-s 2 --playback-gain-db -18 --score-warning-only
 python scripts/run_real_room_playback_suppression.py sweep-routes --pair 1:3 --pair 17:14 --sample-rate-hz 16000 --sample-rate-hz 48000 --channel-config 1:2 --channel-config 2:2 --max-attempts 8 --playback-gain-db -18 --score-warning-only
 python scripts/run_real_room_playback_suppression.py sweep-devices --pair 12:10 --sample-rate-hz 48000 --max-reference-duration-s 3 --playback-gain-db -18 --score-warning-only
@@ -452,6 +452,8 @@ check. It should pass its own virtual gates and be rejected by `release_audio_ga
 release evidence must come from either `headphone-isolation-probe-route` plus
 `headphone-isolation-capture`, or `headphone-isolation-prepare-manual` plus
 `headphone-isolation-score-manual`, with real listener-ear recording hardware.
+Guided host capture must consume a preflight report generated with a selected, physically confirmed
+capture-ready route; laptop built-in microphones remain route triage only.
 Use an explicit expected-failure assertion when checking the release gate rejection:
 
 ```powershell

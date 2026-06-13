@@ -32,6 +32,7 @@ Repository prep for the first internal beta release candidate based on the curre
 - Windows-native `scripts/package_local.ps1` builds source bundles and gateway distributions without `make`, refusing dirty-tree release artifacts by default and writing a scope-specific local artifact manifest plus checksums.
 - Windows-native `scripts/headphone_isolation_local.ps1` creates a small host-audio venv for headphone/earpiece virtual-lab, manual-kit, route-probe, and capture commands without relying on `make` or Docker audio device passthrough.
 - Headphone/earpiece no-audio preflight writes JSON and Markdown planning reports with device classification, route candidates, recommended guided/manual path, explicit physical listener-ear input confirmation before guided capture, and a `release_proof=false` detractor verdict.
+- Guided headphone/earpiece PortAudio capture now requires a passing preflight report bound to the selected route, and release scoring rejects unbound guided-capture evidence.
 
 #### Changed
 

@@ -251,10 +251,10 @@ The `preflight` action only enumerates and classifies host audio devices; it doe
 audio. It writes
 `artifacts/audio_eval/runs/headphone-earpiece-preflight/headphone-preflight-report.json` and
 `headphone-preflight-report.md` with route candidates, a guided-capture/manual-recorder
-recommendation, and `release_proof=false`. If you use the laptop microphone array as the improvised
-listener-ear mic, physically place one headphone earcup over the laptop mic opening, keep that
-placement fixed, and rerun preflight with `--confirm-physical-listener-ear-input` before guided
-capture.
+recommendation, and `release_proof=false`. Laptop built-in microphones are route triage only: place
+one headphone earcup over the laptop mic opening only when running the generated
+`route_probe_triage_only` command. Guided capture requires a capture-ready external listener-ear input
+and the generated `--preflight-report` binding.
 
 The June 12, 2026 SoundWire/WASAPI measurements currently fail release: the 48 kHz device
 qualification recorded audible calibration but failed reference fidelity
@@ -302,10 +302,10 @@ $headphoneLabel = "REPLACE_WITH_HEADPHONE_MODEL"
 $fixtureLabel = "REPLACE_WITH_EARCUP_AND_MIC_POSITION"
 $microphoneLabel = "REPLACE_WITH_MIC_MODEL_AND_POSITION"
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --confirm-physical-listener-ear-input
+# If preflight reports a capture-ready listener-ear input, run its generated confirm_physical_input_preflight command.
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action sweep-routes -Python $env:LANGUAGE_PYTHON --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action probe-route -Python $env:LANGUAGE_PYTHON --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action capture -Python $env:LANGUAGE_PYTHON --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action capture -Python $env:LANGUAGE_PYTHON --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --preflight-report artifacts/audio_eval/runs/headphone-earpiece-preflight/headphone-preflight-report.json --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel
 ```
 
 If you let `sweep-routes` try multiple sample rates or channel configs, copy the winning
