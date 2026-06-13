@@ -25,12 +25,18 @@ import numpy as np
 DEFAULT_OUTPUT_DIR = Path("artifacts/audio_eval")
 DEFAULT_RUN_ID = "headphone-earpiece-isolation"
 DEFAULT_ROUTE_PROBE_RUN_ID = "headphone-earpiece-route-probe"
+DEFAULT_ROUTE_PROBE_SWEEP_RUN_ID = "headphone-earpiece-route-probe-sweep"
 DEFAULT_VIRTUAL_LAB_RUN_ID = "headphone-earpiece-virtual-lab"
 DEFAULT_ADAPTER_ID = "listener_headphone_earpiece_isolation_measurement_v1"
 DEFAULT_ROUTE_PROBE_ADAPTER_ID = "listener_headphone_earpiece_route_probe_v1"
+DEFAULT_ROUTE_PROBE_SWEEP_ADAPTER_ID = "listener_headphone_earpiece_route_probe_sweep_v1"
 DEFAULT_VIRTUAL_LAB_ADAPTER_ID = "listener_headphone_earpiece_virtual_lab_v1"
 DEFAULT_TTS_REPORT = DEFAULT_OUTPUT_DIR / "runs/same-voice-tts/voice-clone-report.json"
 DEFAULT_SAMPLE_RATE_HZ = 16000
+DEFAULT_ROUTE_PROBE_SWEEP_SAMPLE_RATES = (DEFAULT_SAMPLE_RATE_HZ, 48000)
+DEFAULT_ROUTE_PROBE_SWEEP_CHANNEL_CONFIGS = ((1, 2), (2, 2))
+DEFAULT_ROUTE_PROBE_SWEEP_MAX_ATTEMPTS = 24
+DEFAULT_ROUTE_PROBE_SWEEP_MAX_TRIPLES = 24
 DEFAULT_CAPTURE_OUTPUT_CHANNELS = 2
 DEFAULT_CAPTURE_INPUT_CHANNELS = 1
 DEFAULT_GAP_S = 0.35
@@ -147,6 +153,152 @@ def parse_device_selector(value: Any) -> int | str | None:
         return int(text)
     except ValueError:
         return text
+
+
+def safe_id(value: str) -> str:
+    allowed = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+    return "".join(char if char in allowed else "_" for char in value)
+
+
+def parse_channel_config(value: str) -> tuple[int, int]:
+    for separator in (":", ","):
+        if separator in value:
+            left, right = value.split(separator, 1)
+            try:
+                input_channels = int(left.strip())
+                output_channels = int(right.strip())
+            except ValueError as exc:
+                raise argparse.ArgumentTypeError(
+                    "channel config must be INPUT_CHANNELS:OUTPUT_CHANNELS"
+                ) from exc
+            if input_channels <= 0 or output_channels <= 0:
+                raise argparse.ArgumentTypeError("channel counts must be positive")
+            return input_channels, output_channels
+    raise argparse.ArgumentTypeError("channel config must be INPUT_CHANNELS:OUTPUT_CHANNELS")
+
+
+def parse_route_triple(value: str) -> tuple[str, str, str]:
+    parts = [part.strip() for part in value.replace(",", ":").split(":")]
+    if len(parts) != 3 or not all(parts):
+        raise argparse.ArgumentTypeError(
+            "route triple must be INPUT:SOURCE_OUTPUT:HEADPHONE_OUTPUT, for example 17:14:16"
+        )
+    return parts[0], parts[1], parts[2]
+
+
+def hostapi_name(sd: Any, hostapi_index: Any) -> str | None:
+    try:
+        return sd.query_hostapis(hostapi_index).get("name")
+    except Exception:  # pragma: no cover - host API metadata is best-effort diagnostics.
+        return None
+
+
+def hostapi_matches(info: dict[str, Any], name: str | None, filters: list[str]) -> bool:
+    if not filters:
+        return True
+    hostapi_index = str(info.get("hostapi", "")).lower()
+    hostapi_label = (name or "").lower()
+    return any(item.lower() in {hostapi_index, hostapi_label} or item.lower() in hostapi_label for item in filters)
+
+
+def candidate_route_triples(
+    sd: Any,
+    *,
+    allow_shared_output_device: bool,
+    hostapis: list[str],
+    include_cross_hostapi: bool,
+    input_channels: int,
+    max_triples: int,
+    output_channels: int,
+) -> list[dict[str, Any]]:
+    devices = list(enumerate(sd.query_devices()))
+    inputs: list[tuple[int, dict[str, Any], str | None]] = []
+    outputs: list[tuple[int, dict[str, Any], str | None]] = []
+    for index, info in devices:
+        if not isinstance(info, dict):
+            continue
+        api_name = hostapi_name(sd, info.get("hostapi"))
+        if not hostapi_matches(info, api_name, hostapis):
+            continue
+        if int(info.get("max_input_channels") or 0) >= int(input_channels):
+            inputs.append((index, info, api_name))
+        if int(info.get("max_output_channels") or 0) >= int(output_channels):
+            outputs.append((index, info, api_name))
+
+    try:
+        default_input, default_output = sd.default.device
+    except Exception:  # pragma: no cover - defensive host diagnostic.
+        default_input, default_output = None, None
+
+    def api_rank(name: str | None) -> int:
+        label = (name or "").lower()
+        if "wasapi" in label:
+            return 0
+        if "directsound" in label:
+            return 1
+        if "mme" in label:
+            return 2
+        if "wdm" in label:
+            return 3
+        return 4
+
+    triples: list[dict[str, Any]] = []
+    for input_index, input_info, input_api_name in inputs:
+        for source_index, source_info, source_api_name in outputs:
+            for headphone_index, headphone_info, headphone_api_name in outputs:
+                if not allow_shared_output_device and source_index == headphone_index:
+                    continue
+                if not include_cross_hostapi:
+                    hostapis_match = (
+                        input_info.get("hostapi")
+                        == source_info.get("hostapi")
+                        == headphone_info.get("hostapi")
+                    )
+                    if not hostapis_match:
+                        continue
+                triples.append(
+                    {
+                        "headphone_hostapi": headphone_info.get("hostapi"),
+                        "headphone_hostapi_name": headphone_api_name,
+                        "headphone_name": headphone_info.get("name"),
+                        "headphone_output_device": headphone_index,
+                        "input_device": input_index,
+                        "input_hostapi": input_info.get("hostapi"),
+                        "input_hostapi_name": input_api_name,
+                        "input_name": input_info.get("name"),
+                        "source": "auto",
+                        "source_hostapi": source_info.get("hostapi"),
+                        "source_hostapi_name": source_api_name,
+                        "source_name": source_info.get("name"),
+                        "source_output_device": source_index,
+                    }
+                )
+
+    triples.sort(
+        key=lambda item: (
+            0 if item["input_device"] == default_input else 1,
+            0 if item["headphone_output_device"] == default_output else 1,
+            api_rank(item.get("input_hostapi_name")),
+            item.get("input_hostapi_name") != item.get("source_hostapi_name"),
+            item.get("input_hostapi_name") != item.get("headphone_hostapi_name"),
+            str(item.get("input_name") or ""),
+            str(item.get("source_name") or ""),
+            str(item.get("headphone_name") or ""),
+        )
+    )
+    if max_triples > 0:
+        return triples[:max_triples]
+    return triples
+
+
+def report_float(value: Any, digits: int = 6) -> float | None:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(numeric):
+        return None
+    return round(numeric, digits)
 
 
 def measurement_identity_fingerprint(
@@ -882,6 +1034,280 @@ def route_probe(args: argparse.Namespace) -> int:
     )
     print(f"wrote headphone route probe report to {report_path}")
     return 0 if report["summary"]["passed"] or args.score_warning_only else 1
+
+
+def route_probe_attempt_metrics(summary: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    sample_rate_hz = max(1, int(summary.get("sample_rate_hz") or args.sample_rate_hz))
+
+    def route_metrics(prefix: str) -> dict[str, Any]:
+        recording = summary.get(f"{prefix}_route_recording")
+        recording = recording if isinstance(recording, dict) else {}
+        lag_samples = int(summary.get(f"{prefix}_route_reference_lag_samples") or 0)
+        lag_ms = abs(float(lag_samples)) * 1000.0 / float(sample_rate_hz)
+        level = float(summary.get(f"{prefix}_route_recording_dbfs", float("-inf")))
+        confidence = float(summary.get(f"{prefix}_route_reference_confidence", float("-inf")))
+        correlation_value = float(summary.get(f"{prefix}_route_reference_correlation", float("-inf")))
+        distortion = float(summary.get(f"{prefix}_route_reference_distortion_db", float("inf")))
+        peak = float(recording.get("peak_dbfs", float("-inf")))
+        clipped = int(recording.get("clipped_sample_count") or 0)
+        return {
+            "clipped_sample_count": clipped,
+            "confidence": report_float(confidence, 6),
+            "correlation": report_float(correlation_value, 6),
+            "distortion_db": report_float(distortion, 3),
+            "gain_db": report_float(summary.get(f"{prefix}_route_gain_db"), 3),
+            "lag_ms": report_float(lag_ms, 3),
+            "lag_samples": lag_samples,
+            "level_dbfs": report_float(level, 3),
+            "margin_to_threshold": {
+                "clipped_samples": int(args.max_route_probe_clipped_samples) - clipped,
+                "confidence": report_float(confidence - float(args.min_route_probe_correlation), 6),
+                "distortion_db": report_float(float(args.max_route_probe_distortion_db) - distortion, 3),
+                "recording_level_db": report_float(level - float(args.min_route_probe_dbfs), 3),
+            },
+            "peak_dbfs": report_float(peak, 3),
+            "recording_matches_reference": bool(summary.get(f"{prefix}_route_recording_matches_reference")),
+        }
+
+    return {
+        "device_path_fingerprint": summary.get("device_path_fingerprint"),
+        "headphone": route_metrics("headphone"),
+        "headphone_output_device": summary.get("device_info", {}).get("headphone_output_device"),
+        "input_channels": int(summary.get("input_channels") or args.input_channels),
+        "measurement_input_device": summary.get("device_info", {}).get("measurement_input_device"),
+        "output_channels": int(summary.get("output_channels") or args.output_channels),
+        "sample_rate_hz": sample_rate_hz,
+        "source": route_metrics("source"),
+        "source_output_device": summary.get("device_info", {}).get("source_output_device"),
+    }
+
+
+def route_probe_score(metrics: dict[str, Any]) -> float:
+    score = 0.0
+    for route_name in ("source", "headphone"):
+        route = metrics.get(route_name, {})
+        confidence = route.get("confidence")
+        if isinstance(confidence, (int, float)):
+            score += float(confidence) * 20.0
+        margins = route.get("margin_to_threshold", {})
+        if isinstance(margins, dict):
+            for value in margins.values():
+                if isinstance(value, (int, float)):
+                    score += max(-100.0, min(100.0, float(value)))
+    return score
+
+
+def sweep_routes(args: argparse.Namespace) -> int:
+    sd = None if args.triple else import_sounddevice()
+    run_dir = Path(args.output_dir) / "runs" / args.run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    sample_rates = list(dict.fromkeys(int(value) for value in args.sample_rate_hz))
+    channel_configs = list(dict.fromkeys(tuple(config) for config in args.channel_config))
+
+    configs: list[dict[str, Any]] = []
+    for sample_rate_hz in sample_rates:
+        for input_channels, output_channels in channel_configs:
+            if args.triple:
+                triples = [
+                    {
+                        "headphone_output_device": headphone_output_device,
+                        "input_device": input_device,
+                        "source": "explicit",
+                        "source_output_device": source_output_device,
+                    }
+                    for input_device, source_output_device, headphone_output_device in args.triple
+                ]
+            else:
+                assert sd is not None
+                triples = candidate_route_triples(
+                    sd,
+                    allow_shared_output_device=bool(args.allow_shared_output_device),
+                    hostapis=list(args.hostapi or []),
+                    include_cross_hostapi=bool(args.include_cross_hostapi),
+                    input_channels=int(input_channels),
+                    max_triples=int(args.max_triples),
+                    output_channels=int(output_channels),
+                )
+            for triple in triples:
+                configs.append(
+                    {
+                        "input_channels": int(input_channels),
+                        "output_channels": int(output_channels),
+                        "sample_rate_hz": int(sample_rate_hz),
+                        "triple": triple,
+                    }
+                )
+                if int(args.max_attempts) > 0 and len(configs) >= int(args.max_attempts):
+                    break
+            if int(args.max_attempts) > 0 and len(configs) >= int(args.max_attempts):
+                break
+        if int(args.max_attempts) > 0 and len(configs) >= int(args.max_attempts):
+            break
+
+    attempts: list[dict[str, Any]] = []
+    for index, config in enumerate(configs, start=1):
+        triple = config["triple"]
+        input_device = str(triple["input_device"])
+        source_output_device = str(triple["source_output_device"])
+        headphone_output_device = str(triple["headphone_output_device"])
+        input_channels = int(config["input_channels"])
+        output_channels = int(config["output_channels"])
+        sample_rate_hz = int(config["sample_rate_hz"])
+        attempt_id = (
+            f"attempt-{index:02d}-sr-{sample_rate_hz}-in-ch-{input_channels}-"
+            f"out-ch-{output_channels}-in-{safe_id(input_device)}-"
+            f"src-{safe_id(source_output_device)}-hp-{safe_id(headphone_output_device)}"
+        )
+        child_run_id = f"{args.run_id}/{attempt_id}"
+        child_args = argparse.Namespace(**vars(args))
+        child_args.command = "probe-route"
+        child_args.adapter_id = DEFAULT_ROUTE_PROBE_ADAPTER_ID
+        child_args.run_id = child_run_id
+        child_args.measurement_input_device = input_device
+        child_args.source_output_device = source_output_device
+        child_args.headphone_output_device = headphone_output_device
+        child_args.input_channels = input_channels
+        child_args.output_channels = output_channels
+        child_args.sample_rate_hz = sample_rate_hz
+        child_args.score_warning_only = True
+        report_path = Path(args.output_dir) / "runs" / child_run_id / "headphone-route-probe-report.json"
+        attempt: dict[str, Any] = {
+            "attempt_id": attempt_id,
+            "duration_s": float(args.duration_s),
+            "headphone_hostapi_name": triple.get("headphone_hostapi_name"),
+            "headphone_name": triple.get("headphone_name"),
+            "headphone_output_device": headphone_output_device,
+            "input_channels": input_channels,
+            "input_device": input_device,
+            "input_hostapi_name": triple.get("input_hostapi_name"),
+            "input_name": triple.get("input_name"),
+            "output_channels": output_channels,
+            "pair_source": triple.get("source"),
+            "playback_gain_db": float(args.playback_gain_db),
+            "report_path": str(report_path),
+            "sample_rate_hz": sample_rate_hz,
+            "source_hostapi_name": triple.get("source_hostapi_name"),
+            "source_name": triple.get("source_name"),
+            "source_output_device": source_output_device,
+        }
+        try:
+            route_probe(child_args)
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            benchmark = report.get("benchmarks", {}).get("headphone_earpiece_route_probe", {})
+            summary = benchmark.get("summary", {}) if isinstance(benchmark, dict) else {}
+            gates = report.get("summary", {}).get("quality_gates", [])
+            artifact_paths = report.get("artifact_paths", {})
+            artifact_hashes = report.get("artifact_hashes", {})
+            failed_gates = [
+                str(gate.get("name"))
+                for gate in gates
+                if isinstance(gate, dict) and not bool(gate.get("passed"))
+            ]
+            metrics = route_probe_attempt_metrics(summary, child_args)
+            passed = bool(report.get("summary", {}).get("passed")) and not failed_gates
+            attempt.update(
+                {
+                    "artifact_hashes": artifact_hashes if isinstance(artifact_hashes, dict) else {},
+                    "artifact_paths": artifact_paths if isinstance(artifact_paths, dict) else {},
+                    "device": benchmark.get("device") if isinstance(benchmark, dict) else None,
+                    "failed_gates": failed_gates,
+                    "metrics": metrics,
+                    "passed": passed,
+                    "quality_gates": gates,
+                    "score": report_float(route_probe_score(metrics), 6),
+                    "status": "pass" if passed else "fail",
+                }
+            )
+        except Exception as exc:  # pragma: no cover - depends on host device failures.
+            attempt.update(
+                {
+                    "error": str(exc),
+                    "failed_gates": ["headphone_route_probe_attempt_error"],
+                    "passed": False,
+                    "score": None,
+                    "status": "error",
+                }
+            )
+        attempts.append(attempt)
+
+    candidates = [attempt for attempt in attempts if bool(attempt.get("passed"))]
+    scored_attempts = [attempt for attempt in attempts if isinstance(attempt.get("score"), (int, float))]
+    candidate_attempt = max(candidates, key=lambda item: float(item.get("score") or 0.0)) if candidates else None
+    best_scored_attempt = (
+        max(scored_attempts, key=lambda item: float(item.get("score") or 0.0)) if scored_attempts else None
+    )
+    gates = [
+        {
+            "name": "headphone_route_probe_sweep_not_release_proof",
+            "passed": True,
+            "threshold": "route sweeps are triage only",
+            "value": False,
+        },
+        {
+            "name": "headphone_route_probe_sweep_attempts_recorded",
+            "passed": bool(attempts),
+            "threshold": "at least one route triple attempted",
+            "value": len(attempts),
+        },
+        {
+            "name": "headphone_route_probe_sweep_candidate_found",
+            "passed": bool(candidates),
+            "threshold": "at least one route probe attempt passed all route gates",
+            "value": bool(candidates),
+        },
+    ]
+    report = {
+        "schema_version": 1,
+        "generated_at_unix": int(time.time()),
+        "fixture_kind": "headphone_earpiece_route_probe_sweep",
+        "measurement_kind": "headphone_earpiece_route_probe_sweep_triage",
+        "output_dir": str(args.output_dir),
+        "release_proof": False,
+        "summary": {
+            "attempted_config_count": len(attempts),
+            "best_scored_attempt_id": best_scored_attempt.get("attempt_id") if best_scored_attempt else None,
+            "candidate_attempt_id": candidate_attempt.get("attempt_id") if candidate_attempt else None,
+            "channel_configs": [
+                {"input_channels": item[0], "output_channels": item[1]} for item in channel_configs
+            ],
+            "passed": bool(candidates),
+            "quality_gates": gates,
+            "release_proof": False,
+            "sample_rates_hz": sample_rates,
+            "triage_candidate_found": bool(candidates),
+        },
+        "benchmarks": {
+            "headphone_earpiece_route_probe_sweep": {
+                "adapter_id": args.adapter_id,
+                "attempts": attempts,
+                "best_scored_attempt": best_scored_attempt,
+                "candidate_attempt": candidate_attempt,
+                "required_follow_up": (
+                    "Rerun the candidate with headphone-isolation-probe-route, then collect "
+                    "headphone-isolation-capture evidence with the listener-ear microphone physically positioned."
+                ),
+            }
+        },
+        "detractor_loop": {
+            "strongest_objection": (
+                "A chirp sweep can find routes that open and preserve a probe while still failing "
+                "speech, Bluetooth mode switching, AGC, or the physical listener-ear placement."
+            ),
+            "verdict": (
+                "This is only route triage. It records attempted configurations and keeps release_proof=false."
+            ),
+        },
+    }
+    report = json_safe(report)
+    report_path = run_dir / "headphone-route-probe-sweep-report.json"
+    report_path.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    status = "CANDIDATE" if candidates else "NO-CANDIDATE"
+    print(
+        f"headphone/earpiece route probe sweep {status}: attempts={len(attempts)}, "
+        f"candidate_found={bool(candidates)}"
+    )
+    print(f"wrote headphone route probe sweep report to {report_path}")
+    return 0 if candidates or args.score_warning_only else 1
 
 
 def projection_gain(target: np.ndarray, reference: np.ndarray) -> float:
@@ -1915,10 +2341,135 @@ def self_test() -> int:
         route_gates = {gate["name"]: gate for gate in route_probe_gates(route_summary, route_args)}
         if bool(route_gates["headphone_route_outputs_distinct"]["passed"]):
             raise RuntimeError("expected route probe same-output self-test fixture to fail")
+        sweep_metrics = route_probe_attempt_metrics(
+            {
+                **route_summary,
+                "device_path_fingerprint": "1" * 64,
+                "input_channels": 1,
+                "output_channels": 2,
+                "sample_rate_hz": sample_rate_hz,
+            },
+            argparse.Namespace(
+                input_channels=1,
+                max_route_probe_clipped_samples=DEFAULT_MAX_ROUTE_PROBE_CLIPPED_SAMPLES,
+                max_route_probe_distortion_db=DEFAULT_MAX_ROUTE_PROBE_DISTORTION_DB,
+                min_route_probe_correlation=DEFAULT_MIN_ROUTE_PROBE_CORRELATION,
+                min_route_probe_dbfs=DEFAULT_MIN_SOURCE_OPEN_DBFS,
+                output_channels=2,
+                sample_rate_hz=sample_rate_hz,
+            ),
+        )
+        if not isinstance(route_probe_score(sweep_metrics), float):
+            raise RuntimeError("expected route probe sweep score to be numeric")
         json.dumps(
             {"quality_gates": route_probe_gates({"release_proof": False}, route_args)},
             allow_nan=False,
         )
+        original_route_probe = globals()["route_probe"]
+
+        def fake_passing_route_probe(child_args: argparse.Namespace) -> int:
+            child_report_path = (
+                Path(child_args.output_dir)
+                / "runs"
+                / child_args.run_id
+                / "headphone-route-probe-report.json"
+            )
+            child_report_path.parent.mkdir(parents=True, exist_ok=True)
+            child_summary = {
+                **route_summary,
+                "all_artifact_hashes_present": True,
+                "device_info": {
+                    "headphone_output_device": {
+                        "hostapi": 1,
+                        "hostapi_name": "unit",
+                        "index": int(child_args.headphone_output_device),
+                        "name": "unit headphone",
+                    },
+                    "measurement_input_device": {
+                        "hostapi": 1,
+                        "hostapi_name": "unit",
+                        "index": int(child_args.measurement_input_device),
+                        "name": "unit input",
+                    },
+                    "source_output_device": {
+                        "hostapi": 1,
+                        "hostapi_name": "unit",
+                        "index": int(child_args.source_output_device),
+                        "name": "unit source",
+                    },
+                },
+                "device_path_fingerprint": "2" * 64,
+                "input_channels": int(child_args.input_channels),
+                "output_channels": int(child_args.output_channels),
+                "sample_rate_hz": int(child_args.sample_rate_hz),
+            }
+            child_payload = {
+                "schema_version": 1,
+                "fixture_kind": "headphone_earpiece_route_probe",
+                "measurement_kind": "headphone_earpiece_route_probe_triage",
+                "release_proof": False,
+                "summary": {
+                    "passed": True,
+                    "quality_gates": [{"name": "unit_route_probe_passed", "passed": True}],
+                    "release_proof": False,
+                },
+                "benchmarks": {
+                    "headphone_earpiece_route_probe": {
+                        "adapter_id": child_args.adapter_id,
+                        "summary": child_summary,
+                    }
+                },
+                "artifact_hashes": {},
+                "artifact_paths": {},
+            }
+            child_report_path.write_text(json.dumps(child_payload), encoding="utf-8")
+            return 0
+
+        globals()["route_probe"] = fake_passing_route_probe
+        try:
+            sweep_result = sweep_routes(
+                argparse.Namespace(
+                    adapter_id=DEFAULT_ROUTE_PROBE_SWEEP_ADAPTER_ID,
+                    allow_shared_output_device=False,
+                    channel_config=[(1, 2)],
+                    duration_s=0.05,
+                    hostapi=[],
+                    include_cross_hostapi=False,
+                    lead_s=0.0,
+                    max_alignment_lag_ms=DEFAULT_MAX_ALIGNMENT_LAG_MS,
+                    max_attempts=1,
+                    max_peak_dbfs=DEFAULT_MAX_PEAK_DBFS,
+                    max_route_probe_clipped_samples=DEFAULT_MAX_ROUTE_PROBE_CLIPPED_SAMPLES,
+                    max_route_probe_distortion_db=DEFAULT_MAX_ROUTE_PROBE_DISTORTION_DB,
+                    max_triples=1,
+                    min_route_probe_correlation=DEFAULT_MIN_ROUTE_PROBE_CORRELATION,
+                    min_route_probe_dbfs=DEFAULT_MIN_SOURCE_OPEN_DBFS,
+                    output_dir=root / "route-sweep-out",
+                    playback_gain_db=DEFAULT_PLAYBACK_GAIN_DB,
+                    run_id=DEFAULT_ROUTE_PROBE_SWEEP_RUN_ID,
+                    sample_rate_hz=[sample_rate_hz],
+                    score_warning_only=False,
+                    tail_s=0.0,
+                    triple=[("1", "2", "3")],
+                )
+            )
+        finally:
+            globals()["route_probe"] = original_route_probe
+        if sweep_result != 0:
+            raise RuntimeError("expected route probe sweep self-test fixture to pass")
+        sweep_report_path = (
+            root
+            / "route-sweep-out"
+            / "runs"
+            / DEFAULT_ROUTE_PROBE_SWEEP_RUN_ID
+            / "headphone-route-probe-sweep-report.json"
+        )
+        sweep_report = json.loads(sweep_report_path.read_text(encoding="utf-8"))
+        if sweep_report.get("release_proof") is not False:
+            raise RuntimeError("route probe sweep must not set release_proof")
+        if not bool(sweep_report.get("summary", {}).get("triage_candidate_found")):
+            raise RuntimeError("expected route probe sweep self-test to find a candidate")
+        json.dumps(sweep_report, allow_nan=False)
         original_portaudio_device_identity = globals()["portaudio_device_identity"]
         original_record_playback = globals()["record_playback"]
 
@@ -2241,6 +2792,48 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="allow source and headphone outputs to resolve to the same PortAudio device for explicit multi-channel hardware tests",
     )
     probe_parser.add_argument("--score-warning-only", action="store_true")
+    sweep_parser = subparsers.add_parser(
+        "sweep-routes",
+        help="try bounded listener-ear input, source output, and headphone output route probes",
+    )
+    sweep_parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    sweep_parser.add_argument("--run-id", default=DEFAULT_ROUTE_PROBE_SWEEP_RUN_ID)
+    sweep_parser.add_argument("--adapter-id", default=DEFAULT_ROUTE_PROBE_SWEEP_ADAPTER_ID)
+    sweep_parser.add_argument("--sample-rate-hz", type=int, action="append")
+    sweep_parser.add_argument("--duration-s", type=float, default=DEFAULT_ROUTE_PROBE_DURATION_S)
+    sweep_parser.add_argument("--channel-config", type=parse_channel_config, action="append")
+    sweep_parser.add_argument("--lead-s", type=float, default=DEFAULT_LEAD_S)
+    sweep_parser.add_argument("--tail-s", type=float, default=DEFAULT_TAIL_S)
+    sweep_parser.add_argument("--playback-gain-db", type=float, default=DEFAULT_PLAYBACK_GAIN_DB)
+    sweep_parser.add_argument("--max-peak-dbfs", type=float, default=DEFAULT_MAX_PEAK_DBFS)
+    sweep_parser.add_argument("--min-route-probe-dbfs", type=float, default=DEFAULT_MIN_SOURCE_OPEN_DBFS)
+    sweep_parser.add_argument(
+        "--min-route-probe-correlation",
+        type=float,
+        default=DEFAULT_MIN_ROUTE_PROBE_CORRELATION,
+    )
+    sweep_parser.add_argument(
+        "--max-route-probe-distortion-db",
+        type=float,
+        default=DEFAULT_MAX_ROUTE_PROBE_DISTORTION_DB,
+    )
+    sweep_parser.add_argument(
+        "--max-route-probe-clipped-samples",
+        type=int,
+        default=DEFAULT_MAX_ROUTE_PROBE_CLIPPED_SAMPLES,
+    )
+    sweep_parser.add_argument("--max-alignment-lag-ms", type=float, default=DEFAULT_MAX_ALIGNMENT_LAG_MS)
+    sweep_parser.add_argument(
+        "--allow-shared-output-device",
+        action="store_true",
+        help="allow source and headphone outputs to resolve to the same PortAudio device",
+    )
+    sweep_parser.add_argument("--max-triples", type=int, default=DEFAULT_ROUTE_PROBE_SWEEP_MAX_TRIPLES)
+    sweep_parser.add_argument("--max-attempts", type=int, default=DEFAULT_ROUTE_PROBE_SWEEP_MAX_ATTEMPTS)
+    sweep_parser.add_argument("--hostapi", action="append", default=[])
+    sweep_parser.add_argument("--include-cross-hostapi", action="store_true")
+    sweep_parser.add_argument("--triple", type=parse_route_triple, action="append")
+    sweep_parser.add_argument("--score-warning-only", action="store_true")
     virtual_parser = subparsers.add_parser(
         "virtual-lab",
         help="generate a deterministic synthetic listener-ear lab report that is never release proof",
@@ -2283,7 +2876,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     virtual_parser.add_argument("--max-alignment-lag-ms", type=float, default=DEFAULT_MAX_ALIGNMENT_LAG_MS)
     virtual_parser.add_argument("--score-warning-only", action="store_true")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.command == "sweep-routes":
+        if args.sample_rate_hz is None:
+            args.sample_rate_hz = list(DEFAULT_ROUTE_PROBE_SWEEP_SAMPLE_RATES)
+        if args.channel_config is None:
+            args.channel_config = list(DEFAULT_ROUTE_PROBE_SWEEP_CHANNEL_CONFIGS)
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2298,6 +2897,8 @@ def main(argv: list[str] | None = None) -> int:
         return capture(args)
     if args.command == "probe-route":
         return route_probe(args)
+    if args.command == "sweep-routes":
+        return sweep_routes(args)
     if args.command == "virtual-lab":
         return virtual_lab(args)
     raise AssertionError(f"unhandled command: {args.command}")

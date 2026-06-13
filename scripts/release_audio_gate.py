@@ -2624,6 +2624,7 @@ def self_test() -> None:
         guided_headphone = root / "guided-headphone.json"
         mismatched_guided_headphone = root / "mismatched-guided-headphone.json"
         hybrid_capture_headphone = root / "hybrid-capture-headphone.json"
+        route_sweep_headphone = root / "route-sweep-headphone.json"
         virtual_lab_headphone = root / "virtual-lab-headphone.json"
         qualification_room = root / "qualification-room.json"
         sweep_room = root / "sweep-room.json"
@@ -2733,6 +2734,27 @@ def self_test() -> None:
             mismatch_guided_fingerprint=True,
         )
         _write_headphone_isolation_fixture_report(hybrid_capture_headphone, hybrid_capture_source=True)
+        _write_json(
+            route_sweep_headphone,
+            _report(
+                True,
+                [{"name": "headphone_route_probe_sweep_candidate_found", "passed": True}],
+                fixture_kind="headphone_earpiece_route_probe_sweep",
+                measurement_kind="headphone_earpiece_route_probe_sweep_triage",
+                release_proof=False,
+                benchmarks={
+                    "headphone_earpiece_route_probe_sweep": {
+                        "adapter_id": "unit_headphone_route_probe_sweep",
+                        "candidate_attempt": {"attempt_id": "unit-pass"},
+                        "summary": {
+                            "measurement_kind": "headphone_earpiece_route_probe_sweep_triage",
+                            "release_proof": False,
+                            "triage_candidate_found": True,
+                        },
+                    }
+                },
+            ),
+        )
         _write_headphone_isolation_fixture_report(virtual_lab_headphone)
         virtual_lab_payload = json.loads(virtual_lab_headphone.read_text(encoding="utf-8"))
         virtual_lab_benchmark = virtual_lab_payload["benchmarks"].pop(HEADPHONE_REQUIRED_BENCHMARK_NAME)
@@ -2971,6 +2993,18 @@ def self_test() -> None:
         report = build_report(release_results, prototype_results)
         if report["summary"]["passed"]:
             raise AssertionError("expected hybrid headphone capture backend/source metadata to fail")
+
+        route_sweep_headphone_args = argparse.Namespace(**vars(complete_args))
+        route_sweep_headphone_args.room_suppression_report = forged_room
+        route_sweep_headphone_args.headphone_isolation_report = route_sweep_headphone
+        release_results, prototype_results = evaluate(route_sweep_headphone_args)
+        report = build_report(release_results, prototype_results)
+        failed = {gate.name: gate.message for gate in release_results if not gate.passed}
+        route_sweep_message = failed.get("playback_source_suppression_evidence", "")
+        if report["summary"]["passed"] or not route_sweep_message:
+            raise AssertionError("expected headphone route sweep report to fail release gate")
+        if "fixture_kind" not in route_sweep_message or "release_proof" not in route_sweep_message:
+            raise AssertionError("expected headphone route sweep rejection to cite release metadata")
 
         virtual_lab_headphone_args = argparse.Namespace(**vars(complete_args))
         virtual_lab_headphone_args.room_suppression_report = forged_room

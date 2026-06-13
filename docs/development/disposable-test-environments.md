@@ -373,8 +373,9 @@ pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-c
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-list-devices
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-virtual-lab
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --headphone-device-label "Sony WH-1000XM6 over-ear headphones" --isolation-fixture-label "WH-1000XM6 left earcup sealed around listener-ear microphone" --measurement-microphone-label "USB/lavalier listener-ear microphone placed inside earcup"
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-sweep-routes --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --headphone-device-label "placeholder REPLACE_WITH_HEADPHONE_MODEL" --isolation-fixture-label "placeholder REPLACE_WITH_EARCUP_AND_MIC_POSITION" --measurement-microphone-label "placeholder REPLACE_WITH_MIC_MODEL_AND_POSITION"
 python scripts/run_real_room_playback_suppression.py probe-route --input-device 1 --output-device 3 --sample-rate-hz 16000 --duration-s 2 --playback-gain-db -18 --score-warning-only
 python scripts/run_real_room_playback_suppression.py sweep-routes --pair 1:3 --pair 17:14 --sample-rate-hz 16000 --sample-rate-hz 48000 --channel-config 1:2 --channel-config 2:2 --max-attempts 8 --playback-gain-db -18 --score-warning-only
 python scripts/run_real_room_playback_suppression.py sweep-devices --pair 12:10 --sample-rate-hz 48000 --max-reference-duration-s 3 --playback-gain-db -18 --score-warning-only
@@ -446,6 +447,13 @@ reference-fidelity metrics, artifact hashes, clipping gates, distinct source/hea
 identity, and a byte-clone check. Passing it only means the route is worth trying with the full
 guided capture; add `--score-warning-only` only to collect a failed diagnostic report and do not
 advance unless `summary.passed=true`.
+Use `sweep-routes` before `probe-route` when device indexes or host APIs are uncertain. It writes
+`artifacts/audio_eval/runs/headphone-earpiece-route-probe-sweep/headphone-route-probe-sweep-report.json`
+with every attempted listener-ear input/source output/headphone output triple, failed gates,
+best-scored attempt, and candidate attempt. It is also `release_proof=false`; rerun any candidate as a
+single `probe-route`, then run guided capture. If the sweep tries multiple sample rates or channel
+configs, copy the chosen `candidate_attempt`'s exact `sample_rate_hz`, `input_channels`, and
+`output_channels` into both follow-up commands.
 The guided capture command records source-open and source-isolated through the same source output
 route, records translated playback through the headphone output, and embeds PortAudio device
 snapshots, a device-path fingerprint, per-take levels, clipping counts, and hashes. Placeholder labels

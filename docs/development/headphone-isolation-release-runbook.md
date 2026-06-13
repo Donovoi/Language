@@ -81,10 +81,20 @@ with the real USB/lav/recorder input when you have that hardware.
 
 ## Physical Test Commands
 
-Probe first. This command must pass without `--score-warning-only` before capture is worth running:
+Sweep uncertain routes first. This command is expected to produce a triage report; it is not release
+evidence, and `--score-warning-only` is acceptable here because the goal is to preserve diagnostics:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device 17 --source-output-device 14 --headphone-output-device 16 --sample-rate-hz 48000 --playback-gain-db -18
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-sweep-routes --triple 17:14:16 --sample-rate-hz 48000 --channel-config 1:2 --playback-gain-db -18 --score-warning-only
+```
+
+Use the sweep's `candidate_attempt` only to choose the next single route. Then probe that exact route.
+Copy the candidate's exact `sample_rate_hz`, `input_channels`, and `output_channels` into both
+`probe-route` and `capture`. This command must pass without `--score-warning-only` before capture is
+worth running:
+
+```powershell
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device 17 --source-output-device 14 --headphone-output-device 16 --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --playback-gain-db -18
 ```
 
 If it fails:
@@ -97,7 +107,7 @@ If it fails:
 After the probe passes, run guided capture:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device 17 --source-output-device 14 --headphone-output-device 16 --sample-rate-hz 48000 --playback-gain-db -18 --headphone-device-label "Sony WH-1000XM6 over-ear headphones" --isolation-fixture-label "WH-1000XM6 left earcup sealed over built-in laptop microphone array" --measurement-microphone-label "built-in laptop microphone array used as improvised listener-ear microphone"
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device 17 --source-output-device 14 --headphone-output-device 16 --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --playback-gain-db -18 --headphone-device-label "Sony WH-1000XM6 over-ear headphones" --isolation-fixture-label "WH-1000XM6 left earcup sealed over built-in laptop microphone array" --measurement-microphone-label "built-in laptop microphone array used as improvised listener-ear microphone"
 ```
 
 Then run the release gate:

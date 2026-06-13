@@ -119,7 +119,8 @@ make real-room-playback-suppression-sweep-devices
 make real-room-playback-suppression-check
 make headphone-isolation-contract-check
 make headphone-isolation-list-devices
-HEADPHONE_ISOLATION_PROBE_ROUTE_ARGS='--measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT' make headphone-isolation-probe-route
+HEADPHONE_ISOLATION_SWEEP_ROUTES_ARGS='--triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only' make headphone-isolation-sweep-routes
+HEADPHONE_ISOLATION_PROBE_ROUTE_ARGS='--measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2' make headphone-isolation-probe-route
 make headphone-isolation-virtual-lab
 make audio-eval-purge
 ```
@@ -169,7 +170,8 @@ pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-s
 pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-check
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-list-devices
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-sweep-routes --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-virtual-lab
 ```
 
@@ -187,8 +189,12 @@ Run `probe-route` before speech qualification when the route is uncertain. It wr
 `release_proof=false`, a chirp sentinel reference, recording hashes, matched confidence, lag, gain,
 clipping, and route errors. A passing route probe is only a prerequisite diagnostic.
 For the private-listener fallback path, use the guided headphone/earpiece capture after listing
-devices and probing the candidate routes. The probe plays a short chirp through the source output and
-headphone output, records with the listener-ear measurement input, and writes
+devices and probing the candidate routes. When the route is uncertain, `sweep-routes` tries bounded
+listener-ear input/source output/headphone output triples and writes
+`artifacts/audio_eval/runs/headphone-earpiece-route-probe-sweep/headphone-route-probe-sweep-report.json`
+with `release_proof=false`; use its best candidate only as route triage. The single-route probe plays
+a short chirp through the source output and headphone output, records with the listener-ear
+measurement input, and writes
 `artifacts/audio_eval/runs/headphone-earpiece-route-probe/headphone-route-probe-report.json` with
 `release_proof=false`; it is route triage, not release evidence. Proceed to guided capture only when
 the command exits successfully and the report has `summary.passed=true`. Add `--score-warning-only`
@@ -209,9 +215,13 @@ The virtual lab should pass its own scorer gates and fail the release gate. For 
 evidence, use real device indexes from `headphone-isolation-list-devices`, then run:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --headphone-device-label "Sony WH-1000XM6 over-ear headphones" --isolation-fixture-label "WH-1000XM6 left earcup sealed around listener-ear microphone" --measurement-microphone-label "USB/lavalier listener-ear microphone placed inside earcup"
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-sweep-routes --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --headphone-device-label "placeholder REPLACE_WITH_HEADPHONE_MODEL" --isolation-fixture-label "placeholder REPLACE_WITH_EARCUP_AND_MIC_POSITION" --measurement-microphone-label "placeholder REPLACE_WITH_MIC_MODEL_AND_POSITION"
 ```
+
+If you let `sweep-routes` try multiple sample rates or channel configs, copy the winning
+`candidate_attempt` values into both `probe-route` and `capture`.
 
 The virtual lab is development evidence only: it writes
 `artifacts/audio_eval/runs/headphone-earpiece-virtual-lab/headphone-virtual-lab-report.json` with
