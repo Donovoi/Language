@@ -471,12 +471,15 @@ room-wide cancellation.
 If host routing remains unreliable, `headphone-isolation-prepare-manual` writes
 `artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-manifest.json` plus the
 source and translated reference WAVs. Record the three listener-ear WAVs named in that manifest with a
-phone, USB mic, or external recorder, export mono 16-bit PCM WAV at the kit sample rate, trim pre-roll
-so playback starts within 500 ms of recording start, then run `headphone-isolation-check-manual`
-without warning-only before scoring. The doctor writes `manual-recording-status.json` and fails until
-the manifest, reference hashes, sample rate, mono 16-bit PCM format, and minimum recording durations
-are ready, and until `check-manual` receives specific hardware and fixture labels matching the later
-`headphone-isolation-score-manual` command.
+phone, USB mic, or external recorder; `headphone-isolation-play-manual` can optionally play the
+manifest references through the source and headphone outputs and writes a non-release
+`manual-playback-log.json`. The playback helper requires explicit source/headphone output devices
+unless `--output-device` or `--allow-default-output` is passed deliberately. Export mono 16-bit PCM
+WAV at the kit sample rate, trim pre-roll so playback starts within 500 ms of recording start, then
+run `headphone-isolation-check-manual` without warning-only before scoring. The doctor writes
+`manual-recording-status.json` and fails until the manifest, reference hashes, sample rate, mono
+16-bit PCM format, and minimum recording durations are ready, and until `check-manual` receives
+specific hardware and fixture labels matching the later `headphone-isolation-score-manual` command.
 
 ## Release Audio Evidence Gate
 

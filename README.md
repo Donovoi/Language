@@ -233,8 +233,13 @@ If Bluetooth or Windows routing blocks guided capture, use `headphone-isolation-
 instead. It writes `source-reference.wav`, `translated-playback-reference.wav`, and
 `manual-recording-manifest.json` under
 `artifacts/audio_eval/runs/headphone-earpiece-manual-kit/`; record the three expected listener-ear
-WAVs named in that manifest with a phone/USB mic, export mono 16-bit PCM WAV at the kit sample rate,
-trim pre-roll so playback starts within 500 ms of recording start, then run
+WAVs named in that manifest with a phone/USB mic. The optional
+`headphone-isolation-play-manual` helper can play the exact manifest references through the source
+and headphone outputs while the external recorder is rolling; it requires explicit output devices
+unless you deliberately pass `--output-device` or `--allow-default-output`. Its
+`manual-playback-log.json` is `release_proof=false` and is not release evidence. Export the
+recordings as mono 16-bit PCM WAV at the kit sample rate, trim pre-roll so playback starts within
+500 ms of recording start, then run
 `headphone-isolation-check-manual` before scoring. It writes
 `manual-recording-status.json` and exits nonzero until the manifest, reference WAVs, and three
 recordings are ready and specific score labels have been supplied. Use `--score-warning-only` before
