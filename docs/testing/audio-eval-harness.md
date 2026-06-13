@@ -589,12 +589,12 @@ source and headphones, was too quiet, clipped, or heard audio that did not match
 reference because of processing or routing mismatch.
 When PortAudio routing is the blocker, `headphone-isolation-prepare-manual` creates non-release
 reference WAVs and `manual-recording-manifest.json` for a phone/USB mic/external recorder flow. The
-manual kit remains `release_proof=false`; only `headphone-isolation-score` over real listener-ear,
-mono 16-bit PCM WAV recordings trimmed within the 500 ms release alignment window can write the
-release-gated `headphone-isolation-report.json`. Run `headphone-isolation-check-manual` after
-recording and before scoring; it writes `manual-recording-status.json` and blocks until the manifest,
-reference hashes, WAV headers, sample rate, minimum durations, and non-placeholder score labels are
-coherent.
+manual kit remains `release_proof=false`; use `headphone-isolation-score-manual` after collecting
+real listener-ear, mono 16-bit PCM WAV recordings trimmed within the 500 ms release alignment window
+to write the release-gated `headphone-isolation-report.json`. Run `headphone-isolation-check-manual`
+after recording and before scoring; it writes `manual-recording-status.json` and blocks until the
+manifest, reference hashes, WAV headers, sample rate, minimum durations, and non-placeholder score
+labels are coherent.
 
 ## Release Audio Evidence Gate
 

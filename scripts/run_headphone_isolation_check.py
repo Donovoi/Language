@@ -2288,21 +2288,13 @@ def prepare_manual_kit(args: argparse.Namespace) -> int:
     score_args = [
         "python",
         "scripts/run_headphone_isolation_check.py",
-        "score",
+        "score-manual",
         "--output-dir",
         str(args.output_dir),
         "--run-id",
         str(args.score_run_id),
-        "--source-reference",
-        str(source_reference_path),
-        "--source-open-ear-recording",
-        str(source_open_path),
-        "--source-isolated-ear-recording",
-        str(source_isolated_path),
-        "--translated-playback-reference",
-        str(translated_reference_path),
-        "--translated-headphone-recording",
-        str(translated_recording_path),
+        "--manifest",
+        str(manifest_path),
         "--headphone-device-label",
         "placeholder REPLACE_WITH_HEADPHONE_MODEL",
         "--isolation-fixture-label",
@@ -2630,6 +2622,73 @@ def check_manual_recordings(args: argparse.Namespace) -> int:
     return 0 if ready or args.score_warning_only else 1
 
 
+def score_command_option(score_command: list[Any], flag: str) -> str | None:
+    for index, value in enumerate(score_command[:-1]):
+        if value == flag:
+            return str(score_command[index + 1])
+    return None
+
+
+def load_manual_manifest(manifest_path: Path) -> dict[str, Any]:
+    loaded = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise ValueError(f"{manifest_path} must contain a JSON object")
+    return loaded
+
+
+def score_manual_recordings(args: argparse.Namespace) -> int:
+    manifest_path = Path(args.manifest)
+    status_result = check_manual_recordings(
+        argparse.Namespace(
+            headphone_device_label=args.headphone_device_label,
+            isolation_fixture_label=args.isolation_fixture_label,
+            json=False,
+            manifest=manifest_path,
+            measurement_microphone_label=args.measurement_microphone_label,
+            report=args.status_report,
+            score_warning_only=False,
+        )
+    )
+    if status_result != 0:
+        return status_result
+
+    manifest = load_manual_manifest(manifest_path)
+    artifacts = manifest.get("artifact_paths")
+    artifacts = artifacts if isinstance(artifacts, dict) else {}
+    expected_recordings = manifest.get("expected_recording_paths")
+    expected_recordings = expected_recordings if isinstance(expected_recordings, dict) else {}
+    score_command = manifest.get("score_command")
+    score_command = score_command if isinstance(score_command, list) else []
+
+    def required_path(container: dict[str, Any], key: str) -> Path:
+        return resolve_manual_manifest_path(manifest_path, container.get(key))
+
+    score_args = argparse.Namespace(
+        adapter_id=args.adapter_id,
+        headphone_device_label=args.headphone_device_label,
+        isolation_fixture_label=args.isolation_fixture_label,
+        max_alignment_lag_ms=args.max_alignment_lag_ms,
+        max_translated_distortion_db=args.max_translated_distortion_db,
+        measurement_microphone_label=args.measurement_microphone_label,
+        min_measurement_duration_s=args.min_measurement_duration_s,
+        min_source_isolation_db=args.min_source_isolation_db,
+        min_source_open_correlation=args.min_source_open_correlation,
+        min_source_open_dbfs=args.min_source_open_dbfs,
+        min_translated_correlation=args.min_translated_correlation,
+        min_translated_dbfs=args.min_translated_dbfs,
+        output_dir=Path(args.output_dir or score_command_option(score_command, "--output-dir") or DEFAULT_OUTPUT_DIR),
+        procedure_note=args.procedure_note,
+        run_id=args.run_id or score_command_option(score_command, "--run-id") or DEFAULT_RUN_ID,
+        score_warning_only=args.score_warning_only,
+        source_isolated_ear_recording=required_path(expected_recordings, "source_isolated_ear_recording"),
+        source_open_ear_recording=required_path(expected_recordings, "source_open_ear_recording"),
+        source_reference=required_path(artifacts, "source_reference"),
+        translated_headphone_recording=required_path(expected_recordings, "translated_headphone_recording"),
+        translated_playback_reference=required_path(artifacts, "translated_playback_reference"),
+    )
+    return score(score_args)
+
+
 def capture(args: argparse.Namespace) -> int:
     for field in ("headphone_device_label", "isolation_fixture_label", "measurement_microphone_label"):
         if not specific_label(getattr(args, field)):
@@ -2951,8 +3010,8 @@ def self_test() -> int:
         for key in ("source_reference", "translated_playback_reference"):
             if not Path(manual_manifest["artifact_paths"][key]).exists():
                 raise RuntimeError(f"manual recording kit missing {key}")
-        if "score" not in manual_manifest.get("score_command", []):
-            raise RuntimeError("manual recording kit should include a score command")
+        if "score-manual" not in manual_manifest.get("score_command", []):
+            raise RuntimeError("manual recording kit should include a score-manual command")
         if not manual_manifest.get("expected_recording_paths", {}).get("source_open_ear_recording"):
             raise RuntimeError("manual recording kit should name expected recording paths")
         missing_manual_result = check_manual_recordings(
@@ -2970,6 +3029,30 @@ def self_test() -> int:
         )
         if bool(missing_manual_status.get("summary", {}).get("manual_recordings_ready_for_score_input")):
             raise RuntimeError("expected manual recording status to reject missing listener-ear recordings")
+        missing_score_manual_result = score_manual_recordings(
+            argparse.Namespace(
+                adapter_id=DEFAULT_ADAPTER_ID,
+                headphone_device_label="unit headphones",
+                isolation_fixture_label="unit sealed-ear fixture",
+                manifest=manual_manifest_path,
+                max_alignment_lag_ms=DEFAULT_MAX_ALIGNMENT_LAG_MS,
+                max_translated_distortion_db=DEFAULT_MAX_TRANSLATED_DISTORTION_DB,
+                measurement_microphone_label="unit ear microphone",
+                min_measurement_duration_s=DEFAULT_MIN_MEASUREMENT_DURATION_S,
+                min_source_isolation_db=DEFAULT_MIN_SOURCE_ISOLATION_DB,
+                min_source_open_correlation=DEFAULT_MIN_SOURCE_OPEN_CORRELATION,
+                min_source_open_dbfs=DEFAULT_MIN_SOURCE_OPEN_DBFS,
+                min_translated_correlation=DEFAULT_MIN_TRANSLATED_CORRELATION,
+                min_translated_dbfs=DEFAULT_MIN_TRANSLATED_DBFS,
+                output_dir=root / "missing-manual-score-out",
+                procedure_note="unit external listener-ear manual recording",
+                run_id="missing-unit-manual-score",
+                score_warning_only=True,
+                status_report=manual_manifest_path.parent / "manual-recording-status-score-manual-missing.json",
+            )
+        )
+        if missing_score_manual_result == 0:
+            raise RuntimeError("score-manual warning-only must not bypass missing listener-ear recordings")
         expected_recordings = manual_manifest.get("expected_recording_paths", {})
         write_mono_wav(
             Path(expected_recordings["source_open_ear_recording"]),
@@ -2978,7 +3061,7 @@ def self_test() -> int:
         )
         write_mono_wav(
             Path(expected_recordings["source_isolated_ear_recording"]),
-            add_padding(source_isolated, sample_rate_hz, 0.1, 0.1),
+            add_padding(source * db_to_linear(-19.0), sample_rate_hz, 0.1, 0.1),
             sample_rate_hz,
         )
         write_mono_wav(
@@ -3005,6 +3088,30 @@ def self_test() -> int:
             raise RuntimeError("manual recording status must not be score-ready with placeholder labels")
         if int(placeholder_manual_status.get("summary", {}).get("placeholder_label_count") or 0) <= 0:
             raise RuntimeError("manual recording status should warn about placeholder score-command labels")
+        placeholder_score_manual_result = score_manual_recordings(
+            argparse.Namespace(
+                adapter_id=DEFAULT_ADAPTER_ID,
+                headphone_device_label="placeholder REPLACE_WITH_HEADPHONE_MODEL",
+                isolation_fixture_label="placeholder REPLACE_WITH_EARCUP_AND_MIC_POSITION",
+                manifest=manual_manifest_path,
+                max_alignment_lag_ms=DEFAULT_MAX_ALIGNMENT_LAG_MS,
+                max_translated_distortion_db=DEFAULT_MAX_TRANSLATED_DISTORTION_DB,
+                measurement_microphone_label="placeholder REPLACE_WITH_MIC_MODEL_AND_POSITION",
+                min_measurement_duration_s=DEFAULT_MIN_MEASUREMENT_DURATION_S,
+                min_source_isolation_db=DEFAULT_MIN_SOURCE_ISOLATION_DB,
+                min_source_open_correlation=DEFAULT_MIN_SOURCE_OPEN_CORRELATION,
+                min_source_open_dbfs=DEFAULT_MIN_SOURCE_OPEN_DBFS,
+                min_translated_correlation=DEFAULT_MIN_TRANSLATED_CORRELATION,
+                min_translated_dbfs=DEFAULT_MIN_TRANSLATED_DBFS,
+                output_dir=root / "placeholder-manual-score-out",
+                procedure_note="unit external listener-ear manual recording",
+                run_id="placeholder-unit-manual-score",
+                score_warning_only=True,
+                status_report=manual_manifest_path.parent / "manual-recording-status-score-manual-placeholder.json",
+            )
+        )
+        if placeholder_score_manual_result == 0:
+            raise RuntimeError("score-manual warning-only must not bypass placeholder score labels")
         ready_manual_result = check_manual_recordings(
             argparse.Namespace(
                 headphone_device_label="unit headphones",
@@ -3031,6 +3138,43 @@ def self_test() -> int:
             raise RuntimeError("manual recording status must not set release_proof")
         if int(ready_manual_status.get("summary", {}).get("placeholder_label_count") or 0) != 0:
             raise RuntimeError("manual recording status should clear placeholder labels when explicit labels are supplied")
+        manual_score_result = score_manual_recordings(
+            argparse.Namespace(
+                adapter_id=DEFAULT_ADAPTER_ID,
+                headphone_device_label="unit headphones",
+                isolation_fixture_label="unit sealed-ear fixture",
+                manifest=manual_manifest_path,
+                max_alignment_lag_ms=DEFAULT_MAX_ALIGNMENT_LAG_MS,
+                max_translated_distortion_db=DEFAULT_MAX_TRANSLATED_DISTORTION_DB,
+                measurement_microphone_label="unit ear microphone",
+                min_measurement_duration_s=DEFAULT_MIN_MEASUREMENT_DURATION_S,
+                min_source_isolation_db=DEFAULT_MIN_SOURCE_ISOLATION_DB,
+                min_source_open_correlation=DEFAULT_MIN_SOURCE_OPEN_CORRELATION,
+                min_source_open_dbfs=DEFAULT_MIN_SOURCE_OPEN_DBFS,
+                min_translated_correlation=DEFAULT_MIN_TRANSLATED_CORRELATION,
+                min_translated_dbfs=DEFAULT_MIN_TRANSLATED_DBFS,
+                output_dir=root / "manual-score-out",
+                procedure_note="unit external listener-ear manual recording",
+                run_id="unit-manual-score",
+                score_warning_only=False,
+                status_report=manual_manifest_path.parent / "manual-recording-status-score-manual.json",
+            )
+        )
+        if manual_score_result != 0:
+            raise RuntimeError("expected score-manual self-test fixture to pass")
+        manual_score_report_path = (
+            root
+            / "manual-score-out"
+            / "runs"
+            / "unit-manual-score"
+            / "headphone-isolation-report.json"
+        )
+        manual_score_report = json.loads(manual_score_report_path.read_text(encoding="utf-8"))
+        if not bool(manual_score_report.get("summary", {}).get("passed")):
+            raise RuntimeError("expected score-manual report to pass")
+        if manual_score_report.get("release_proof") is not True:
+            raise RuntimeError("score-manual should produce the release-gated scorer report")
+        json.dumps(manual_score_report, allow_nan=False)
         missing_hash_manifest = json.loads(json.dumps(manual_manifest))
         missing_hash_manifest["artifact_hashes"].pop("source_reference", None)
         missing_hash_manifest_path = manual_manifest_path.parent / "manual-recording-manifest-missing-hash.json"
@@ -3055,6 +3199,30 @@ def self_test() -> int:
             raise RuntimeError("manual recording status must reject references without manifest hashes")
         if not any("missing manifest hash" in issue for issue in missing_hash_status.get("issues", [])):
             raise RuntimeError("manual recording status should explain missing manifest hashes")
+        missing_hash_score_manual_result = score_manual_recordings(
+            argparse.Namespace(
+                adapter_id=DEFAULT_ADAPTER_ID,
+                headphone_device_label="unit headphones",
+                isolation_fixture_label="unit sealed-ear fixture",
+                manifest=missing_hash_manifest_path,
+                max_alignment_lag_ms=DEFAULT_MAX_ALIGNMENT_LAG_MS,
+                max_translated_distortion_db=DEFAULT_MAX_TRANSLATED_DISTORTION_DB,
+                measurement_microphone_label="unit ear microphone",
+                min_measurement_duration_s=DEFAULT_MIN_MEASUREMENT_DURATION_S,
+                min_source_isolation_db=DEFAULT_MIN_SOURCE_ISOLATION_DB,
+                min_source_open_correlation=DEFAULT_MIN_SOURCE_OPEN_CORRELATION,
+                min_source_open_dbfs=DEFAULT_MIN_SOURCE_OPEN_DBFS,
+                min_translated_correlation=DEFAULT_MIN_TRANSLATED_CORRELATION,
+                min_translated_dbfs=DEFAULT_MIN_TRANSLATED_DBFS,
+                output_dir=root / "missing-hash-manual-score-out",
+                procedure_note="unit external listener-ear manual recording",
+                run_id="missing-hash-unit-manual-score",
+                score_warning_only=True,
+                status_report=manual_manifest_path.parent / "manual-recording-status-score-manual-missing-hash.json",
+            )
+        )
+        if missing_hash_score_manual_result == 0:
+            raise RuntimeError("score-manual warning-only must not bypass missing manifest hashes")
         malformed_manifest = json.loads(json.dumps(manual_manifest))
         malformed_manifest["recording_requirements"]["sample_rate_hz"] = "not-a-sample-rate"
         malformed_manifest["min_artifact_duration_s"] = "not-a-duration"
@@ -3595,6 +3763,55 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     check_manual_parser.add_argument("--measurement-microphone-label")
     check_manual_parser.add_argument("--json", action="store_true")
     check_manual_parser.add_argument("--score-warning-only", action="store_true")
+    score_manual_parser = subparsers.add_parser(
+        "score-manual",
+        help="validate a manual recording manifest and score its listener-ear WAV artifacts",
+    )
+    score_manual_parser.add_argument(
+        "--manifest",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR
+        / "runs"
+        / DEFAULT_MANUAL_KIT_RUN_ID
+        / "manual-recording-manifest.json",
+    )
+    score_manual_parser.add_argument("--status-report", type=Path)
+    score_manual_parser.add_argument("--output-dir", type=Path)
+    score_manual_parser.add_argument("--run-id")
+    score_manual_parser.add_argument("--adapter-id", default=DEFAULT_ADAPTER_ID)
+    score_manual_parser.add_argument("--headphone-device-label", required=True)
+    score_manual_parser.add_argument("--isolation-fixture-label", required=True)
+    score_manual_parser.add_argument("--measurement-microphone-label", required=True)
+    score_manual_parser.add_argument(
+        "--min-measurement-duration-s",
+        type=float,
+        default=DEFAULT_MIN_MEASUREMENT_DURATION_S,
+    )
+    score_manual_parser.add_argument("--procedure-note", default="external listener-ear manual recording")
+    score_manual_parser.add_argument("--min-source-open-dbfs", type=float, default=DEFAULT_MIN_SOURCE_OPEN_DBFS)
+    score_manual_parser.add_argument("--min-translated-dbfs", type=float, default=DEFAULT_MIN_TRANSLATED_DBFS)
+    score_manual_parser.add_argument(
+        "--min-source-open-correlation",
+        type=float,
+        default=DEFAULT_MIN_SOURCE_OPEN_CORRELATION,
+    )
+    score_manual_parser.add_argument(
+        "--min-translated-correlation",
+        type=float,
+        default=DEFAULT_MIN_TRANSLATED_CORRELATION,
+    )
+    score_manual_parser.add_argument(
+        "--min-source-isolation-db",
+        type=float,
+        default=DEFAULT_MIN_SOURCE_ISOLATION_DB,
+    )
+    score_manual_parser.add_argument(
+        "--max-translated-distortion-db",
+        type=float,
+        default=DEFAULT_MAX_TRANSLATED_DISTORTION_DB,
+    )
+    score_manual_parser.add_argument("--max-alignment-lag-ms", type=float, default=DEFAULT_MAX_ALIGNMENT_LAG_MS)
+    score_manual_parser.add_argument("--score-warning-only", action="store_true")
     capture_parser = subparsers.add_parser(
         "capture",
         help="guide a host PortAudio measurement and then score the captured WAV artifacts",
@@ -3801,6 +4018,8 @@ def main(argv: list[str] | None = None) -> int:
         return prepare_manual_kit(args)
     if args.command == "check-manual":
         return check_manual_recordings(args)
+    if args.command == "score-manual":
+        return score_manual_recordings(args)
     if args.command == "capture":
         return capture(args)
     if args.command == "probe-route":
