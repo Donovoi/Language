@@ -46,7 +46,8 @@ Acceptable measurement setups:
 - Best: a USB lavalier, USB measurement mic, wired earbud mic, or phone-as-USB-mic placed inside or
   flush with the headphone earcup.
 - Good: an external recorder/phone records WAVs at the listener-ear point, then
-  `scripts/run_headphone_isolation_check.py score` scores those WAV files.
+  `scripts/run_headphone_isolation_check.py score-manual` validates the manifest and scores those
+  WAV files.
 - Improvised: place one headphone earcup over the laptop microphone array so the laptop mic acts as
   the listener-ear mic. This can be tried with the current hardware but is not as trustworthy as a
   real mic inside the earcup.
@@ -186,16 +187,19 @@ listener-ear recordings meet the minimum duration, and the score labels are no l
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-check-manual --headphone-device-label "Sony WH-1000XM6 over-ear headphones" --isolation-fixture-label "WH-1000XM6 left earcup sealed over listener-ear microphone" --measurement-microphone-label "USB lavalier microphone capsule flush with left earcup listener-ear position"
 ```
 
-Only score the real recordings after this command reports ready:
+Only score the real recordings after this command reports ready. The manifest-driven scorer reuses
+the reference and recording paths from the kit and writes the release-gated headphone isolation report:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-score --source-reference artifacts/audio_eval/runs/headphone-earpiece-manual-kit/source-reference.wav --source-open-ear-recording artifacts/audio_eval/runs/headphone-earpiece-manual-kit/source-open-ear-recording.wav --source-isolated-ear-recording artifacts/audio_eval/runs/headphone-earpiece-manual-kit/source-isolated-ear-recording.wav --translated-playback-reference artifacts/audio_eval/runs/headphone-earpiece-manual-kit/translated-playback-reference.wav --translated-headphone-recording artifacts/audio_eval/runs/headphone-earpiece-manual-kit/translated-headphone-recording.wav --headphone-device-label "Sony WH-1000XM6 over-ear headphones" --isolation-fixture-label "WH-1000XM6 left earcup sealed over listener-ear microphone" --measurement-microphone-label "USB lavalier microphone capsule flush with left earcup listener-ear position"
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-score-manual --headphone-device-label "Sony WH-1000XM6 over-ear headphones" --isolation-fixture-label "WH-1000XM6 left earcup sealed over listener-ear microphone" --measurement-microphone-label "USB lavalier microphone capsule flush with left earcup listener-ear position"
 ```
 
 The manual kit itself is not release evidence: it has `release_proof=false`. Only the scored report at
 `artifacts/audio_eval/runs/headphone-earpiece-isolation/headphone-isolation-report.json` can satisfy
 the release gate, and only if its WAV-derived metrics pass. Replace every `placeholder REPLACE_WITH_*`
-label with specific hardware and fixture text before treating the score as release evidence.
+label with specific hardware and fixture text before treating the score as release evidence. Use the
+lower-level `headphone-isolation-score` command only when intentionally overriding manifest paths or
+thresholds for diagnosis.
 
 After the probe passes, run guided capture:
 

@@ -239,7 +239,8 @@ trim pre-roll so playback starts within 500 ms of recording start, then run
 `manual-recording-status.json` and exits nonzero until the manifest, reference WAVs, and three
 recordings are ready and specific score labels have been supplied. Use `--score-warning-only` before
 recording if you only want a status report. After it reports score-ready, run
-`headphone-isolation-score` with the same headphone, microphone, and earcup-position labels.
+`headphone-isolation-score-manual` with the same headphone, microphone, and earcup-position labels.
+It reuses the manifest paths and invokes the release-gated headphone scorer.
 
 The virtual lab is development evidence only: it writes
 `artifacts/audio_eval/runs/headphone-earpiece-virtual-lab/headphone-virtual-lab-report.json` with

@@ -396,7 +396,7 @@ The `headphone-isolation-virtual-lab` command is a development-only scorer and a
 check. It should pass its own virtual gates and be rejected by `release_audio_gate.py`; physical
 release evidence must come from either `headphone-isolation-probe-route` plus
 `headphone-isolation-capture`, or `headphone-isolation-prepare-manual` plus
-`headphone-isolation-score`, with real listener-ear recording hardware.
+`headphone-isolation-score-manual`, with real listener-ear recording hardware.
 Use an explicit expected-failure assertion when checking the release gate rejection:
 
 ```powershell
@@ -434,10 +434,11 @@ PortAudio `Invalid number of channels`. Treat this as a host route/processing bl
 to tune cancellation math.
 
 For an honest private-listener release path, collect headphone/earpiece evidence with
-`scripts/run_headphone_isolation_check.py capture` when measuring on the host, or `score` when the five
-WAV artifacts come from a separate lab recorder. It requires a source reference, open-ear source
-control recording, isolated-ear source recording, translated playback reference, and translated
-headphone recording, plus specific headphone, listener-ear microphone, and physical fixture labels.
+`scripts/run_headphone_isolation_check.py capture` when measuring on the host, or `score-manual` when
+the listener-ear WAV artifacts come from a separate lab recorder and the manual manifest. It requires
+a source reference, open-ear source control recording, isolated-ear source recording, translated
+playback reference, and translated headphone recording, plus specific headphone, listener-ear
+microphone, and physical fixture labels.
 Use `virtual-lab` only for development and CI regression. It writes
 `artifacts/audio_eval/runs/headphone-earpiece-virtual-lab/headphone-virtual-lab-report.json` with
 `fixture_kind=headphone_earpiece_virtual_lab` and `release_proof=false`; `release_audio_gate.py` must
@@ -475,7 +476,7 @@ so playback starts within 500 ms of recording start, then run `headphone-isolati
 without warning-only before scoring. The doctor writes `manual-recording-status.json` and fails until
 the manifest, reference hashes, sample rate, mono 16-bit PCM format, and minimum recording durations
 are ready, and until `check-manual` receives specific hardware and fixture labels matching the later
-`headphone-isolation-score` command.
+`headphone-isolation-score-manual` command.
 
 ## Release Audio Evidence Gate
 
