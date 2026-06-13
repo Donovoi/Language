@@ -373,6 +373,7 @@ pwsh -NoProfile -File scripts/dev_container.ps1 real-room-playback-suppression-c
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-list-devices
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-virtual-lab
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-prepare-manual --sample-rate-hz 48000 --playback-gain-db -18
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-sweep-routes --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --headphone-device-label "placeholder REPLACE_WITH_HEADPHONE_MODEL" --isolation-fixture-label "placeholder REPLACE_WITH_EARCUP_AND_MIC_POSITION" --measurement-microphone-label "placeholder REPLACE_WITH_MIC_MODEL_AND_POSITION"
@@ -392,8 +393,9 @@ recordings within a bounded lag window, and recomputes calibration/reference fid
 metrics instead of trusting JSON fields alone.
 The `headphone-isolation-virtual-lab` command is a development-only scorer and artifact-plumbing
 check. It should pass its own virtual gates and be rejected by `release_audio_gate.py`; physical
-release evidence must come from `headphone-isolation-probe-route` and `headphone-isolation-capture`
-with real listener-ear recording hardware.
+release evidence must come from either `headphone-isolation-probe-route` plus
+`headphone-isolation-capture`, or `headphone-isolation-prepare-manual` plus
+`headphone-isolation-score`, with real listener-ear recording hardware.
 Use an explicit expected-failure assertion when checking the release gate rejection:
 
 ```powershell
@@ -464,6 +466,12 @@ and sub-second WAV bundles are rejected by the release gate. The report is writt
 `artifacts/audio_eval/runs/headphone-earpiece-isolation/headphone-isolation-report.json` and is
 accepted by the release gate only as `headphone_isolated_not_true_cancellation`, never as true
 room-wide cancellation.
+If host routing remains unreliable, `headphone-isolation-prepare-manual` writes
+`artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-manifest.json` plus the
+source and translated reference WAVs. Record the three listener-ear WAVs named in that manifest with a
+phone, USB mic, or external recorder, export mono 16-bit PCM WAV at the kit sample rate, trim pre-roll
+so playback starts within 500 ms of recording start, then run `headphone-isolation-score` with
+specific hardware and fixture labels to create the same release-gated headphone isolation report.
 
 ## Release Audio Evidence Gate
 

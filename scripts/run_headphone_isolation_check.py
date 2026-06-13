@@ -27,10 +27,12 @@ DEFAULT_RUN_ID = "headphone-earpiece-isolation"
 DEFAULT_ROUTE_PROBE_RUN_ID = "headphone-earpiece-route-probe"
 DEFAULT_ROUTE_PROBE_SWEEP_RUN_ID = "headphone-earpiece-route-probe-sweep"
 DEFAULT_VIRTUAL_LAB_RUN_ID = "headphone-earpiece-virtual-lab"
+DEFAULT_MANUAL_KIT_RUN_ID = "headphone-earpiece-manual-kit"
 DEFAULT_ADAPTER_ID = "listener_headphone_earpiece_isolation_measurement_v1"
 DEFAULT_ROUTE_PROBE_ADAPTER_ID = "listener_headphone_earpiece_route_probe_v1"
 DEFAULT_ROUTE_PROBE_SWEEP_ADAPTER_ID = "listener_headphone_earpiece_route_probe_sweep_v1"
 DEFAULT_VIRTUAL_LAB_ADAPTER_ID = "listener_headphone_earpiece_virtual_lab_v1"
+DEFAULT_MANUAL_KIT_ADAPTER_ID = "listener_headphone_earpiece_manual_kit_v1"
 DEFAULT_TTS_REPORT = DEFAULT_OUTPUT_DIR / "runs/same-voice-tts/voice-clone-report.json"
 DEFAULT_SAMPLE_RATE_HZ = 16000
 DEFAULT_ROUTE_PROBE_SWEEP_SAMPLE_RATES = (DEFAULT_SAMPLE_RATE_HZ, 48000)
@@ -72,7 +74,18 @@ CAPTURE_SOURCE_KIND_PORTAUDIO = "host_guided_listener_ear_playrec_measurement"
 CAPTURE_SOURCE_KIND_VIRTUAL = "synthetic_room_headphone_model"
 CAPTURE_BACKENDS = {CAPTURE_BACKEND_EXTERNAL, CAPTURE_BACKEND_PORTAUDIO}
 CAPTURE_SOURCE_KINDS = {CAPTURE_SOURCE_KIND_EXTERNAL, CAPTURE_SOURCE_KIND_PORTAUDIO}
-PLACEHOLDER_LABEL_PREFIXES = ("unspecified", "unknown", "todo", "placeholder", "virtual", "simulated", "synthetic")
+PLACEHOLDER_LABEL_PREFIXES = (
+    "unspecified",
+    "unknown",
+    "todo",
+    "placeholder",
+    "replace_with",
+    "replace-with",
+    "replace with",
+    "virtual",
+    "simulated",
+    "synthetic",
+)
 
 
 def linear_to_db(value: float) -> float:
@@ -329,11 +342,11 @@ def read_mono_wav(path: Path) -> tuple[np.ndarray, int]:
         sample_width = wav.getsampwidth()
         sample_rate_hz = wav.getframerate()
         frames = wav.readframes(wav.getnframes())
+    if channels != 1:
+        raise ValueError(f"{path} must be mono PCM_16 WAV")
     if sample_width != 2:
-        raise ValueError(f"{path} must be PCM_16 WAV")
+        raise ValueError(f"{path} must be mono PCM_16 WAV")
     samples = np.frombuffer(frames, dtype="<i2").astype(np.float32) / 32768.0
-    if channels > 1:
-        samples = samples.reshape(-1, channels).mean(axis=1).astype(np.float32)
     if samples.size <= 0:
         raise ValueError(f"{path} must contain frames")
     return samples.astype(np.float32), int(sample_rate_hz)
@@ -456,6 +469,29 @@ def limit_track_pair(
         return source_track.astype(np.float32), translated_track.astype(np.float32)
     max_samples = max(1, int(round(float(max_duration_s) * float(sample_rate_hz))))
     return source_track[:max_samples].astype(np.float32), translated_track[:max_samples].astype(np.float32)
+
+
+def limit_reference_segments(
+    segments: list[dict[str, Any]],
+    *,
+    sample_rate_hz: int,
+    max_duration_s: float,
+) -> list[dict[str, Any]]:
+    if max_duration_s <= 0.0:
+        return [dict(segment) for segment in segments]
+    max_samples = max(1, int(round(float(max_duration_s) * float(sample_rate_hz))))
+    limited: list[dict[str, Any]] = []
+    for segment in segments:
+        start_sample = int(segment.get("start_sample", 0))
+        end_sample = int(segment.get("end_sample", 0))
+        if start_sample >= max_samples:
+            continue
+        item = dict(segment)
+        if end_sample > max_samples:
+            item["end_sample"] = max_samples
+            item["truncated_by_max_reference_duration"] = True
+        limited.append(item)
+    return limited
 
 
 def build_route_probe_signal(sample_rate_hz: int, duration_s: float) -> np.ndarray:
@@ -1550,6 +1586,7 @@ def quality_gates(summary: dict[str, Any], args: argparse.Namespace) -> list[dic
     device_identity = bool(summary.get("device_path_identity_recorded"))
     device_fingerprint = str(summary.get("device_path_fingerprint", ""))
     identity_fingerprint = str(summary.get("measurement_identity_fingerprint", ""))
+    max_alignment_lag_ms = float(summary.get("max_alignment_lag_ms", float("inf")))
     release_proof = bool(summary["release_proof"])
     return [
         {
@@ -1617,6 +1654,15 @@ def quality_gates(summary: dict[str, Any], args: argparse.Namespace) -> list[dic
             "passed": min_duration >= float(args.min_measurement_duration_s),
             "threshold": f"all headphone isolation artifacts >= {float(args.min_measurement_duration_s):.3f}s",
             "value": min_duration,
+        },
+        {
+            "name": "headphone_release_alignment_window",
+            "passed": max_alignment_lag_ms <= DEFAULT_MAX_ALIGNMENT_LAG_MS,
+            "threshold": (
+                "release scoring alignment window must stay within the release gate recompute window "
+                f"<= {DEFAULT_MAX_ALIGNMENT_LAG_MS:.1f} ms"
+            ),
+            "value": max_alignment_lag_ms,
         },
         {
             "name": "open_ear_source_control_audible",
@@ -1752,6 +1798,7 @@ def score(args: argparse.Namespace) -> int:
         "device_info": getattr(args, "device_info", {}),
         "headphone_device_label": headphone_device_label,
         "isolation_fixture_label": isolation_fixture_label,
+        "max_alignment_lag_ms": float(args.max_alignment_lag_ms),
         "measurement_kind": MEASUREMENT_KIND,
         "measurement_identity_fingerprint": identity_fingerprint,
         "measurement_microphone_label": measurement_microphone_label,
@@ -2123,6 +2170,168 @@ def _capture_reference_tracks(args: argparse.Namespace) -> tuple[np.ndarray, np.
     return source, translated, "same_voice_or_fallback_tts_report", segments
 
 
+def prepare_manual_kit(args: argparse.Namespace) -> int:
+    run_dir = Path(args.output_dir) / "runs" / args.run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    source_raw, translated_raw, reference_source_kind, reference_segments = _capture_reference_tracks(args)
+    reference_segments = limit_reference_segments(
+        reference_segments,
+        sample_rate_hz=int(args.sample_rate_hz),
+        max_duration_s=float(args.max_reference_duration_s),
+    )
+    source_raw, translated_raw = limit_track_pair(
+        source_raw,
+        translated_raw,
+        sample_rate_hz=int(args.sample_rate_hz),
+        max_duration_s=float(args.max_reference_duration_s),
+    )
+    source_reference = add_padding(
+        apply_playback_gain(source_raw, float(args.playback_gain_db), float(args.max_peak_dbfs)),
+        int(args.sample_rate_hz),
+        float(args.lead_s),
+        float(args.tail_s),
+    )
+    translated_reference = add_padding(
+        apply_playback_gain(translated_raw, float(args.playback_gain_db), float(args.max_peak_dbfs)),
+        int(args.sample_rate_hz),
+        float(args.lead_s),
+        float(args.tail_s),
+    )
+    min_duration_s = min(source_reference.size, translated_reference.size) / float(args.sample_rate_hz)
+    if min_duration_s < float(args.min_measurement_duration_s):
+        raise ValueError("manual kit reference artifacts are shorter than the minimum measurement duration")
+
+    source_reference_path = run_dir / "source-reference.wav"
+    translated_reference_path = run_dir / "translated-playback-reference.wav"
+    source_open_path = run_dir / "source-open-ear-recording.wav"
+    source_isolated_path = run_dir / "source-isolated-ear-recording.wav"
+    translated_recording_path = run_dir / "translated-headphone-recording.wav"
+    manifest_path = run_dir / "manual-recording-manifest.json"
+    write_mono_wav(source_reference_path, source_reference, int(args.sample_rate_hz))
+    write_mono_wav(translated_reference_path, translated_reference, int(args.sample_rate_hz))
+    artifact_hashes = {
+        "source_reference": sha256_file(source_reference_path),
+        "translated_playback_reference": sha256_file(translated_reference_path),
+    }
+    score_args = [
+        "python",
+        "scripts/run_headphone_isolation_check.py",
+        "score",
+        "--output-dir",
+        str(args.output_dir),
+        "--run-id",
+        str(args.score_run_id),
+        "--source-reference",
+        str(source_reference_path),
+        "--source-open-ear-recording",
+        str(source_open_path),
+        "--source-isolated-ear-recording",
+        str(source_isolated_path),
+        "--translated-playback-reference",
+        str(translated_reference_path),
+        "--translated-headphone-recording",
+        str(translated_recording_path),
+        "--headphone-device-label",
+        "placeholder REPLACE_WITH_HEADPHONE_MODEL",
+        "--isolation-fixture-label",
+        "placeholder REPLACE_WITH_EARCUP_AND_MIC_POSITION",
+        "--measurement-microphone-label",
+        "placeholder REPLACE_WITH_MIC_MODEL_AND_POSITION",
+        "--procedure-note",
+        "external listener-ear manual recording",
+    ]
+    manifest = {
+        "schema_version": 1,
+        "generated_at_unix": int(time.time()),
+        "adapter_id": args.adapter_id,
+        "fixture_kind": "headphone_earpiece_manual_recording_kit",
+        "measurement_kind": "headphone_earpiece_manual_recording_kit",
+        "release_proof": False,
+        "reference_source_kind": reference_source_kind,
+        "sample_rate_hz": int(args.sample_rate_hz),
+        "min_artifact_duration_s": round(float(min_duration_s), 6),
+        "artifact_paths": {
+            "source_reference": str(source_reference_path),
+            "translated_playback_reference": str(translated_reference_path),
+        },
+        "artifact_hashes": artifact_hashes,
+        "expected_recording_paths": {
+            "source_open_ear_recording": str(source_open_path),
+            "source_isolated_ear_recording": str(source_isolated_path),
+            "translated_headphone_recording": str(translated_recording_path),
+        },
+        "recording_requirements": {
+            "format": "mono 16-bit PCM WAV",
+            "sample_rate_hz": int(args.sample_rate_hz),
+            "sync": (
+                "Trim recording pre-roll so the played reference begins within 500 ms of the recording start; "
+                "the release gate recomputes metrics with a 500 ms alignment window."
+            ),
+        },
+        "recording_steps": [
+            {
+                "name": "source_open_ear_recording",
+                "play": str(source_reference_path),
+                "record_to": str(source_open_path),
+                "instruction": (
+                    "Place the measurement mic at the listener-ear position with the headphone/earpiece "
+                    "removed or isolation disabled, then play the source reference through the original-source speaker."
+                ),
+            },
+            {
+                "name": "source_isolated_ear_recording",
+                "play": str(source_reference_path),
+                "record_to": str(source_isolated_path),
+                "instruction": (
+                    "Keep the same mic position, seal the headphone/earpiece over it, then play the same "
+                    "source reference through the original-source speaker."
+                ),
+            },
+            {
+                "name": "translated_headphone_recording",
+                "play": str(translated_reference_path),
+                "record_to": str(translated_recording_path),
+                "instruction": (
+                    "Keep the headphone/earpiece sealed over the listener-ear mic, then play the translated "
+                    "reference through the headphone/earpiece output."
+                ),
+            },
+        ],
+        "score_command": score_args,
+        "score_report_path": str(Path(args.output_dir) / "runs" / args.score_run_id / "headphone-isolation-report.json"),
+        "quality_bar": {
+            "min_source_open_dbfs": DEFAULT_MIN_SOURCE_OPEN_DBFS,
+            "min_translated_dbfs": DEFAULT_MIN_TRANSLATED_DBFS,
+            "min_source_open_correlation": DEFAULT_MIN_SOURCE_OPEN_CORRELATION,
+            "min_translated_correlation": DEFAULT_MIN_TRANSLATED_CORRELATION,
+            "min_source_isolation_db": DEFAULT_MIN_SOURCE_ISOLATION_DB,
+            "max_translated_distortion_db": DEFAULT_MAX_TRANSLATED_DISTORTION_DB,
+            "max_alignment_lag_ms": DEFAULT_MAX_ALIGNMENT_LAG_MS,
+        },
+        "reference_segments": reference_segments,
+        "detractor_loop": {
+            "strongest_objection": (
+                "This kit only prepares reference playback files. It does not prove microphone placement, "
+                "headphone seal, route fidelity, or source attenuation until real listener-ear recordings are scored."
+            ),
+            "verdict": "Keep release_proof=false; run score after recording physical listener-ear WAV artifacts.",
+        },
+    }
+    manifest = json_safe(manifest)
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    print(
+        "headphone/earpiece manual kit READY: "
+        f"duration_s={manifest['min_artifact_duration_s']}, sample_rate_hz={int(args.sample_rate_hz)}"
+    )
+    print(f"wrote source reference to {source_reference_path}")
+    print(f"wrote translated reference to {translated_reference_path}")
+    print(f"wrote manual recording manifest to {manifest_path}")
+    return 0
+
+
 def capture(args: argparse.Namespace) -> int:
     for field in ("headphone_device_label", "isolation_fixture_label", "measurement_microphone_label"):
         if not specific_label(getattr(args, field)):
@@ -2134,6 +2343,11 @@ def capture(args: argparse.Namespace) -> int:
     run_dir = Path(args.output_dir) / "runs" / args.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     source_raw, translated_raw, reference_source_kind, reference_segments = _capture_reference_tracks(args)
+    reference_segments = limit_reference_segments(
+        reference_segments,
+        sample_rate_hz=int(args.sample_rate_hz),
+        max_duration_s=float(args.max_reference_duration_s),
+    )
     source_raw, translated_raw = limit_track_pair(
         source_raw,
         translated_raw,
@@ -2289,6 +2503,8 @@ def self_test() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         sample_rate_hz = DEFAULT_SAMPLE_RATE_HZ
+        if specific_label("REPLACE_WITH_MIC_MODEL_AND_POSITION"):
+            raise RuntimeError("REPLACE_WITH labels must be rejected as placeholders")
         t = np.arange(sample_rate_hz, dtype=np.float64) / float(sample_rate_hz)
         source = (np.sin(2.0 * math.pi * 220.0 * t) * 0.25).astype(np.float32)
         translated = (np.sin(2.0 * math.pi * 330.0 * t) * 0.20).astype(np.float32)
@@ -2307,6 +2523,24 @@ def self_test() -> int:
         write_mono_wav(silent_source_isolated_path, np.zeros_like(source), sample_rate_hz)
         write_mono_wav(translated_path, translated, sample_rate_hz)
         write_mono_wav(translated_recording_path, translated_recording, sample_rate_hz)
+        stereo_path = root / "stereo.wav"
+        with wave.open(str(stereo_path), "wb") as wav:
+            wav.setnchannels(2)
+            wav.setsampwidth(2)
+            wav.setframerate(sample_rate_hz)
+            stereo_pcm = np.repeat(
+                np.round(source * 32767.0).astype("<i2").reshape(-1, 1),
+                2,
+                axis=1,
+            )
+            wav.writeframes(stereo_pcm.tobytes())
+        try:
+            read_mono_wav(stereo_path)
+        except ValueError as exc:
+            if "mono PCM_16 WAV" not in str(exc):
+                raise RuntimeError("expected stereo WAV rejection to explain mono PCM_16 requirement") from exc
+        else:
+            raise RuntimeError("expected stereo WAV to be rejected before release scoring")
         args = argparse.Namespace(
             adapter_id=DEFAULT_ADAPTER_ID,
             headphone_device_label="unit headphones",
@@ -2333,6 +2567,24 @@ def self_test() -> int:
         result = score(args)
         if result != 0:
             raise RuntimeError("expected headphone isolation self-test fixture to pass")
+        args.run_id = "wide-alignment-headphone-earpiece-isolation"
+        args.max_alignment_lag_ms = DEFAULT_MAX_ALIGNMENT_LAG_MS + 250.0
+        args.score_warning_only = True
+        result = score(args)
+        if result != 0:
+            raise RuntimeError("warning-only wide-alignment self-test should return 0")
+        wide_report_path = (
+            Path(args.output_dir)
+            / "runs"
+            / args.run_id
+            / "headphone-isolation-report.json"
+        )
+        wide_report = json.loads(wide_report_path.read_text(encoding="utf-8"))
+        wide_gates = {gate["name"]: gate for gate in wide_report.get("summary", {}).get("quality_gates", [])}
+        if bool(wide_gates["headphone_release_alignment_window"]["passed"]):
+            raise RuntimeError("expected wide release alignment self-test gate to fail")
+        args.max_alignment_lag_ms = DEFAULT_MAX_ALIGNMENT_LAG_MS
+        args.score_warning_only = False
         args.run_id = "failing-headphone-earpiece-isolation"
         args.source_isolated_ear_recording = source_open_path
         args.score_warning_only = True
@@ -2367,6 +2619,60 @@ def self_test() -> int:
         if bool(gates["headphone_core_metrics_finite"]["passed"]):
             raise RuntimeError("expected silent-isolated finite-metrics gate to fail")
         json.dumps(report, allow_nan=False)
+        manual_result = prepare_manual_kit(
+            argparse.Namespace(
+                adapter_id=DEFAULT_MANUAL_KIT_ADAPTER_ID,
+                gap_s=DEFAULT_GAP_S,
+                lead_s=0.1,
+                max_peak_dbfs=DEFAULT_MAX_PEAK_DBFS,
+                max_reference_duration_s=0.0,
+                min_measurement_duration_s=DEFAULT_MIN_MEASUREMENT_DURATION_S,
+                output_dir=root / "manual-kit-out",
+                playback_gain_db=DEFAULT_PLAYBACK_GAIN_DB,
+                run_id="unit-manual-kit",
+                sample_rate_hz=sample_rate_hz,
+                score_run_id=DEFAULT_RUN_ID,
+                source_reference=source_path,
+                tail_s=0.1,
+                translated_playback_reference=translated_path,
+                tts_report=DEFAULT_TTS_REPORT,
+            )
+        )
+        if manual_result != 0:
+            raise RuntimeError("expected manual recording kit self-test fixture to pass")
+        manual_manifest_path = (
+            root
+            / "manual-kit-out"
+            / "runs"
+            / "unit-manual-kit"
+            / "manual-recording-manifest.json"
+        )
+        manual_manifest = json.loads(manual_manifest_path.read_text(encoding="utf-8"))
+        if manual_manifest.get("release_proof") is not False:
+            raise RuntimeError("manual recording kit must not set release_proof")
+        for key in ("source_reference", "translated_playback_reference"):
+            if not Path(manual_manifest["artifact_paths"][key]).exists():
+                raise RuntimeError(f"manual recording kit missing {key}")
+        if "score" not in manual_manifest.get("score_command", []):
+            raise RuntimeError("manual recording kit should include a score command")
+        if not manual_manifest.get("expected_recording_paths", {}).get("source_open_ear_recording"):
+            raise RuntimeError("manual recording kit should name expected recording paths")
+        json.dumps(manual_manifest, allow_nan=False)
+        limited_segments = limit_reference_segments(
+            [
+                {"segment_index": 0, "start_sample": 0, "end_sample": 80},
+                {"segment_index": 1, "start_sample": 90, "end_sample": 140},
+                {"segment_index": 2, "start_sample": 120, "end_sample": 180},
+            ],
+            sample_rate_hz=100,
+            max_duration_s=1.0,
+        )
+        if [item["segment_index"] for item in limited_segments] != [0, 1]:
+            raise RuntimeError("expected manual reference segment metadata to drop segments outside the limit")
+        if limited_segments[-1].get("end_sample") != 100 or not limited_segments[-1].get(
+            "truncated_by_max_reference_duration"
+        ):
+            raise RuntimeError("expected manual reference segment metadata to mark truncated segments")
         route_args = argparse.Namespace(
             allow_shared_output_device=False,
             max_route_probe_clipped_samples=DEFAULT_MAX_ROUTE_PROBE_CLIPPED_SAMPLES,
@@ -2822,6 +3128,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     score_parser.add_argument("--max-alignment-lag-ms", type=float, default=DEFAULT_MAX_ALIGNMENT_LAG_MS)
     score_parser.add_argument("--score-warning-only", action="store_true")
+    manual_parser = subparsers.add_parser(
+        "prepare-manual",
+        help="prepare source/translated reference WAVs and a manifest for external listener-ear recording",
+    )
+    manual_parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    manual_parser.add_argument("--run-id", default=DEFAULT_MANUAL_KIT_RUN_ID)
+    manual_parser.add_argument("--score-run-id", default=DEFAULT_RUN_ID)
+    manual_parser.add_argument("--adapter-id", default=DEFAULT_MANUAL_KIT_ADAPTER_ID)
+    manual_parser.add_argument("--tts-report", type=Path, default=DEFAULT_TTS_REPORT)
+    manual_parser.add_argument("--source-reference", type=Path)
+    manual_parser.add_argument("--translated-playback-reference", type=Path)
+    manual_parser.add_argument("--sample-rate-hz", type=int, default=DEFAULT_SAMPLE_RATE_HZ)
+    manual_parser.add_argument("--gap-s", type=float, default=DEFAULT_GAP_S)
+    manual_parser.add_argument("--lead-s", type=float, default=DEFAULT_LEAD_S)
+    manual_parser.add_argument("--tail-s", type=float, default=DEFAULT_TAIL_S)
+    manual_parser.add_argument("--playback-gain-db", type=float, default=DEFAULT_PLAYBACK_GAIN_DB)
+    manual_parser.add_argument("--max-peak-dbfs", type=float, default=DEFAULT_MAX_PEAK_DBFS)
+    manual_parser.add_argument("--max-reference-duration-s", type=float, default=8.0)
+    manual_parser.add_argument(
+        "--min-measurement-duration-s",
+        type=float,
+        default=DEFAULT_MIN_MEASUREMENT_DURATION_S,
+    )
     capture_parser = subparsers.add_parser(
         "capture",
         help="guide a host PortAudio measurement and then score the captured WAV artifacts",
@@ -3024,6 +3353,8 @@ def main(argv: list[str] | None = None) -> int:
         return self_test()
     if args.command == "score":
         return score(args)
+    if args.command == "prepare-manual":
+        return prepare_manual_kit(args)
     if args.command == "capture":
         return capture(args)
     if args.command == "probe-route":
