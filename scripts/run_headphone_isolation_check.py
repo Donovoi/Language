@@ -25,15 +25,19 @@ import numpy as np
 
 DEFAULT_OUTPUT_DIR = Path("artifacts/audio_eval")
 DEFAULT_RUN_ID = "headphone-earpiece-isolation"
+DEFAULT_PREFLIGHT_RUN_ID = "headphone-earpiece-preflight"
 DEFAULT_ROUTE_PROBE_RUN_ID = "headphone-earpiece-route-probe"
 DEFAULT_ROUTE_PROBE_SWEEP_RUN_ID = "headphone-earpiece-route-probe-sweep"
 DEFAULT_VIRTUAL_LAB_RUN_ID = "headphone-earpiece-virtual-lab"
 DEFAULT_MANUAL_KIT_RUN_ID = "headphone-earpiece-manual-kit"
+DEFAULT_PREFLIGHT_REPORT = "headphone-preflight-report.json"
+DEFAULT_PREFLIGHT_MARKDOWN = "headphone-preflight-report.md"
 DEFAULT_MANUAL_STATUS_REPORT = "manual-recording-status.json"
 DEFAULT_MANUAL_CHECKLIST = "manual-recording-checklist.md"
 DEFAULT_MANUAL_PLAYBACK_LOG = "manual-playback-log.json"
 DEFAULT_MANUAL_IMPORT_LOG = "manual-import-log.json"
 DEFAULT_ADAPTER_ID = "listener_headphone_earpiece_isolation_measurement_v1"
+DEFAULT_PREFLIGHT_ADAPTER_ID = "listener_headphone_earpiece_preflight_v1"
 DEFAULT_ROUTE_PROBE_ADAPTER_ID = "listener_headphone_earpiece_route_probe_v1"
 DEFAULT_ROUTE_PROBE_SWEEP_ADAPTER_ID = "listener_headphone_earpiece_route_probe_sweep_v1"
 DEFAULT_VIRTUAL_LAB_ADAPTER_ID = "listener_headphone_earpiece_virtual_lab_v1"
@@ -66,6 +70,8 @@ DEFAULT_MAX_ALIGNMENT_LAG_MS = 500.0
 FIXTURE_KIND = "headphone_earpiece_isolation"
 BENCHMARK_NAME = "headphone_earpiece_isolation"
 MEASUREMENT_KIND = "headphone_earpiece_isolation"
+PREFLIGHT_FIXTURE_KIND = "headphone_earpiece_preflight"
+PREFLIGHT_MEASUREMENT_KIND = "headphone_earpiece_preflight"
 VIRTUAL_FIXTURE_KIND = "headphone_earpiece_virtual_lab"
 VIRTUAL_BENCHMARK_NAME = "headphone_earpiece_virtual_lab"
 VIRTUAL_MEASUREMENT_KIND = "headphone_earpiece_virtual_lab"
@@ -347,6 +353,592 @@ def candidate_route_triples(
     if max_triples > 0:
         return triples[:max_triples]
     return triples
+
+
+def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
+    lowered = text.lower()
+    return any(needle in lowered for needle in needles)
+
+
+HEADSET_TERMS = (
+    "airpods",
+    "bluetooth",
+    "bthhfenum",
+    "earbuds",
+    "hands-free",
+    "hands free",
+    "headset",
+    "wh-1000",
+)
+BUILTIN_INPUT_TERMS = (
+    "built-in",
+    "built in",
+    "integrated",
+    "intel smart sound",
+    "internal",
+    "microphone array",
+    "realtek",
+    "soundwire",
+)
+EXTERNAL_LISTENER_MIC_TERMS = (
+    "anker",
+    "atr",
+    "audio-technica",
+    "behringer",
+    "blue",
+    "elgato",
+    "focusrite",
+    "interface",
+    "lav",
+    "lavalier",
+    "line",
+    "measurement",
+    "q2u",
+    "recorder",
+    "rode",
+    "samson",
+    "scarlett",
+    "shure",
+    "usb",
+    "zoom",
+)
+HEADPHONE_OUTPUT_TERMS = (
+    "airpods",
+    "bluetooth",
+    "earbud",
+    "earpiece",
+    "headphone",
+    "headset",
+    "wh-1000",
+)
+SOURCE_OUTPUT_TERMS = (
+    "amd high definition",
+    "benq",
+    "display",
+    "hdmi",
+    "monitor",
+    "nvidia",
+    "realtek",
+    "soundwire",
+    "speaker",
+)
+
+
+def preflight_device_roles(device: dict[str, Any]) -> dict[str, bool]:
+    name = str(device.get("name") or "")
+    max_inputs = int(device.get("max_input_channels") or 0)
+    max_outputs = int(device.get("max_output_channels") or 0)
+    is_input = max_inputs > 0
+    is_output = max_outputs > 0
+    is_headset_mic = is_input and _contains_any(name, HEADSET_TERMS)
+    is_builtin_input = is_input and _contains_any(name, BUILTIN_INPUT_TERMS)
+    is_likely_external_input = (
+        is_input
+        and _contains_any(name, EXTERNAL_LISTENER_MIC_TERMS)
+        and not is_headset_mic
+        and not is_builtin_input
+    )
+    is_likely_headphone_output = is_output and _contains_any(name, HEADPHONE_OUTPUT_TERMS)
+    is_likely_source_output = is_output and _contains_any(name, SOURCE_OUTPUT_TERMS)
+    return {
+        "is_builtin_input": is_builtin_input,
+        "is_headset_mic": is_headset_mic,
+        "is_input": is_input,
+        "is_likely_external_input": is_likely_external_input,
+        "is_likely_headphone_output": is_likely_headphone_output,
+        "is_likely_source_output": is_likely_source_output,
+        "is_output": is_output,
+    }
+
+
+def preflight_role_labels(roles: dict[str, bool]) -> list[str]:
+    labels: list[str] = []
+    if roles.get("is_likely_external_input"):
+        labels.append("external_input_candidate_needs_listener_ear_placement")
+    if roles.get("is_headset_mic"):
+        labels.append("headset_mic_route_triage_only")
+    if roles.get("is_builtin_input"):
+        labels.append("builtin_or_array_mic_route_triage_only")
+    if roles.get("is_likely_headphone_output"):
+        labels.append("headphone_output_candidate")
+    if roles.get("is_likely_source_output"):
+        labels.append("source_output_candidate")
+    if roles.get("is_input") and not labels:
+        labels.append("input_candidate_unknown_placement")
+    if roles.get("is_output") and not any(label.endswith("output_candidate") for label in labels):
+        labels.append("output_candidate_unknown_role")
+    return labels
+
+
+def preflight_hostapis(sd: Any) -> list[dict[str, Any]]:
+    try:
+        hostapis = sd.query_hostapis()
+    except Exception as exc:  # pragma: no cover - host diagnostic only.
+        return [{"error": str(exc), "error_type": type(exc).__name__}]
+    rows: list[dict[str, Any]] = []
+    for index, info in enumerate(hostapis):
+        if not isinstance(info, dict):
+            try:
+                info = dict(info)
+            except Exception:
+                info = {"repr": repr(info)}
+        rows.append(
+            {
+                "default_input_device": info.get("default_input_device"),
+                "default_output_device": info.get("default_output_device"),
+                "device_count": info.get("device_count"),
+                "index": index,
+                "name": str(info.get("name", "")),
+            }
+        )
+    return rows
+
+
+def preflight_default_devices(sd: Any) -> dict[str, Any]:
+    try:
+        default_input, default_output = sd.default.device
+    except Exception as exc:  # pragma: no cover - host diagnostic only.
+        return {
+            "error": str(exc),
+            "error_type": type(exc).__name__,
+            "input_device": None,
+            "output_device": None,
+        }
+    return {
+        "input_device": default_input,
+        "output_device": default_output,
+    }
+
+
+def preflight_devices(sd: Any) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, info in enumerate(sd.query_devices()):
+        if not isinstance(info, dict):
+            try:
+                info = dict(info)
+            except Exception:
+                continue
+        hostapi_index = info.get("hostapi")
+        api_name = hostapi_name(sd, hostapi_index)
+        row = {
+            "default_samplerate": report_float(info.get("default_samplerate"), 3),
+            "hostapi": hostapi_index,
+            "hostapi_name": api_name,
+            "index": int(info.get("index", index)),
+            "max_input_channels": int(info.get("max_input_channels") or 0),
+            "max_output_channels": int(info.get("max_output_channels") or 0),
+            "name": " ".join(str(info.get("name", "")).split()),
+        }
+        roles = preflight_device_roles(row)
+        row["roles"] = preflight_role_labels(roles)
+        row["role_flags"] = roles
+        rows.append(row)
+    return rows
+
+
+def preflight_inventory_fingerprint(
+    *,
+    default_devices: dict[str, Any],
+    devices: list[dict[str, Any]],
+    hostapis: list[dict[str, Any]],
+    input_channels: int,
+    output_channels: int,
+    sample_rate_hz: int,
+) -> str:
+    payload = {
+        "default_devices": default_devices,
+        "devices": devices,
+        "hostapis": hostapis,
+        "input_channels": int(input_channels),
+        "output_channels": int(output_channels),
+        "sample_rate_hz": int(sample_rate_hz),
+    }
+    encoded = json.dumps(json_safe(payload), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def annotate_preflight_route_triples(
+    triples: list[dict[str, Any]],
+    devices: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    by_index = {int(device["index"]): device for device in devices}
+    annotated: list[dict[str, Any]] = []
+    for rank, triple in enumerate(triples, start=1):
+        item = dict(triple)
+        item["rank"] = rank
+        for field, prefix in (
+            ("input_device", "input"),
+            ("source_output_device", "source"),
+            ("headphone_output_device", "headphone"),
+        ):
+            try:
+                device = by_index.get(int(item[field]))
+            except (KeyError, TypeError, ValueError):
+                device = None
+            item[f"{prefix}_roles"] = list(device.get("roles", [])) if isinstance(device, dict) else []
+            if isinstance(device, dict):
+                item[f"{prefix}_name"] = device.get("name")
+                item[f"{prefix}_hostapi_name"] = device.get("hostapi_name")
+        annotated.append(item)
+    return annotated
+
+
+def preflight_quality_gates(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "headphone_preflight_not_release_proof",
+            "passed": summary.get("release_proof") is False,
+            "threshold": "preflight report must keep release_proof=false",
+            "value": summary.get("release_proof"),
+        },
+        {
+            "name": "headphone_preflight_devices_listed",
+            "passed": int(summary.get("device_count") or 0) > 0,
+            "threshold": "at least one PortAudio device listed",
+            "value": summary.get("device_count"),
+        },
+        {
+            "name": "headphone_preflight_input_candidate_found",
+            "passed": int(summary.get("input_candidate_count") or 0) > 0,
+            "threshold": "at least one device has enough input channels",
+            "value": summary.get("input_candidate_count"),
+        },
+        {
+            "name": "headphone_preflight_output_candidate_found",
+            "passed": int(summary.get("output_candidate_count") or 0) > 0,
+            "threshold": "at least one device has enough output channels",
+            "value": summary.get("output_candidate_count"),
+        },
+        {
+            "name": "headphone_preflight_distinct_output_routes_available",
+            "passed": bool(summary.get("distinct_output_routes_available")),
+            "threshold": "at least two distinct output devices for source and headphone routes",
+            "value": summary.get("distinct_output_routes_available"),
+        },
+        {
+            "name": "headphone_preflight_candidate_triple_found",
+            "passed": int(summary.get("candidate_route_triple_count") or 0) > 0,
+            "threshold": "at least one input/source/headphone route triple can be formed",
+            "value": summary.get("candidate_route_triple_count"),
+        },
+        {
+            "name": "headphone_preflight_physical_listener_ear_input_confirmed",
+            "passed": bool(summary.get("physical_listener_ear_input_confirmed")),
+            "threshold": "operator explicitly confirms the selected input is physically at the listener-ear point",
+            "value": {
+                "likely_external_input_count": summary.get("likely_external_input_count"),
+                "physical_listener_ear_input_confirmed": summary.get("physical_listener_ear_input_confirmed"),
+            },
+        },
+    ]
+
+
+def preflight_recommended_path(summary: dict[str, Any]) -> str:
+    if int(summary.get("input_candidate_count") or 0) <= 0:
+        return "manual_external_recorder_required"
+    if int(summary.get("output_candidate_count") or 0) <= 0:
+        return "manual_external_recorder_required"
+    if int(summary.get("candidate_route_triple_count") or 0) <= 0:
+        return "manual_external_recorder_preferred"
+    if not bool(summary.get("distinct_output_routes_available")):
+        return "manual_external_recorder_preferred"
+    if not bool(summary.get("physical_listener_ear_input_confirmed")):
+        return "guided_capture_possible_after_physical_input_confirmation"
+    if not bool(summary.get("likely_headphone_output_found")):
+        return "manual_external_recorder_preferred"
+    if not bool(summary.get("likely_source_output_found")):
+        return "manual_external_recorder_preferred"
+    return "guided_capture_possible"
+
+
+def preflight_command_hints(
+    first_candidate: dict[str, Any] | None,
+    args: argparse.Namespace,
+    *,
+    recommended_path: str,
+) -> dict[str, str]:
+    base = "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1"
+    python = "-Python $env:LANGUAGE_PYTHON"
+    hints = {
+        "manual_prepare": (
+            f"{base} -Action prepare-manual {python} --sample-rate-hz {int(args.sample_rate_hz)} "
+            f"--playback-gain-db {float(DEFAULT_PLAYBACK_GAIN_DB):g}"
+        ),
+        "preflight": (
+            f"{base} -Action preflight {python} --sample-rate-hz {int(args.sample_rate_hz)} "
+            f"--input-channels {int(args.input_channels)} --output-channels {int(args.output_channels)}"
+        ),
+    }
+    if recommended_path == "guided_capture_possible_after_physical_input_confirmation":
+        hints["confirm_physical_input_preflight"] = (
+            f"{base} -Action preflight {python} --sample-rate-hz {int(args.sample_rate_hz)} "
+            f"--input-channels {int(args.input_channels)} --output-channels {int(args.output_channels)} "
+            "--confirm-physical-listener-ear-input"
+        )
+    if first_candidate:
+        input_device = first_candidate.get("input_device")
+        source_device = first_candidate.get("source_output_device")
+        headphone_device = first_candidate.get("headphone_output_device")
+        probe_command = (
+            f"{base} -Action probe-route {python} --measurement-input-device {input_device} "
+            f"--source-output-device {source_device} --headphone-output-device {headphone_device} "
+            f"--sample-rate-hz {int(args.sample_rate_hz)} --input-channels {int(args.input_channels)} "
+            f"--output-channels {int(args.output_channels)} --playback-gain-db {float(DEFAULT_PLAYBACK_GAIN_DB):g}"
+        )
+        if recommended_path == "guided_capture_possible":
+            hints["probe_route"] = probe_command
+            hints["capture"] = (
+                f"{base} -Action capture {python} --measurement-input-device {input_device} "
+                f"--source-output-device {source_device} --headphone-output-device {headphone_device} "
+                f"--sample-rate-hz {int(args.sample_rate_hz)} --input-channels {int(args.input_channels)} "
+                f"--output-channels {int(args.output_channels)} --playback-gain-db {float(DEFAULT_PLAYBACK_GAIN_DB):g} "
+                "--headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel "
+                "--measurement-microphone-label $microphoneLabel"
+            )
+        else:
+            hints["route_probe_triage_only"] = probe_command + " --score-warning-only"
+    return hints
+
+
+def build_headphone_preflight_report(sd: Any, args: argparse.Namespace) -> dict[str, Any]:
+    if int(args.input_channels) <= 0:
+        raise ValueError("--input-channels must be positive")
+    if int(args.output_channels) <= 0:
+        raise ValueError("--output-channels must be positive")
+    if int(args.sample_rate_hz) <= 0:
+        raise ValueError("--sample-rate-hz must be positive")
+    hostapi_filters = list(args.hostapi or [])
+    devices = preflight_devices(sd)
+    hostapis = preflight_hostapis(sd)
+    default_devices = preflight_default_devices(sd)
+    filtered_inputs = [
+        device
+        for device in devices
+        if int(device.get("max_input_channels") or 0) >= int(args.input_channels)
+        and hostapi_matches(device, str(device.get("hostapi_name") or ""), hostapi_filters)
+    ]
+    filtered_outputs = [
+        device
+        for device in devices
+        if int(device.get("max_output_channels") or 0) >= int(args.output_channels)
+        and hostapi_matches(device, str(device.get("hostapi_name") or ""), hostapi_filters)
+    ]
+    triples = candidate_route_triples(
+        sd,
+        allow_shared_output_device=bool(args.allow_shared_output_device),
+        hostapis=hostapi_filters,
+        include_cross_hostapi=bool(args.include_cross_hostapi),
+        input_channels=int(args.input_channels),
+        max_triples=int(args.max_triples),
+        output_channels=int(args.output_channels),
+    )
+    annotated_triples = annotate_preflight_route_triples(triples, devices)
+    distinct_output_routes_available = len({int(device["index"]) for device in filtered_outputs}) >= 2
+    role_flags = [device.get("role_flags", {}) for device in devices]
+    summary = {
+        "adapter_id": args.adapter_id,
+        "allow_shared_output_device": bool(args.allow_shared_output_device),
+        "candidate_route_triple_count": len(annotated_triples),
+        "default_devices": default_devices,
+        "device_count": len(devices),
+        "distinct_output_routes_available": distinct_output_routes_available,
+        "hostapi_filters": hostapi_filters,
+        "include_cross_hostapi": bool(args.include_cross_hostapi),
+        "input_candidate_count": len(filtered_inputs),
+        "input_channels": int(args.input_channels),
+        "inventory_fingerprint": preflight_inventory_fingerprint(
+            default_devices=default_devices,
+            devices=devices,
+            hostapis=hostapis,
+            input_channels=int(args.input_channels),
+            output_channels=int(args.output_channels),
+            sample_rate_hz=int(args.sample_rate_hz),
+        ),
+        "likely_external_input_count": sum(
+            1 for flags in role_flags if bool(flags.get("is_likely_external_input"))
+        ),
+        "likely_headphone_output_found": any(
+            bool(flags.get("is_likely_headphone_output")) for flags in role_flags
+        ),
+        "likely_source_output_found": any(bool(flags.get("is_likely_source_output")) for flags in role_flags),
+        "measurement_kind": PREFLIGHT_MEASUREMENT_KIND,
+        "output_candidate_count": len(filtered_outputs),
+        "output_channels": int(args.output_channels),
+        "physical_listener_ear_input_confirmed": bool(args.confirm_physical_listener_ear_input),
+        "release_proof": False,
+        "sample_rate_hz": int(args.sample_rate_hz),
+    }
+    summary["recommended_path"] = preflight_recommended_path(summary)
+    gates = preflight_quality_gates(summary)
+    summary["quality_gates"] = gates
+    summary["planning_passed"] = all(bool(gate["passed"]) for gate in gates)
+    first_candidate = annotated_triples[0] if annotated_triples else None
+    report = {
+        "schema_version": 1,
+        "generated_at_unix": int(time.time()),
+        "fixture_kind": PREFLIGHT_FIXTURE_KIND,
+        "measurement_kind": PREFLIGHT_MEASUREMENT_KIND,
+        "output_dir": str(args.output_dir),
+        "release_proof": False,
+        "summary": summary,
+        "benchmarks": {
+            "headphone_earpiece_preflight": {
+                "adapter_id": args.adapter_id,
+                "candidate_route_triples": annotated_triples,
+                "default_devices": default_devices,
+                "device_inventory": devices,
+                "hostapis": hostapis,
+                "recommended_commands": preflight_command_hints(
+                    first_candidate,
+                    args,
+                    recommended_path=str(summary["recommended_path"]),
+                ),
+                "required_follow_up": (
+                    "Use this report to choose either route-probe plus capture or the manual external "
+                    "recorder kit. Preflight never satisfies release evidence."
+                ),
+            }
+        },
+        "detractor_loop": {
+            "strongest_objection": (
+                "Device enumeration cannot prove acoustic listener-ear placement, Bluetooth mode behavior, "
+                "Windows processing state, source leakage, or translated-playback fidelity."
+            ),
+            "verdict": (
+                "Keep release_proof=false. Treat preflight as a hardware plan, then collect physical "
+                "listener-ear WAV evidence with score-manual or capture."
+            ),
+        },
+    }
+    return json_safe(report)
+
+
+def render_headphone_preflight_markdown(report: dict[str, Any], json_report_path: Path) -> str:
+    summary = report.get("summary", {})
+    benchmark = report.get("benchmarks", {}).get("headphone_earpiece_preflight", {})
+    candidates = benchmark.get("candidate_route_triples", [])
+    devices = benchmark.get("device_inventory", [])
+    commands = benchmark.get("recommended_commands", {})
+    lines = [
+        "# Headphone/Earpiece Preflight",
+        "",
+        "No audio was played or recorded by this preflight.",
+        "",
+        f"- JSON report: `{json_report_path}`",
+        f"- Release proof: `{summary.get('release_proof')}`",
+        f"- Planning passed: `{summary.get('planning_passed')}`",
+        f"- Recommended path: `{summary.get('recommended_path')}`",
+        f"- Physical listener-ear input confirmed: `{summary.get('physical_listener_ear_input_confirmed')}`",
+        f"- Inventory fingerprint: `{summary.get('inventory_fingerprint')}`",
+        "",
+        "## Detractor Verdict",
+        "",
+        str(report.get("detractor_loop", {}).get("strongest_objection", "")),
+        "",
+        str(report.get("detractor_loop", {}).get("verdict", "")),
+        "",
+        "## Device Summary",
+        "",
+        "| Index | Host API | Inputs | Outputs | Roles | Name |",
+        "| --- | --- | ---: | ---: | --- | --- |",
+    ]
+    for device in devices:
+        roles = ", ".join(device.get("roles", []))
+        lines.append(
+            "| {index} | {hostapi} | {inputs} | {outputs} | {roles} | {name} |".format(
+                hostapi=str(device.get("hostapi_name") or ""),
+                index=device.get("index"),
+                inputs=device.get("max_input_channels"),
+                name=str(device.get("name") or "").replace("|", "/"),
+                outputs=device.get("max_output_channels"),
+                roles=roles.replace("|", "/"),
+            )
+        )
+    lines.extend(
+        [
+            "",
+            "## Route Candidates",
+            "",
+        ]
+    )
+    if candidates:
+        lines.extend(
+            [
+                "| Rank | Input | Source Output | Headphone Output |",
+                "| ---: | --- | --- | --- |",
+            ]
+        )
+        for candidate in candidates[:10]:
+            lines.append(
+                "| {rank} | {input_device} `{input_name}` | {source_device} `{source_name}` | "
+                "{headphone_device} `{headphone_name}` |".format(
+                    headphone_device=candidate.get("headphone_output_device"),
+                    headphone_name=str(candidate.get("headphone_name") or "").replace("|", "/"),
+                    input_device=candidate.get("input_device"),
+                    input_name=str(candidate.get("input_name") or "").replace("|", "/"),
+                    rank=candidate.get("rank"),
+                    source_device=candidate.get("source_output_device"),
+                    source_name=str(candidate.get("source_name") or "").replace("|", "/"),
+                )
+            )
+    else:
+        lines.append("No input/source/headphone route triple was formed with the current filters.")
+    lines.extend(["", "## Next Commands", ""])
+    for name, command in sorted(commands.items()):
+        lines.extend([f"### {name}", "", "```powershell", str(command), "```", ""])
+    lines.extend(
+        [
+            "## Hardware Notes",
+            "",
+            "- Use a USB/lav/recorder microphone physically at the listener-ear point for release evidence.",
+            "- For an improvised laptop test, place one headphone earcup over the laptop mic opening and rerun preflight with `--confirm-physical-listener-ear-input`.",
+            "- A Bluetooth headset microphone is route triage only unless it is physically at that point.",
+            "- Disable audio enhancements, AGC, echo cancellation, spatial audio, and communications ducking.",
+            "- Preflight is complete when it tells you which path to try next; release evidence still needs WAV scoring.",
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def headphone_preflight(args: argparse.Namespace) -> int:
+    sd = import_sounddevice()
+    run_dir = Path(args.output_dir) / "runs" / args.run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    report_path = run_dir / DEFAULT_PREFLIGHT_REPORT
+    markdown_path = run_dir / DEFAULT_PREFLIGHT_MARKDOWN
+    report = build_headphone_preflight_report(sd, args)
+    report["artifact_paths"] = {"preflight_markdown": str(markdown_path)}
+    markdown_path.write_text(render_headphone_preflight_markdown(report, report_path), encoding="utf-8")
+    report["artifact_hashes"] = {"preflight_markdown": sha256_file(markdown_path)}
+    report = json_safe(report)
+    report_path.write_text(
+        json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n",
+        encoding="utf-8",
+    )
+    summary = report["summary"]
+    if args.json:
+        print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
+    else:
+        recommended_path = str(summary.get("recommended_path"))
+        if recommended_path == "guided_capture_possible":
+            status = "GUIDED-CAPTURE-READY"
+        elif recommended_path == "guided_capture_possible_after_physical_input_confirmation":
+            status = "NEEDS-PHYSICAL-INPUT-CONFIRMATION"
+        else:
+            status = "NEEDS-HARDWARE"
+        print(
+            "headphone/earpiece preflight {status}: devices={devices}, candidates={candidates}, "
+            "recommended_path={path}".format(
+                candidates=summary.get("candidate_route_triple_count"),
+                devices=summary.get("device_count"),
+                path=recommended_path,
+                status=status,
+            )
+        )
+        print(f"wrote headphone preflight report to {report_path}")
+        print(f"wrote headphone preflight checklist to {markdown_path}")
+    return 0
 
 
 def report_float(value: Any, digits: int = 6) -> float | None:
@@ -4702,6 +5294,104 @@ def self_test() -> int:
             globals()["portaudio_device_identity"] = original_portaudio_device_identity
         if preflight_report_path.exists():
             raise RuntimeError("route probe preflight failure should remove stale reports")
+
+        class FakePreflightSoundDevice:
+            default = argparse.Namespace(device=(0, 2))
+
+            def __init__(self) -> None:
+                self._hostapis = [{"name": "Windows WASAPI", "device_count": 3}]
+                self._devices = [
+                    {
+                        "default_samplerate": 48000.0,
+                        "hostapi": 0,
+                        "index": 0,
+                        "max_input_channels": 1,
+                        "max_output_channels": 0,
+                        "name": "USB Lavalier Ear Mic",
+                    },
+                    {
+                        "default_samplerate": 48000.0,
+                        "hostapi": 0,
+                        "index": 1,
+                        "max_input_channels": 0,
+                        "max_output_channels": 2,
+                        "name": "Speakers (SoundWire Speakers)",
+                    },
+                    {
+                        "default_samplerate": 48000.0,
+                        "hostapi": 0,
+                        "index": 2,
+                        "max_input_channels": 0,
+                        "max_output_channels": 2,
+                        "name": "Headphones (WH-1000XM6)",
+                    },
+                ]
+
+            def query_devices(self) -> list[dict[str, Any]]:
+                return [dict(device) for device in self._devices]
+
+            def query_hostapis(self, index: int | None = None) -> Any:
+                if index is None:
+                    return [dict(hostapi) for hostapi in self._hostapis]
+                return dict(self._hostapis[int(index)])
+
+        preflight_args = argparse.Namespace(
+            adapter_id=DEFAULT_PREFLIGHT_ADAPTER_ID,
+            allow_shared_output_device=False,
+            confirm_physical_listener_ear_input=False,
+            hostapi=[],
+            include_cross_hostapi=False,
+            input_channels=1,
+            json=False,
+            max_triples=DEFAULT_ROUTE_PROBE_SWEEP_MAX_TRIPLES,
+            output_channels=2,
+            output_dir=root / "preflight-out",
+            run_id=DEFAULT_PREFLIGHT_RUN_ID,
+            sample_rate_hz=48000,
+        )
+        preflight_report = build_headphone_preflight_report(FakePreflightSoundDevice(), preflight_args)
+        if preflight_report.get("release_proof") is not False:
+            raise RuntimeError("headphone preflight must not set release_proof")
+        if preflight_report.get("fixture_kind") == FIXTURE_KIND:
+            raise RuntimeError("headphone preflight must not use release fixture_kind")
+        if bool(preflight_report.get("summary", {}).get("planning_passed")):
+            raise RuntimeError("preflight must require physical listener-ear input confirmation before planning passes")
+        if (
+            preflight_report.get("summary", {}).get("recommended_path")
+            != "guided_capture_possible_after_physical_input_confirmation"
+        ):
+            raise RuntimeError("expected fake headphone preflight to require physical input confirmation")
+        commands = preflight_report.get("benchmarks", {}).get("headphone_earpiece_preflight", {}).get(
+            "recommended_commands",
+            {},
+        )
+        if "capture" in commands:
+            raise RuntimeError("preflight must not emit capture commands before physical input confirmation")
+        preflight_markdown = render_headphone_preflight_markdown(
+            preflight_report,
+            root / "preflight-out" / DEFAULT_PREFLIGHT_REPORT,
+        )
+        if "No audio was played or recorded" not in preflight_markdown:
+            raise RuntimeError("headphone preflight markdown should state that no audio was played")
+        json.dumps(preflight_report, allow_nan=False)
+
+        preflight_args.confirm_physical_listener_ear_input = True
+        confirmed_preflight_report = build_headphone_preflight_report(
+            FakePreflightSoundDevice(),
+            preflight_args,
+        )
+        if not bool(confirmed_preflight_report.get("summary", {}).get("planning_passed")):
+            raise RuntimeError("expected confirmed fake headphone preflight to pass planning gates")
+        if confirmed_preflight_report.get("summary", {}).get("recommended_path") != "guided_capture_possible":
+            raise RuntimeError("expected confirmed fake headphone preflight to recommend guided capture")
+        confirmed_commands = confirmed_preflight_report.get("benchmarks", {}).get(
+            "headphone_earpiece_preflight",
+            {},
+        ).get("recommended_commands", {})
+        if "capture" not in confirmed_commands:
+            raise RuntimeError("confirmed headphone preflight should emit guided capture command")
+        json.dumps(confirmed_preflight_report, allow_nan=False)
+
         virtual_result = virtual_lab(
             argparse.Namespace(
                 adapter_id=DEFAULT_VIRTUAL_LAB_ADAPTER_ID,
@@ -4754,6 +5444,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("list-devices", help="list PortAudio devices for guided host capture")
     subparsers.add_parser("self-test", help="validate scoring gates without external artifacts")
+    preflight_parser = subparsers.add_parser(
+        "preflight",
+        help="inspect host audio devices and write a no-audio headphone isolation readiness report",
+    )
+    preflight_parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    preflight_parser.add_argument("--run-id", default=DEFAULT_PREFLIGHT_RUN_ID)
+    preflight_parser.add_argument("--adapter-id", default=DEFAULT_PREFLIGHT_ADAPTER_ID)
+    preflight_parser.add_argument("--input-channels", type=int, default=DEFAULT_CAPTURE_INPUT_CHANNELS)
+    preflight_parser.add_argument("--output-channels", type=int, default=DEFAULT_CAPTURE_OUTPUT_CHANNELS)
+    preflight_parser.add_argument("--sample-rate-hz", type=int, default=48000)
+    preflight_parser.add_argument("--hostapi", action="append", default=[])
+    preflight_parser.add_argument("--max-triples", type=int, default=DEFAULT_ROUTE_PROBE_SWEEP_MAX_TRIPLES)
+    preflight_parser.add_argument(
+        "--allow-shared-output-device",
+        action="store_true",
+        help="allow source and headphone outputs to resolve to the same PortAudio device for diagnostics",
+    )
+    preflight_parser.add_argument("--include-cross-hostapi", action="store_true")
+    preflight_parser.add_argument(
+        "--confirm-physical-listener-ear-input",
+        action="store_true",
+        help="confirm the selected/input candidate is physically positioned at the listener-ear measurement point",
+    )
+    preflight_parser.add_argument("--json", action="store_true")
     score_parser = subparsers.add_parser(
         "score",
         help="score listener-ear source isolation and translated headphone playback WAVs",
@@ -5146,6 +5860,8 @@ def main(argv: list[str] | None = None) -> int:
         return list_devices()
     if args.command == "self-test":
         return self_test()
+    if args.command == "preflight":
+        return headphone_preflight(args)
     if args.command == "score":
         return score(args)
     if args.command == "prepare-manual":
