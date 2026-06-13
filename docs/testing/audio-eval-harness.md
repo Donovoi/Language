@@ -571,6 +571,7 @@ Windows:
 ```powershell
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-list-devices
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-prepare-manual --sample-rate-hz 48000 --playback-gain-db -18
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-sweep-routes --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-probe-route --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-capture --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --headphone-device-label "placeholder REPLACE_WITH_HEADPHONE_MODEL" --isolation-fixture-label "placeholder REPLACE_WITH_EARCUP_AND_MIC_POSITION" --measurement-microphone-label "placeholder REPLACE_WITH_MIC_MODEL_AND_POSITION"
@@ -585,6 +586,11 @@ Route sweeps are still triage only. Their reports include `summary.failure_summa
 `diagnosis` entries so operators can tell whether the route failed to open, used the same output for
 source and headphones, was too quiet, clipped, or heard audio that did not match the generated
 reference because of processing or routing mismatch.
+When PortAudio routing is the blocker, `headphone-isolation-prepare-manual` creates non-release
+reference WAVs and `manual-recording-manifest.json` for a phone/USB mic/external recorder flow. The
+manual kit remains `release_proof=false`; only `headphone-isolation-score` over real listener-ear,
+mono 16-bit PCM WAV recordings trimmed within the 500 ms release alignment window can write the
+release-gated `headphone-isolation-report.json`.
 
 ## Release Audio Evidence Gate
 

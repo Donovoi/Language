@@ -149,6 +149,43 @@ If it fails:
 - increase playback gain in small steps, for example `--playback-gain-db -12`, while avoiding clipping
 - retry with MME candidates if WASAPI is not reference-faithful
 
+If Bluetooth, PortAudio, or Windows processing keeps the guided route from passing, switch to the
+manual external-recorder path instead of lowering thresholds:
+
+```powershell
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-prepare-manual --sample-rate-hz 48000 --playback-gain-db -18
+```
+
+This writes release-derived playback references and a checklist manifest under
+`artifacts/audio_eval/runs/headphone-earpiece-manual-kit/`:
+
+- `source-reference.wav`
+- `translated-playback-reference.wav`
+- `manual-recording-manifest.json`
+
+Record the three expected WAVs named in the manifest with the mic at the listener-ear position. Export
+each recording as mono 16-bit PCM WAV at the kit sample rate, and trim pre-roll so the played
+reference begins within 500 ms of the recording start. The release gate recomputes alignment with the
+same 500 ms window; use a wider alignment window only for diagnosis, not release proof.
+
+- `source-open-ear-recording.wav`: source reference through the original speaker, headphone/earpiece
+  removed or isolation disabled.
+- `source-isolated-ear-recording.wav`: same source reference and mic position, headphone/earpiece
+  sealed over the mic.
+- `translated-headphone-recording.wav`: translated reference through the headphone/earpiece while it
+  remains sealed over the mic.
+
+Then score those real recordings:
+
+```powershell
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-score --source-reference artifacts/audio_eval/runs/headphone-earpiece-manual-kit/source-reference.wav --source-open-ear-recording artifacts/audio_eval/runs/headphone-earpiece-manual-kit/source-open-ear-recording.wav --source-isolated-ear-recording artifacts/audio_eval/runs/headphone-earpiece-manual-kit/source-isolated-ear-recording.wav --translated-playback-reference artifacts/audio_eval/runs/headphone-earpiece-manual-kit/translated-playback-reference.wav --translated-headphone-recording artifacts/audio_eval/runs/headphone-earpiece-manual-kit/translated-headphone-recording.wav --headphone-device-label "Sony WH-1000XM6 over-ear headphones" --isolation-fixture-label "WH-1000XM6 left earcup sealed over listener-ear microphone" --measurement-microphone-label "placeholder REPLACE_WITH_REAL_MIC_MODEL_AND_POSITION"
+```
+
+The manual kit itself is not release evidence: it has `release_proof=false`. Only the scored report at
+`artifacts/audio_eval/runs/headphone-earpiece-isolation/headphone-isolation-report.json` can satisfy
+the release gate, and only if its WAV-derived metrics pass. Replace every `placeholder REPLACE_WITH_*`
+label with specific hardware and fixture text before treating the score as release evidence.
+
 After the probe passes, run guided capture:
 
 ```powershell

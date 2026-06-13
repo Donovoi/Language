@@ -155,6 +155,7 @@ HEADPHONE_ISOLATION_REQUIRED_GATES = {
     "headphone_capture_source_declared",
     "isolation_fixture_identity_recorded",
     "headphone_recordings_duration_floor",
+    "headphone_release_alignment_window",
     "open_ear_source_control_audible",
     "headphone_source_open_reference_fidelity",
     "source_isolation_measured",
@@ -196,7 +197,18 @@ HEADPHONE_MAX_TRANSLATED_DISTORTION_DB = 12.0
 HEADPHONE_DB_TOLERANCE = 0.075
 HEADPHONE_CORRELATION_TOLERANCE = 0.001
 HEADPHONE_DURATION_TOLERANCE_S = 0.001
-PLACEHOLDER_LABEL_PREFIXES = ("unspecified", "unknown", "todo", "placeholder", "virtual", "simulated", "synthetic")
+PLACEHOLDER_LABEL_PREFIXES = (
+    "unspecified",
+    "unknown",
+    "todo",
+    "placeholder",
+    "replace_with",
+    "replace-with",
+    "replace with",
+    "virtual",
+    "simulated",
+    "synthetic",
+)
 
 
 @dataclass(frozen=True)
@@ -1601,6 +1613,14 @@ def _headphone_isolation_gate(spec: EvidenceSpec) -> GateResult:
         failures.append("headphone_earpiece_isolation.summary.measurement_microphone_label must be specific, not a placeholder")
     if not _specific_measurement_label(summary.get("isolation_fixture_label")):
         failures.append("headphone_earpiece_isolation.summary.isolation_fixture_label must be specific, not a placeholder")
+    max_alignment_lag_ms = _float_or_none(summary.get("max_alignment_lag_ms"))
+    if max_alignment_lag_ms is None:
+        failures.append("headphone_earpiece_isolation.summary.max_alignment_lag_ms must be finite")
+    elif max_alignment_lag_ms > ROOM_MAX_ALIGNMENT_LAG_MS:
+        failures.append(
+            "headphone_earpiece_isolation.summary.max_alignment_lag_ms must be "
+            f"<= {ROOM_MAX_ALIGNMENT_LAG_MS:.1f}"
+        )
     capture_backend = summary.get("capture_backend")
     capture_source_kind = summary.get("capture_source_kind")
     if capture_backend not in HEADPHONE_CAPTURE_BACKENDS:
@@ -2413,6 +2433,7 @@ def _headphone_summary_from_recomputed(
         "device_info": {},
         "headphone_device_label": headphone_device_label,
         "isolation_fixture_label": isolation_fixture_label,
+        "max_alignment_lag_ms": ROOM_MAX_ALIGNMENT_LAG_MS,
         "measurement_kind": HEADPHONE_REQUIRED_MEASUREMENT_KIND,
         "measurement_microphone_label": measurement_microphone_label,
         "release_proof": release_proof,
@@ -2601,6 +2622,8 @@ def _write_headphone_isolation_fixture_report(
 def self_test() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
+        if _specific_measurement_label("REPLACE_WITH_MIC_MODEL_AND_POSITION"):
+            raise AssertionError("REPLACE_WITH labels must be rejected as placeholder measurement labels")
         stub = root / "stub.json"
         failing = root / "failing.json"
         capture = root / "capture.json"
@@ -2621,6 +2644,7 @@ def self_test() -> None:
         surrogate_headphone = root / "surrogate-headphone.json"
         placeholder_headphone = root / "placeholder-headphone.json"
         short_headphone = root / "short-headphone.json"
+        wide_alignment_headphone = root / "wide-alignment-headphone.json"
         guided_headphone = root / "guided-headphone.json"
         mismatched_guided_headphone = root / "mismatched-guided-headphone.json"
         hybrid_capture_headphone = root / "hybrid-capture-headphone.json"
@@ -2727,6 +2751,10 @@ def self_test() -> None:
         )
         _write_headphone_isolation_fixture_report(placeholder_headphone, placeholder_labels=True)
         _write_headphone_isolation_fixture_report(short_headphone, short_duration=True)
+        _write_headphone_isolation_fixture_report(
+            wide_alignment_headphone,
+            summary_overrides={"max_alignment_lag_ms": ROOM_MAX_ALIGNMENT_LAG_MS + 250.0},
+        )
         _write_headphone_isolation_fixture_report(guided_headphone, guided_capture=True)
         _write_headphone_isolation_fixture_report(
             mismatched_guided_headphone,
@@ -2977,6 +3005,14 @@ def self_test() -> None:
         report = build_report(release_results, prototype_results)
         if report["summary"]["passed"]:
             raise AssertionError("expected too-short headphone measurement artifacts to fail")
+
+        wide_alignment_headphone_args = argparse.Namespace(**vars(complete_args))
+        wide_alignment_headphone_args.room_suppression_report = forged_room
+        wide_alignment_headphone_args.headphone_isolation_report = wide_alignment_headphone
+        release_results, prototype_results = evaluate(wide_alignment_headphone_args)
+        report = build_report(release_results, prototype_results)
+        if report["summary"]["passed"]:
+            raise AssertionError("expected wide headphone alignment window to fail release gate")
 
         mismatched_guided_headphone_args = argparse.Namespace(**vars(complete_args))
         mismatched_guided_headphone_args.room_suppression_report = forged_room
