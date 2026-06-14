@@ -185,7 +185,7 @@ The workflow still does **not** handle:
 - iOS provisioning profiles, signing, notarization, or App Store delivery
 - macOS signing or notarization
 - Windows signing or installer generation
-- packaged gateway service management/CLI ergonomics beyond the current source-first launch path
+- packaged gateway service management beyond the current `language-gateway` foreground command
 - production gateway deployment packaging or runtime secret management
 
 Those remain manual follow-up work before a production release.
