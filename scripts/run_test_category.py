@@ -33,6 +33,9 @@ MANUAL_RECORDING_FILENAMES = {
 PLACEHOLDER_REQUIRED_ENV_VALUES = {
     "HEADPHONE_OUTPUT",
     "LANGUAGE_HEADPHONE_OUTPUT_DEVICE",
+    "LANGUAGE_HEADPHONE_DEVICE_LABEL",
+    "LANGUAGE_ISOLATION_FIXTURE_LABEL",
+    "LANGUAGE_MEASUREMENT_MICROPHONE_LABEL",
     "LANGUAGE_MEASUREMENT_INPUT_DEVICE",
     "LANGUAGE_SOURCE_OUTPUT_DEVICE",
     "LISTENER_EAR_INPUT",
@@ -396,11 +399,11 @@ STEPS: dict[str, Step] = {
             "--allow-downmix",
             "--score-if-ready",
             "--headphone-device-label",
-            "{env:LANGUAGE_HEADPHONE_DEVICE_LABEL:REPLACE_WITH_HEADPHONE_MODEL}",
+            "{env:LANGUAGE_HEADPHONE_DEVICE_LABEL:LANGUAGE_HEADPHONE_DEVICE_LABEL}",
             "--isolation-fixture-label",
-            "{env:LANGUAGE_ISOLATION_FIXTURE_LABEL:REPLACE_WITH_EARCUP_AND_MIC_POSITION}",
+            "{env:LANGUAGE_ISOLATION_FIXTURE_LABEL:LANGUAGE_ISOLATION_FIXTURE_LABEL}",
             "--measurement-microphone-label",
-            "{env:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL:REPLACE_WITH_MIC_MODEL_AND_POSITION}",
+            "{env:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL}",
         ),
         required_env=(
             "LANGUAGE_HEADPHONE_DEVICE_LABEL",
@@ -1183,6 +1186,11 @@ def self_test() -> int:
     )
     if STEPS["headphone-isolation-collect-and-score-evidence"].required_env != score_required_env:
         raise AssertionError("release-evidence-score must require concrete hardware labels")
+    score_command, _ = command_for_step(STEPS["headphone-isolation-collect-and-score-evidence"], "powershell")
+    rendered_score_command = " ".join(score_command)
+    for placeholder in score_required_env:
+        if placeholder not in rendered_score_command:
+            raise AssertionError(f"release-evidence-score dry-run command must show {placeholder}")
     for playback_step in (
         STEPS["headphone-isolation-playback-plan"],
         STEPS["headphone-isolation-playback-session"],
@@ -1194,18 +1202,21 @@ def self_test() -> int:
         for placeholder in ("LANGUAGE_SOURCE_OUTPUT_DEVICE", "LANGUAGE_HEADPHONE_OUTPUT_DEVICE"):
             if placeholder not in rendered_playback_command:
                 raise AssertionError(f"{playback_step.name} dry-run command must show {placeholder}")
-    old_env = os.environ.get("LANGUAGE_HEADPHONE_DEVICE_LABEL")
+    old_env = {name: os.environ.get(name) for name in score_required_env}
     os.environ["LANGUAGE_HEADPHONE_DEVICE_LABEL"] = "REPLACE_WITH_HEADPHONE_MODEL"
+    os.environ["LANGUAGE_ISOLATION_FIXTURE_LABEL"] = "LANGUAGE_ISOLATION_FIXTURE_LABEL"
+    os.environ["LANGUAGE_MEASUREMENT_MICROPHONE_LABEL"] = "LANGUAGE_MEASUREMENT_MICROPHONE_LABEL"
     try:
-        if "LANGUAGE_HEADPHONE_DEVICE_LABEL" not in missing_required_env(
-            STEPS["headphone-isolation-collect-and-score-evidence"]
-        ):
-            raise AssertionError("placeholder labels must be rejected as missing release score env")
+        missing_score_env = missing_required_env(STEPS["headphone-isolation-collect-and-score-evidence"])
+        for placeholder in score_required_env:
+            if placeholder not in missing_score_env:
+                raise AssertionError(f"placeholder label must be rejected as missing: {placeholder}")
     finally:
-        if old_env is None:
-            os.environ.pop("LANGUAGE_HEADPHONE_DEVICE_LABEL", None)
-        else:
-            os.environ["LANGUAGE_HEADPHONE_DEVICE_LABEL"] = old_env
+        for name, value in old_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
     for step in STEPS.values():
         for name in step.required_env:
             if not re.match(r"^[A-Z][A-Z0-9_]*$", name):
