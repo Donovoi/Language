@@ -237,6 +237,18 @@ def _route_probe_lines(report: dict[str, Any]) -> list[str]:
         freshness_label = stale_reason.split(":", 1)[0]
         status = f"{freshness_label}-TRIAGE ({stale_reason})"
     lines = [f"Status: {status}"]
+    path = str(probe.get("path", "")).strip()
+    if stale_reason:
+        lines.append(
+            "Previous probe route and metrics are stale; use the Host audio preflight route above."
+        )
+        lines.append(
+            "Next: run python scripts/run_test_category.py route-triage for a fresh probe command; run that printed command only if route diagnostics are needed"
+        )
+        if path:
+            lines.append(f"Previous report: {_repo_relative(path)}")
+        return lines
+
     route = _as_dict(probe.get("device_route"))
     if route:
         lines.append(
@@ -255,14 +267,8 @@ def _route_probe_lines(report: dict[str, Any]) -> list[str]:
     if reasons:
         lines.append(f"Blocking reasons: {', '.join(reasons)}")
     actions = [str(item) for item in _as_list(probe.get("next_actions"))]
-    if stale_reason:
-        actions.insert(
-            0,
-            "run python scripts/run_test_category.py route-triage for a fresh probe command; run that printed command only if route diagnostics are needed",
-        )
     if actions:
         lines.append(f"Next: {actions[0]}")
-    path = str(probe.get("path", "")).strip()
     if path:
         lines.append(f"Report: {_repo_relative(path)}")
     return lines
@@ -768,10 +774,14 @@ def self_test() -> int:
         "real listener-ear mic",
         "Optional diagnostics",
         "STALE-TRIAGE",
+        "Previous probe route and metrics are stale",
         "fresh probe command",
     ):
         if text not in triage_rendered:
             raise AssertionError(f"missing triage next-action text: {text}")
+    for text in ("Source: dbfs", "source:reference_not_detected"):
+        if text in triage_rendered:
+            raise AssertionError(f"compact stale route status should suppress old probe detail: {text}")
 
     detailed = render_status(failed_report, gate_returncode=1, full_commands=True)
     for text in ("Next commands:", "prepare command", "release command"):
