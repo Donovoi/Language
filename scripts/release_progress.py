@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import shutil
@@ -18,6 +19,15 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GATE_REPORT = ROOT / "artifacts/release/audio-gate-report.json"
 RELEASE_GATE_SCRIPT = ROOT / "scripts/release_audio_gate.py"
 PORTABLE_FLUTTER = Path("C:/tmp/flutter/bin/flutter.bat")
+LOCAL_ARTIFACT_DIR = ROOT / "dist/local-release-artifacts"
+LOCAL_ARTIFACT_MANIFEST = LOCAL_ARTIFACT_DIR / "manifest.md"
+LOCAL_ARTIFACT_CHECKSUMS = LOCAL_ARTIFACT_DIR / "SHA256SUMS.txt"
+EXPECTED_LOCAL_ARTIFACTS = (
+    "language_gateway-0.1.0-py3-none-any.whl",
+    "language-0.1.0-source.tar.gz",
+    "language-0.1.0-source.zip",
+    "language-gateway-0.1.0.tar.gz",
+)
 
 
 @dataclass(frozen=True)
@@ -54,6 +64,78 @@ def _smoke_local_passed() -> bool:
         "artifacts/test-categories/smoke-local/01-smoke-local-demo.log",
         "Local demo smoke check passed",
     )
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _current_head() -> str | None:
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip()
+
+
+def _worktree_has_tracked_changes() -> bool:
+    result = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+        text=True,
+        check=False,
+    )
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def _local_release_artifacts_status() -> tuple[bool, str]:
+    if not LOCAL_ARTIFACT_MANIFEST.exists() or not LOCAL_ARTIFACT_CHECKSUMS.exists():
+        return False, "local artifact manifest/checksums are missing; run release-artifacts"
+
+    manifest = LOCAL_ARTIFACT_MANIFEST.read_text(encoding="utf-8", errors="replace")
+    if "- dirty_tree: `false`" not in manifest:
+        return False, "local artifact manifest is not clean"
+    if _worktree_has_tracked_changes():
+        return False, "worktree has uncommitted changes; commit and rerun release-artifacts"
+    head = _current_head()
+    if head and f"- commit: `{head}`" not in manifest:
+        return False, "local artifact manifest does not match current HEAD"
+
+    checksums: dict[str, str] = {}
+    for line in LOCAL_ARTIFACT_CHECKSUMS.read_text(encoding="utf-8", errors="replace").splitlines():
+        parts = line.strip().split()
+        if len(parts) == 2:
+            checksums[parts[1]] = parts[0].lower()
+
+    missing = [name for name in EXPECTED_LOCAL_ARTIFACTS if not (LOCAL_ARTIFACT_DIR / name).exists()]
+    if missing:
+        return False, f"local artifacts missing files: {', '.join(missing)}"
+
+    checksum_missing = [name for name in EXPECTED_LOCAL_ARTIFACTS if name not in checksums]
+    if checksum_missing:
+        return False, f"local artifact checksums missing files: {', '.join(checksum_missing)}"
+
+    mismatched = [
+        name
+        for name in EXPECTED_LOCAL_ARTIFACTS
+        if _sha256_file(LOCAL_ARTIFACT_DIR / name) != checksums[name]
+    ]
+    if mismatched:
+        return False, f"local artifact checksums mismatch: {', '.join(mismatched)}"
+
+    return True, f"clean local source/gateway artifacts ready ({_repo_relative(LOCAL_ARTIFACT_MANIFEST)})"
 
 
 def _run_release_gate() -> dict[str, Any]:
@@ -119,6 +201,7 @@ def build_progress(report: dict[str, Any]) -> dict[str, Any]:
     flutter_path = _resolve_flutter()
     flutter_ready = flutter_path is not None
     smoke_ready = _smoke_local_passed()
+    local_artifacts_ready, local_artifacts_evidence = _local_release_artifacts_status()
     auth_tests_ready = _file_has_text("services/gateway/tests/test_gateway.py", "test_read_endpoints_remain_auth_free")
     auth_runtime_ready = _file_has_text("services/gateway/app/auth.py", "require_write_token")
     category_runner_ready = _file_has_text("scripts/run_test_category.py", "physical-audio-handoff")
@@ -136,6 +219,8 @@ def build_progress(report: dict[str, Any]) -> dict[str, Any]:
             "release_smoke_artifacts",
             "Release smoke + artifact readiness",
             100
+            if release_reports_exist and checklist_ready and flutter_ready and smoke_ready and local_artifacts_ready
+            else 99
             if release_reports_exist and checklist_ready and flutter_ready and smoke_ready
             else 98
             if release_reports_exist and checklist_ready and flutter_ready
@@ -143,7 +228,9 @@ def build_progress(report: dict[str, Any]) -> dict[str, Any]:
             if release_reports_exist and checklist_ready
             else 90,
             0.12,
-            f"release reports, physical checklist, Flutter host, and local smoke are ready ({flutter_path})"
+            f"release reports, physical checklist, Flutter host, local smoke, and {local_artifacts_evidence} ({flutter_path})"
+            if release_reports_exist and checklist_ready and flutter_ready and smoke_ready and local_artifacts_ready
+            else f"release reports, physical checklist, Flutter host, and local smoke are ready; {local_artifacts_evidence} ({flutter_path})"
             if release_reports_exist and checklist_ready and flutter_ready and smoke_ready
             else f"release reports, physical checklist, and Flutter host are ready; local smoke category has not passed ({flutter_path})"
             if release_reports_exist and checklist_ready and flutter_ready
