@@ -2,6 +2,7 @@ param(
     [string]$WheelPath = "",
     [string]$Python = "",
     [int]$GatewayPort = $(if ($env:GATEWAY_PACKAGE_SMOKE_PORT) { [int]$env:GATEWAY_PACKAGE_SMOKE_PORT } else { 8011 }),
+    [int]$GatewayAuthPort = $(if ($env:GATEWAY_PACKAGE_AUTH_SMOKE_PORT) { [int]$env:GATEWAY_PACKAGE_AUTH_SMOKE_PORT } else { 0 }),
     [switch]$KeepTemp
 )
 
@@ -132,6 +133,7 @@ function Invoke-CheckedCommand {
 $repoRoot = Resolve-RepoRoot
 $pythonPath = Resolve-SupportedPython -RequestedPython $Python
 $wheel = Resolve-GatewayWheel -RepoRoot $repoRoot -RequestedWheel $WheelPath
+$authPort = if ($GatewayAuthPort -gt 0) { $GatewayAuthPort } else { $GatewayPort + 1 }
 $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("language-gateway-package-smoke-" + [guid]::NewGuid().ToString())
 New-Item -ItemType Directory -Path $tmpDir -Force | Out-Null
 
@@ -179,7 +181,22 @@ try {
         ) `
         -WorkingDirectory $tmpDir
 
+    Invoke-CheckedCommand `
+        -Label "smoke installed gateway auth" `
+        -FilePath $venvPython `
+        -Arguments @(
+            (Join-Path $repoRoot "scripts\smoke_gateway_auth.py"),
+            "--gateway-command",
+            $gatewayCommand,
+            "--gateway-working-directory",
+            $tmpDir,
+            "--port",
+            "$authPort"
+        ) `
+        -WorkingDirectory $tmpDir
+
     Write-Host "Packaged gateway smoke check passed"
+    Write-Host "Packaged gateway auth smoke check passed"
 } finally {
     if ($KeepTemp.IsPresent) {
         Write-Host "Keeping package smoke temp directory: $tmpDir"

@@ -108,7 +108,7 @@ Common categories:
 | `release-evidence-score` | Score complete listener-ear evidence | Requires real WAVs and concrete hardware labels. |
 | `release-status` | Concise release blocker summary | Low-token next-action handoff; exits zero by default. |
 | `release-progress` | Milestone percentages | Evidence-linked estimate for push summaries. |
-| `release-artifacts` | Local source/gateway release handoff | Builds clean artifacts, checksums them, then smokes the packaged gateway wheel. |
+| `release-artifacts` | Local source/gateway release handoff | Builds clean artifacts, checksums them, then smokes the packaged gateway wheel and write-token auth. |
 | `release` | Strict release-gate status | Expected to fail until physical evidence is present. |
 | `all` | Automated non-interactive suites | Excludes hardware, guided capture, release, optional model downloads, and artifact-dependent voice checks. |
 

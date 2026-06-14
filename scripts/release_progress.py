@@ -22,6 +22,9 @@ PORTABLE_FLUTTER = Path("C:/tmp/flutter/bin/flutter.bat")
 LOCAL_ARTIFACT_DIR = ROOT / "dist/local-release-artifacts"
 LOCAL_ARTIFACT_MANIFEST = LOCAL_ARTIFACT_DIR / "manifest.md"
 LOCAL_ARTIFACT_CHECKSUMS = LOCAL_ARTIFACT_DIR / "SHA256SUMS.txt"
+RELEASE_ARTIFACT_PACKAGE_SMOKE_LOG = (
+    ROOT / "artifacts/test-categories/release-artifacts/02-gateway-package-smoke.log"
+)
 EXPECTED_LOCAL_ARTIFACTS = (
     "language_gateway-0.1.0-py3-none-any.whl",
     "language-0.1.0-source.tar.gz",
@@ -66,10 +69,38 @@ def _smoke_local_passed() -> bool:
     )
 
 
-def _gateway_package_smoke_passed() -> bool:
-    return _file_has_text(
-        "artifacts/test-categories/release-artifacts/02-gateway-package-smoke.log",
-        "Packaged gateway smoke check passed",
+def _log_is_fresh_for_manifest(log_path: Path) -> bool:
+    if not LOCAL_ARTIFACT_MANIFEST.exists() or not log_path.exists():
+        return False
+    return log_path.stat().st_mtime >= LOCAL_ARTIFACT_MANIFEST.stat().st_mtime
+
+
+def _gateway_package_smoke_passed(local_artifacts_ready: bool) -> bool:
+    return (
+        local_artifacts_ready
+        and _log_is_fresh_for_manifest(RELEASE_ARTIFACT_PACKAGE_SMOKE_LOG)
+        and _file_has_text(
+            str(RELEASE_ARTIFACT_PACKAGE_SMOKE_LOG.relative_to(ROOT)),
+            "Packaged gateway smoke check passed",
+        )
+    )
+
+
+def _gateway_auth_smoke_passed(
+    *,
+    local_artifacts_ready: bool,
+    auth_tests_ready: bool,
+    auth_runtime_ready: bool,
+) -> bool:
+    return (
+        local_artifacts_ready
+        and auth_tests_ready
+        and auth_runtime_ready
+        and _log_is_fresh_for_manifest(RELEASE_ARTIFACT_PACKAGE_SMOKE_LOG)
+        and _file_has_text(
+            str(RELEASE_ARTIFACT_PACKAGE_SMOKE_LOG.relative_to(ROOT)),
+            "Packaged gateway auth smoke check passed",
+        )
     )
 
 
@@ -208,10 +239,15 @@ def build_progress(report: dict[str, Any]) -> dict[str, Any]:
     flutter_path = _resolve_flutter()
     flutter_ready = flutter_path is not None
     smoke_ready = _smoke_local_passed()
-    gateway_package_smoke_ready = _gateway_package_smoke_passed()
     local_artifacts_ready, local_artifacts_evidence = _local_release_artifacts_status()
     auth_tests_ready = _file_has_text("services/gateway/tests/test_gateway.py", "test_read_endpoints_remain_auth_free")
     auth_runtime_ready = _file_has_text("services/gateway/app/auth.py", "require_write_token")
+    gateway_package_smoke_ready = _gateway_package_smoke_passed(local_artifacts_ready)
+    auth_smoke_ready = _gateway_auth_smoke_passed(
+        local_artifacts_ready=local_artifacts_ready,
+        auth_tests_ready=auth_tests_ready,
+        auth_runtime_ready=auth_runtime_ready,
+    )
     category_runner_ready = _file_has_text("scripts/run_test_category.py", "physical-audio-handoff")
     token_doc_ready = (ROOT / "docs/development/token-budget.md").exists()
 
@@ -262,9 +298,17 @@ def build_progress(report: dict[str, Any]) -> dict[str, Any]:
         Milestone(
             "auth_internal_beta",
             "Auth-enabled internal beta readiness",
-            92 if auth_tests_ready and auth_runtime_ready else 80,
+            100
+            if auth_smoke_ready
+            else 92
+            if auth_tests_ready and auth_runtime_ready
+            else 80,
             0.14,
-            "write-token runtime and gateway auth tests present" if auth_tests_ready and auth_runtime_ready else "auth runtime/tests incomplete",
+            "packaged write-token auth smoke passed"
+            if auth_smoke_ready
+            else "write-token runtime and gateway auth tests present"
+            if auth_tests_ready and auth_runtime_ready
+            else "auth runtime/tests incomplete",
         ),
         Milestone(
             "disposable_env_windows",

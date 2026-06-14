@@ -72,6 +72,11 @@ STEPS: dict[str, Step] = {
         description="gateway package entry-point verifier contract self-test",
         local_args=("{python}", "scripts/verify_gateway_package.py", "--self-test"),
     ),
+    "gateway-auth-smoke-self-test": Step(
+        name="gateway-auth-smoke-self-test",
+        description="gateway auth smoke harness contract self-test",
+        local_args=("{python}", "scripts/smoke_gateway_auth.py", "--self-test"),
+    ),
     "release-audio-status": Step(
         name="release-audio-status",
         description="compact release gate blocker, next-action summary, and physical-audio checklist",
@@ -409,6 +414,7 @@ CATEGORIES: dict[str, Category] = {
             "release-audio-status-self-test",
             "release-progress-self-test",
             "gateway-package-verifier-self-test",
+            "gateway-auth-smoke-self-test",
             "headphone-route-triage-handoff-self-test",
             "live-microphone-capture-contract",
             "headphone-isolation-contract",
@@ -423,6 +429,7 @@ CATEGORIES: dict[str, Category] = {
             "release-audio-status-self-test",
             "release-progress-self-test",
             "gateway-package-verifier-self-test",
+            "gateway-auth-smoke-self-test",
             "headphone-route-triage-handoff-self-test",
             "live-microphone-capture-contract",
             "headphone-isolation-contract",
@@ -621,7 +628,7 @@ CATEGORIES: dict[str, Category] = {
             "Refuses dirty trees by default because source archives are built from HEAD.",
             "Uses a supported Python >=3.11,<3.14 from -Python, LANGUAGE_PACKAGE_PYTHON, LANGUAGE_PYTHON, PYTHON, bundled runtime, or PATH.",
             "Writes dist/local-release-artifacts/manifest.md and SHA256SUMS.txt.",
-            "Installs the built gateway wheel into a temporary virtualenv and verifies the packaged CLI serves the smoke endpoints.",
+            "Installs the built gateway wheel into a temporary virtualenv and verifies the packaged CLI serves the smoke and auth endpoints.",
         ),
     ),
     "all": Category(
