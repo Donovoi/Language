@@ -35,6 +35,7 @@ Repository prep for the first internal beta release candidate based on the curre
 - Headphone/earpiece no-audio preflight writes JSON and Markdown planning reports with device classification, route candidates, recommended guided/manual path, explicit physical listener-ear input confirmation before guided capture, and a `release_proof=false` detractor verdict.
 - Guided headphone/earpiece PortAudio capture now requires a passing preflight report bound to the selected route, and release scoring rejects unbound guided-capture evidence.
 - The hard release audio gate now writes a Markdown operator handoff beside the JSON report so release blockers, physical-evidence hardware reminders, and guided/manual collection commands are readable without weakening the machine-checked gate.
+- The release audio handoff now embeds the current headphone/earpiece manual recording status when present, including score-ready state, issue counts, and the exact release-gate rerun command without treating the status as release evidence.
 
 #### Changed
 

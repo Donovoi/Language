@@ -718,8 +718,10 @@ coherent.
 `scripts/release_audio_gate.py` writes `artifacts/release/audio-gate-report.json` plus the readable
 `artifacts/release/audio-gate-report.md` handoff, and exits nonzero until the product audio-loop
 evidence is present. The JSON remains the authoritative gate artifact; the Markdown report is for
-operator handoff, blocker triage, and physical-evidence command hints. It is intentionally stricter
-than the warning-only research targets.
+operator handoff, blocker triage, and physical-evidence command hints. If the default
+headphone/earpiece manual-kit status exists, the Markdown also embeds the current readiness state and
+score rerun command as non-evidentiary operator context. It is intentionally stricter than the
+warning-only research targets.
 
 ```bash
 make release-audio-gate

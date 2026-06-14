@@ -47,6 +47,9 @@ DEFAULT_ROOM_SUPPRESSION_REPORT = (
 DEFAULT_HEADPHONE_ISOLATION_REPORT = (
     DEFAULT_AUDIO_EVAL_DIR / "runs/headphone-earpiece-isolation/headphone-isolation-report.json"
 )
+DEFAULT_HEADPHONE_MANUAL_STATUS_REPORT = (
+    DEFAULT_AUDIO_EVAL_DIR / "runs/headphone-earpiece-manual-kit/manual-recording-status.json"
+)
 DEFAULT_PLAYBACK_PROTOTYPE_REPORT = (
     DEFAULT_AUDIO_EVAL_DIR / "runs/fleurs-playback-ducking-suppression/playback-suppression-report.json"
 )
@@ -269,6 +272,18 @@ def _summary(report: dict[str, Any]) -> dict[str, Any]:
 
 def _summary_passed(report: dict[str, Any]) -> bool:
     return bool(_summary(report).get("passed"))
+
+
+def _literal_true(value: Any) -> bool:
+    return value is True
+
+
+def _nonnegative_int(value: Any) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, parsed)
 
 
 def _quality_gates(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -2421,9 +2436,79 @@ def evaluate(args: argparse.Namespace) -> tuple[list[GateResult], list[GateResul
     return release_results, prototype_results
 
 
-def build_report(release_results: list[GateResult], prototype_results: list[GateResult]) -> dict[str, Any]:
+def load_headphone_manual_status_handoff(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    markdown_path = path.with_suffix(".md")
+    handoff: dict[str, Any] = {
+        "path": str(path),
+        "markdown_path": str(markdown_path),
+        "markdown_present": markdown_path.exists(),
+        "present": False,
+        "release_evidence": False,
+    }
+    try:
+        payload = _load_json(path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        handoff.update(
+            {
+                "status": "UNREADABLE",
+                "parse_error": str(exc),
+                "next_step": "Regenerate the manual recording status with check-manual.",
+            }
+        )
+        return handoff
+    if payload is None:
+        handoff.update(
+            {
+                "status": "MISSING",
+                "next_step": "Run prepare-manual, then check-manual to create the manual recording status.",
+            }
+        )
+        return handoff
+
+    summary = _summary(payload)
+    score_ready = _literal_true(summary.get("manual_score_ready"))
+    recordings_ready = _literal_true(summary.get("manual_recordings_ready_for_score_input"))
+    labels_specific = _literal_true(summary.get("manual_score_labels_specific"))
+    if score_ready:
+        status = "SCORE-READY"
+        next_step = "Run score-manual, then rerun this gate with the scored headphone isolation report."
+    elif recordings_ready and not labels_specific:
+        status = "FILES-READY-LABELS-PENDING"
+        next_step = "Supply specific headphone, listener-ear microphone, and fixture labels before scoring."
+    else:
+        status = "NOT-READY"
+        next_step = "Capture or import the required listener-ear WAVs, replace placeholder labels, then rerun check-manual."
+
+    handoff.update(
+        {
+            "present": True,
+            "status": status,
+            "next_step": next_step,
+            "manifest_path": str(payload.get("manifest_path", "")),
+            "score_report_path": str(payload.get("score_report_path", "")),
+            "release_proof": _literal_true(payload.get("release_proof")),
+            "summary": {
+                "manual_score_ready": score_ready,
+                "manual_recordings_ready_for_score_input": recordings_ready,
+                "manual_score_labels_specific": labels_specific,
+                "issue_count": _nonnegative_int(summary.get("issue_count")),
+                "warning_count": _nonnegative_int(summary.get("warning_count")),
+                "placeholder_label_count": _nonnegative_int(summary.get("placeholder_label_count")),
+            },
+        }
+    )
+    return handoff
+
+
+def build_report(
+    release_results: list[GateResult],
+    prototype_results: list[GateResult],
+    headphone_manual_status_report: Path | None = None,
+) -> dict[str, Any]:
     blocking_failures = [gate for gate in release_results if not gate.passed and gate.release_blocking]
-    return {
+    report = {
         "schema_version": 1,
         "generated_at_unix": int(time.time()),
         "summary": {
@@ -2447,6 +2532,12 @@ def build_report(release_results: list[GateResult], prototype_results: list[Gate
             ),
         },
     }
+    manual_status = load_headphone_manual_status_handoff(headphone_manual_status_report)
+    if manual_status is not None:
+        report["operator_handoff"] = {
+            "headphone_manual_status": manual_status,
+        }
+    return report
 
 
 def write_report(report: dict[str, Any], path: Path) -> None:
@@ -2454,13 +2545,76 @@ def write_report(report: dict[str, Any], path: Path) -> None:
     path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
 
 
-def playback_source_suppression_handoff_lines() -> list[str]:
-    return [
+def headphone_manual_status_handoff_lines(manual_status: dict[str, Any] | None) -> list[str]:
+    lines = [
+        "",
+        "### Current Manual Recording Status",
+        "",
+        "This status is an operator handoff only; it is not release evidence.",
+        "",
+    ]
+    if not isinstance(manual_status, dict):
+        lines.extend(
+            [
+                "- Status: not loaded in this release report.",
+                f"- Default status path: `{DEFAULT_HEADPHONE_MANUAL_STATUS_REPORT}`",
+                "- Next step: run `check-manual --score-warning-only` after `prepare-manual` to create the status handoff.",
+            ]
+        )
+        return lines
+
+    status = str(manual_status.get("status", "UNKNOWN"))
+    path = str(manual_status.get("path", ""))
+    markdown_path = str(manual_status.get("markdown_path", ""))
+    lines.append(f"- Status: **{status}**")
+    if path:
+        lines.append(f"- JSON status: `{path}`")
+    if markdown_path:
+        markdown_present = bool(manual_status.get("markdown_present"))
+        suffix = "present" if markdown_present else "not found yet"
+        lines.append(f"- Markdown status: `{markdown_path}` ({suffix})")
+    if not manual_status.get("present"):
+        parse_error = str(manual_status.get("parse_error", "")).strip()
+        if parse_error:
+            lines.append(f"- Read error: `{parse_error}`")
+        lines.append(f"- Next step: {manual_status.get('next_step', '')}")
+        return lines
+
+    summary = manual_status.get("summary", {})
+    summary = summary if isinstance(summary, dict) else {}
+    lines.extend(
+        [
+            f"- Manifest path: `{manual_status.get('manifest_path', '')}`",
+            f"- Expected scored report: `{manual_status.get('score_report_path', '')}`",
+            f"- Ready for score input: {bool(summary.get('manual_recordings_ready_for_score_input'))}",
+            f"- Specific score labels: {bool(summary.get('manual_score_labels_specific'))}",
+            f"- Issues/warnings/placeholders: {summary.get('issue_count', 0)}/"
+            f"{summary.get('warning_count', 0)}/{summary.get('placeholder_label_count', 0)}",
+            f"- Next step: {manual_status.get('next_step', '')}",
+        ]
+    )
+    score_report_path = str(manual_status.get("score_report_path", "")).strip()
+    if status == "SCORE-READY" and score_report_path:
+        lines.extend(
+            [
+                "- Gate command after scoring:",
+                "",
+                "```powershell",
+                f"python scripts/release_audio_gate.py --json --headphone-isolation-report {score_report_path}",
+                "```",
+            ]
+        )
+    return lines
+
+
+def playback_source_suppression_handoff_lines(manual_status: dict[str, Any] | None = None) -> list[str]:
+    lines = [
         "",
         "### Playback/Source Suppression Evidence Collection",
         "",
         "Hardware setup:",
         "",
+        "- This laptop's built-in microphone and speakers can help with live-capture smoke checks, playback, and route triage.",
         "- Use a USB/lavalier microphone or phone/external recorder physically at the listener-ear point, inside or flush with the headphone/earpiece seal.",
         "- Use the laptop built-in microphone only for `route_probe_triage_only`; it is not final release evidence.",
         "- Keep the source speaker, headphone/earpiece seal, playback gain, and listener-ear microphone position fixed between matching takes.",
@@ -2493,6 +2647,8 @@ def playback_source_suppression_handoff_lines() -> list[str]:
         "python scripts/release_audio_gate.py --json",
         "```",
     ]
+    lines.extend(headphone_manual_status_handoff_lines(manual_status))
+    return lines
 
 
 def render_markdown_report(report: dict[str, Any]) -> str:
@@ -2575,7 +2731,11 @@ def render_markdown_report(report: dict[str, Any]) -> str:
                 "- For the current playback/source suppression blocker, provide either a passing real-room "
                 "cancellation report or a passing physical headphone/earpiece listener-ear isolation report."
             )
-            lines.extend(playback_source_suppression_handoff_lines())
+            operator_handoff = report.get("operator_handoff", {})
+            operator_handoff = operator_handoff if isinstance(operator_handoff, dict) else {}
+            manual_status = operator_handoff.get("headphone_manual_status")
+            manual_status = manual_status if isinstance(manual_status, dict) else None
+            lines.extend(playback_source_suppression_handoff_lines(manual_status))
             included_playback_collection = True
         else:
             lines.append("- Address each failed release-blocking gate above, then rerun the gate.")
@@ -3323,6 +3483,8 @@ def _write_headphone_isolation_fixture_report(
 def self_test() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
+        if parse_args([]).headphone_manual_status_report != DEFAULT_HEADPHONE_MANUAL_STATUS_REPORT:
+            raise AssertionError("expected release gate to load the default manual status path")
         if _specific_measurement_label("REPLACE_WITH_MIC_MODEL_AND_POSITION"):
             raise AssertionError("REPLACE_WITH labels must be rejected as placeholder measurement labels")
         stub = root / "stub.json"
@@ -3363,6 +3525,12 @@ def self_test() -> None:
         route_probe_room = root / "route-probe-room.json"
         route_sweep_room = root / "route-sweep-room.json"
         playback = root / "playback.json"
+        missing_manual_status = root / "missing-manual-status.json"
+        manual_status_not_ready = root / "manual-recording-status-not-ready.json"
+        manual_status_score_ready = root / "manual-recording-status-score-ready.json"
+        manual_status_invalid_json = root / "manual-recording-status-invalid-json.json"
+        manual_status_malformed_values = root / "manual-recording-status-malformed-values.json"
+        manual_score_report = root / "headphone-isolation-report-score-ready.json"
 
         _write_json(stub, _report(True))
         _write_json(failing, _report(False))
@@ -3651,6 +3819,62 @@ def self_test() -> None:
                 ],
                 fixture_kind="fleurs_playback_suppression",
             ),
+        )
+        _write_json(
+            manual_status_not_ready,
+            {
+                "schema_version": 1,
+                "release_proof": False,
+                "manifest_path": str(root / "manual-recording-manifest.json"),
+                "score_report_path": str(manual_score_report),
+                "summary": {
+                    "issue_count": 5,
+                    "manual_recordings_ready_for_score_input": False,
+                    "manual_score_labels_specific": False,
+                    "manual_score_ready": False,
+                    "placeholder_label_count": 3,
+                    "release_proof": False,
+                    "warning_count": 1,
+                },
+            },
+        )
+        manual_status_not_ready.with_suffix(".md").write_text("# Manual Status\n", encoding="utf-8")
+        _write_json(
+            manual_status_score_ready,
+            {
+                "schema_version": 1,
+                "release_proof": False,
+                "manifest_path": str(root / "manual-recording-manifest.json"),
+                "score_report_path": str(manual_score_report),
+                "summary": {
+                    "issue_count": 0,
+                    "manual_recordings_ready_for_score_input": True,
+                    "manual_score_labels_specific": True,
+                    "manual_score_ready": True,
+                    "placeholder_label_count": 0,
+                    "release_proof": False,
+                    "warning_count": 0,
+                },
+            },
+        )
+        manual_status_invalid_json.write_text("{", encoding="utf-8")
+        _write_json(
+            manual_status_malformed_values,
+            {
+                "schema_version": 1,
+                "release_proof": "false",
+                "manifest_path": str(root / "manual-recording-manifest.json"),
+                "score_report_path": str(manual_score_report),
+                "summary": {
+                    "issue_count": "five",
+                    "manual_recordings_ready_for_score_input": "true",
+                    "manual_score_labels_specific": "true",
+                    "manual_score_ready": "true",
+                    "placeholder_label_count": -2,
+                    "release_proof": "false",
+                    "warning_count": None,
+                },
+            },
         )
 
         complete_args = argparse.Namespace(
@@ -3968,6 +4192,64 @@ def self_test() -> None:
             raise AssertionError("expected Markdown handoff to point at generated guided capture confirmation")
         if "$headphoneLabel" not in markdown or "$fixtureLabel" not in markdown or "$microphoneLabel" not in markdown:
             raise AssertionError("expected Markdown handoff to define generated guided capture label variables")
+        missing_status_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_manual_status_report=missing_manual_status,
+        )
+        if missing_status_report["summary"] != report["summary"]:
+            raise AssertionError("manual status handoff must not change release gate summary")
+        missing_status_markdown = render_markdown_report(missing_status_report)
+        if "Current Manual Recording Status" not in missing_status_markdown or "MISSING" not in missing_status_markdown:
+            raise AssertionError("expected missing manual status to be called out in Markdown")
+        parsed_status_args = parse_args(["--headphone-manual-status-report", str(manual_status_not_ready)])
+        parsed_status_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_manual_status_report=parsed_status_args.headphone_manual_status_report,
+        )
+        if "operator_handoff" not in parsed_status_report:
+            raise AssertionError("expected parsed CLI manual status path to be included in report handoff")
+        invalid_status_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_manual_status_report=manual_status_invalid_json,
+        )
+        invalid_status_markdown = render_markdown_report(invalid_status_report)
+        if "UNREADABLE" not in invalid_status_markdown:
+            raise AssertionError("expected invalid manual status JSON to render as unreadable")
+        not_ready_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_manual_status_report=manual_status_not_ready,
+        )
+        if not_ready_report["release_blocking_gates"] != report["release_blocking_gates"]:
+            raise AssertionError("manual status handoff must not change release-blocking gates")
+        not_ready_markdown = render_markdown_report(not_ready_report)
+        if "NOT-READY" not in not_ready_markdown or "not release evidence" not in not_ready_markdown:
+            raise AssertionError("expected not-ready manual status to stay non-evidentiary in Markdown")
+        if str(manual_status_not_ready.with_suffix(".md")) not in not_ready_markdown:
+            raise AssertionError("expected Markdown handoff to point at manual-recording-status.md")
+        malformed_values_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_manual_status_report=manual_status_malformed_values,
+        )
+        malformed_values_markdown = render_markdown_report(malformed_values_report)
+        if "SCORE-READY" in malformed_values_markdown:
+            raise AssertionError("string booleans in manual status must not be treated as score-ready")
+        if "Issues/warnings/placeholders: 0/0/0" not in malformed_values_markdown:
+            raise AssertionError("malformed manual status counts should be coerced without crashing")
+        score_ready_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_manual_status_report=manual_status_score_ready,
+        )
+        score_ready_markdown = render_markdown_report(score_ready_report)
+        if "SCORE-READY" not in score_ready_markdown or str(manual_score_report) not in score_ready_markdown:
+            raise AssertionError("expected score-ready status to include the scored report path")
+        if "--headphone-isolation-report" not in score_ready_markdown:
+            raise AssertionError("expected score-ready handoff to include release gate rerun command")
         markdown_report = root / "audio-gate-report.md"
         write_markdown_report(report, markdown_report)
         if "Release-Blocking Gates" not in markdown_report.read_text(encoding="utf-8"):
@@ -3994,6 +4276,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--voice-report", type=Path, default=DEFAULT_VOICE_REPORT)
     parser.add_argument("--room-suppression-report", type=Path, default=DEFAULT_ROOM_SUPPRESSION_REPORT)
     parser.add_argument("--headphone-isolation-report", type=Path, default=DEFAULT_HEADPHONE_ISOLATION_REPORT)
+    parser.add_argument("--headphone-manual-status-report", type=Path, default=DEFAULT_HEADPHONE_MANUAL_STATUS_REPORT)
     parser.add_argument("--playback-prototype-report", type=Path, default=DEFAULT_PLAYBACK_PROTOTYPE_REPORT)
     parser.add_argument("--capture-prototype-report", type=Path, default=DEFAULT_CAPTURE_PROTOTYPE_REPORT)
     return parser.parse_args(argv)
@@ -4007,7 +4290,11 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     release_results, prototype_results = evaluate(args)
-    report = build_report(release_results, prototype_results)
+    report = build_report(
+        release_results,
+        prototype_results,
+        headphone_manual_status_report=args.headphone_manual_status_report,
+    )
     write_report(report, args.report)
     write_markdown_report(report, args.markdown_report)
     if args.json:
