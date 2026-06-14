@@ -3449,12 +3449,27 @@ def write_manual_recording_checklist(
             "",
             "## Fast Check After Recording",
             "",
-            "Copy or import the three WAVs, then run the short category checks:",
+            "Copy the three WAVs into the raw recorder dropbox, then use the repo-level category path:",
             "",
             "```powershell",
-            "pwsh -NoProfile -File scripts/dev_container.ps1 test-category evidence-kit",
-            "pwsh -NoProfile -File scripts/dev_container.ps1 test-category recording-status",
-            "pwsh -NoProfile -File scripts/dev_container.ps1 test-category release",
+            "python scripts/run_test_category.py release-evidence",
+            "```",
+            "",
+            "After `release-evidence` reports WAVs ready, set concrete labels and score:",
+            "",
+            "```powershell",
+            "$env:LANGUAGE_HEADPHONE_DEVICE_LABEL = \"REPLACE_WITH_HEADPHONE_MODEL\"",
+            "$env:LANGUAGE_ISOLATION_FIXTURE_LABEL = \"REPLACE_WITH_EARCUP_AND_MIC_POSITION\"",
+            "$env:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL = \"REPLACE_WITH_MIC_MODEL_AND_POSITION\"",
+            "python scripts/run_test_category.py release-evidence-score",
+            "python scripts/run_test_category.py release",
+            "```",
+            "",
+            "Focused one-step categories remain available for debugging:",
+            "",
+            "```powershell",
+            "python scripts/run_test_category.py evidence-kit",
+            "python scripts/run_test_category.py recording-status",
             "```",
             "",
             "## Optional Repo Playback Helper",
@@ -3664,6 +3679,11 @@ def prepare_manual_kit(args: argparse.Namespace) -> int:
         manifest_path=manifest_path,
         manifest=manifest,
     )
+    write_manual_raw_recording_dropbox(
+        dropbox=manual_raw_recording_dropbox(manifest_path),
+        manifest_path=manifest_path,
+        playback_route={},
+    )
     manifest_path.write_text(
         json.dumps(manifest, indent=2, sort_keys=True, allow_nan=False) + "\n",
         encoding="utf-8",
@@ -3759,16 +3779,17 @@ def render_manual_recording_status_markdown(report: dict[str, Any]) -> str:
     if status == "SCORE-READY":
         lines.extend(
             [
-                "- Run the scorer with the same labels, then rerun the hard release gate.",
+                "- Run the category scorer with the same labels, then rerun the hard release gate.",
                 "",
                 "```powershell",
-                "$env:LANGUAGE_PYTHON = \"C:\\Path\\To\\python.exe\"",
-                f"$headphoneLabel = {powershell_quote_arg(headphone_label)}",
-                f"$fixtureLabel = {powershell_quote_arg(fixture_label)}",
-                f"$microphoneLabel = {powershell_quote_arg(microphone_label)}",
-                f"pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action score-manual -Python $env:LANGUAGE_PYTHON --manifest {manifest_arg} --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel",
-                f"python scripts/release_audio_gate.py --json --headphone-isolation-report {score_report_arg}",
+                f"$env:LANGUAGE_HEADPHONE_DEVICE_LABEL = {powershell_quote_arg(headphone_label)}",
+                f"$env:LANGUAGE_ISOLATION_FIXTURE_LABEL = {powershell_quote_arg(fixture_label)}",
+                f"$env:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL = {powershell_quote_arg(microphone_label)}",
+                "python scripts/run_test_category.py release-evidence-score",
+                "python scripts/run_test_category.py release",
                 "```",
+                "",
+                "Use `python scripts/release_audio_status.py --full-commands` only when you need lower-level score commands.",
             ]
         )
     elif status == "FILES-READY-LABELS-PENDING":
@@ -3777,26 +3798,26 @@ def render_manual_recording_status_markdown(report: dict[str, Any]) -> str:
                 "- The WAV files are ready, but scoring still needs specific hardware and fixture labels.",
                 "",
                 "```powershell",
-                "$env:LANGUAGE_PYTHON = \"C:\\Path\\To\\python.exe\"",
-                "$headphoneLabel = \"REPLACE_WITH_HEADPHONE_MODEL\"",
-                "$fixtureLabel = \"REPLACE_WITH_EARCUP_AND_MIC_POSITION\"",
-                "$microphoneLabel = \"REPLACE_WITH_MIC_MODEL_AND_POSITION\"",
-                f"pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action check-manual -Python $env:LANGUAGE_PYTHON --manifest {manifest_arg} --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel",
-                f"pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action score-manual -Python $env:LANGUAGE_PYTHON --manifest {manifest_arg} --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel",
+                "$env:LANGUAGE_HEADPHONE_DEVICE_LABEL = \"REPLACE_WITH_HEADPHONE_MODEL\"",
+                "$env:LANGUAGE_ISOLATION_FIXTURE_LABEL = \"REPLACE_WITH_EARCUP_AND_MIC_POSITION\"",
+                "$env:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL = \"REPLACE_WITH_MIC_MODEL_AND_POSITION\"",
+                "python scripts/run_test_category.py release-evidence-score",
                 "```",
+                "",
+                "Use `python scripts/release_audio_status.py --full-commands` only when you need lower-level check/score commands.",
             ]
         )
     else:
         lines.extend(
             [
                 f"- Follow `{checklist_path}` to collect the three listener-ear recordings.",
-                "- If recorder exports use different filenames, import them into the manifest paths before checking again.",
+                "- If recorder exports use different filenames, rename/copy them into the raw dropbox filenames, then run the category path.",
                 "",
                 "```powershell",
-                "$env:LANGUAGE_PYTHON = \"C:\\Path\\To\\python.exe\"",
-                f"pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action import-manual -Python $env:LANGUAGE_PYTHON --manifest {manifest_arg} --source-open-ear-recording RAW_SOURCE_OPEN.wav --source-isolated-ear-recording RAW_SOURCE_ISOLATED.wav --translated-headphone-recording RAW_TRANSLATED.wav --allow-downmix",
-                f"pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action check-manual -Python $env:LANGUAGE_PYTHON --manifest {manifest_arg} --score-warning-only",
+                "python scripts/run_test_category.py release-evidence",
                 "```",
+                "",
+                "Use `python scripts/release_audio_status.py --full-commands` only when you need lower-level import/check commands.",
             ]
         )
     lines.extend(
@@ -4204,7 +4225,15 @@ def write_manual_raw_recording_dropbox(
             "",
             "Keep the recorder position fixed between the source-open and source-isolated takes.",
             "Export mono 16-bit PCM WAV at the kit sample rate, or use the generated import command with `--allow-downmix` for stereo exports.",
-            "After adding the files, run `pwsh -NoProfile -File scripts/dev_container.ps1 test-category evidence-kit`, then `pwsh -NoProfile -File scripts/dev_container.ps1 test-category recording-status`.",
+            "",
+            "## Recording Map",
+            "",
+            "- `source-open-ear-recording.wav`: play the source reference over the source speaker with the listener ear open.",
+            "- `source-isolated-ear-recording.wav`: play the same source reference at the same volume with the headphone/earpiece sealed over the recorder.",
+            "- `translated-headphone-recording.wav`: keep the seal and play the translated reference through the headphone/earpiece.",
+            "",
+            "After adding the files, run `python scripts/run_test_category.py release-evidence`.",
+            "When the WAVs are ready and labels are concrete, run `python scripts/run_test_category.py release-evidence-score`, then `python scripts/run_test_category.py release`.",
             "",
         ]
     )
@@ -5850,6 +5879,10 @@ def self_test() -> int:
             "source_open_ear_recording",
             "source_isolated_ear_recording",
             "translated_headphone_recording",
+            "python scripts/run_test_category.py release-evidence",
+            "python scripts/run_test_category.py release-evidence-score",
+            "python scripts/run_test_category.py release",
+            "python scripts/run_test_category.py recording-status",
             f"headphone-isolation-play-manual --manifest {manual_manifest_arg}",
             f"headphone-isolation-import-manual --manifest {manual_manifest_arg}",
             f"headphone-isolation-check-manual --manifest {manual_manifest_arg}",
@@ -5874,6 +5907,18 @@ def self_test() -> int:
         for raw_path in raw_expected_recordings.values():
             if str(raw_path) not in manual_checklist:
                 raise RuntimeError(f"manual recording checklist missing raw dropbox path {raw_path}")
+        raw_dropbox_readme = Path(str(raw_dropbox.get("readme_path")))
+        if not raw_dropbox_readme.exists():
+            raise RuntimeError("manual raw dropbox should write a README")
+        raw_dropbox_markdown = raw_dropbox_readme.read_text(encoding="utf-8")
+        for expected_text in (
+            "Recording Map",
+            "play the source reference over the source speaker",
+            "python scripts/run_test_category.py release-evidence",
+            "python scripts/run_test_category.py release-evidence-score",
+        ):
+            if expected_text not in raw_dropbox_markdown:
+                raise RuntimeError(f"manual raw dropbox README missing {expected_text!r}")
         for key in ("source_reference", "translated_playback_reference"):
             expected_path = artifact_paths.get(key)
             if not expected_path or str(expected_path) not in manual_checklist:
@@ -5997,8 +6042,10 @@ def self_test() -> int:
             raise RuntimeError("manual recording status Markdown should show NOT-READY for missing recordings")
         if "manual-recording-checklist.md" not in missing_manual_markdown:
             raise RuntimeError("manual recording status Markdown should point back to the recording checklist")
-        if "import-manual" not in missing_manual_markdown:
-            raise RuntimeError("manual recording status Markdown should include the import-manual recovery path")
+        if "python scripts/run_test_category.py release-evidence" not in missing_manual_markdown:
+            raise RuntimeError("manual recording status Markdown should include the category recovery path")
+        if "python scripts/release_audio_status.py --full-commands" not in missing_manual_markdown:
+            raise RuntimeError("manual recording status Markdown should point to lower-level commands on demand")
         collection_result = collect_headphone_evidence(
             argparse.Namespace(
                 adapter_id=DEFAULT_MANUAL_KIT_ADAPTER_ID,
@@ -6499,6 +6546,10 @@ def self_test() -> int:
             raise RuntimeError("manual recording status Markdown should show labels pending when WAVs are ready")
         if "REPLACE_WITH_HEADPHONE_MODEL" not in placeholder_manual_markdown:
             raise RuntimeError("manual recording status Markdown should keep label replacement prompts visible")
+        if "python scripts/run_test_category.py release-evidence-score" not in placeholder_manual_markdown:
+            raise RuntimeError("manual recording status Markdown should prioritize category scoring when WAVs exist")
+        if "headphone_isolation_local.ps1 -Action score-manual" in placeholder_manual_markdown:
+            raise RuntimeError("manual recording status Markdown should not lead with low-level scoring commands")
         placeholder_score_manual_result = score_manual_recordings(
             argparse.Namespace(
                 adapter_id=DEFAULT_ADAPTER_ID,
@@ -6556,12 +6607,14 @@ def self_test() -> int:
         ).read_text(encoding="utf-8")
         if "Status: **SCORE-READY**" not in ready_manual_markdown:
             raise RuntimeError("manual recording status Markdown should show score-ready when labels and WAVs pass")
-        if "release_audio_gate.py --json" not in ready_manual_markdown:
-            raise RuntimeError("manual recording status Markdown should include the release gate follow-up")
-        if f"--headphone-isolation-report {score_report_arg}" not in ready_manual_markdown:
-            raise RuntimeError("manual recording status Markdown should gate the manifest score report path")
+        if "python scripts/run_test_category.py release-evidence-score" not in ready_manual_markdown:
+            raise RuntimeError("manual recording status Markdown should include the category score follow-up")
+        if "python scripts/run_test_category.py release" not in ready_manual_markdown:
+            raise RuntimeError("manual recording status Markdown should include the strict release follow-up")
         if "unit headphones" not in ready_manual_markdown:
             raise RuntimeError("manual recording status Markdown should carry concrete score labels")
+        if "headphone_isolation_local.ps1 -Action score-manual" in ready_manual_markdown:
+            raise RuntimeError("score-ready manual status Markdown should not lead with low-level scoring commands")
         manual_score_result = score_manual_recordings(
             argparse.Namespace(
                 adapter_id=DEFAULT_ADAPTER_ID,
