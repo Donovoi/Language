@@ -98,6 +98,7 @@ Common categories:
 | `audio-fixtures` | Disposable Docker audio fixtures | Capture, translation, playback, fallback TTS. |
 | `hardware` | Host audio discovery and listener-ear planning | Run deliberately when testing devices. |
 | `route-triage` | Host headphone route preflight and probe handoff | Prints the probe command; does not run it. |
+| `guided-capture` | Strict host-guided listener-ear capture | Requires explicit device IDs, concrete labels, and a confirmed preflight report. |
 | `physical-audio-handoff` | Current host route, manual kit, and checklist | Best first command before a hardware session. |
 | `evidence-kit` | Manual listener-ear recording kit/dropbox | Creates/checks the folder for the three release WAVs. |
 | `recording-status` | Listener-ear WAV readiness | Use after adding the three manual recordings. |
@@ -106,7 +107,7 @@ Common categories:
 | `release-status` | Concise release blocker summary | Low-token next-action handoff; exits zero by default. |
 | `release-progress` | Milestone percentages | Evidence-linked estimate for push summaries. |
 | `release` | Strict release-gate status | Expected to fail until physical evidence is present. |
-| `all` | Automated non-interactive suites | Excludes hardware, release, optional model downloads, and artifact-dependent voice checks. |
+| `all` | Automated non-interactive suites | Excludes hardware, guided capture, release, optional model downloads, and artifact-dependent voice checks. |
 
 Detailed test categories and the old command matrix live in
 `docs/testing/test-categories.md`. Disposable environment details live in
@@ -146,6 +147,14 @@ current checklist:
 
 ```powershell
 python scripts/run_test_category.py physical-audio-handoff
+```
+
+If preflight reports a capture-ready route and you have a real listener-ear mic in place, set the
+device IDs and labels, then run:
+
+```powershell
+python scripts/run_test_category.py guided-capture --dry-run
+python scripts/run_test_category.py guided-capture
 ```
 
 Prepare/check the manual recording kit, import any complete dropbox WAVs, and print release status:
