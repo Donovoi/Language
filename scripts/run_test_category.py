@@ -30,6 +30,14 @@ MANUAL_RECORDING_FILENAMES = {
     "source_isolated_ear_recording": "source-isolated-ear-recording.wav",
     "translated_headphone_recording": "translated-headphone-recording.wav",
 }
+PLACEHOLDER_REQUIRED_ENV_VALUES = {
+    "HEADPHONE_OUTPUT",
+    "LISTENER_EAR_INPUT",
+    "REPLACE_WITH_EARCUP_AND_MIC_POSITION",
+    "REPLACE_WITH_HEADPHONE_MODEL",
+    "REPLACE_WITH_MIC_MODEL_AND_POSITION",
+    "SOURCE_SPEAKER_OUTPUT",
+}
 
 
 @dataclass(frozen=True)
@@ -390,6 +398,11 @@ STEPS: dict[str, Step] = {
             "{env:LANGUAGE_ISOLATION_FIXTURE_LABEL:REPLACE_WITH_EARCUP_AND_MIC_POSITION}",
             "--measurement-microphone-label",
             "{env:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL:REPLACE_WITH_MIC_MODEL_AND_POSITION}",
+        ),
+        required_env=(
+            "LANGUAGE_HEADPHONE_DEVICE_LABEL",
+            "LANGUAGE_ISOLATION_FIXTURE_LABEL",
+            "LANGUAGE_MEASUREMENT_MICROPHONE_LABEL",
         ),
     ),
     "headphone-isolation-check-manual": Step(
@@ -887,8 +900,17 @@ def format_command(command: Iterable[str], env_delta: dict[str, str]) -> str:
     return f"{env_prefix} {rendered}".strip()
 
 
+def _placeholder_required_env(value: str) -> bool:
+    text = value.strip()
+    return (
+        not text
+        or text.upper() in PLACEHOLDER_REQUIRED_ENV_VALUES
+        or text.upper().startswith("REPLACE_WITH_")
+    )
+
+
 def missing_required_env(step: Step) -> list[str]:
-    return [name for name in step.required_env if not os.environ.get(name, "").strip()]
+    return [name for name in step.required_env if _placeholder_required_env(os.environ.get(name, ""))]
 
 
 def repo_relative(path: Path) -> str:
@@ -1020,7 +1042,7 @@ def run_category(args: argparse.Namespace) -> int:
             print(f"   {format_command(command, env_delta)}")
             missing_env = missing_required_env(step)
             if missing_env:
-                print(f"   requires env: {', '.join(missing_env)}")
+                print(f"   requires concrete env: {', '.join(missing_env)}")
             if args.quiet:
                 log_path = log_dir / f"{index:02d}-{safe_filename(step.name)}.log"
                 print(f"   log: {repo_relative(log_path)}")
@@ -1036,7 +1058,7 @@ def run_category(args: argparse.Namespace) -> int:
         print(format_command(command, env_delta))
         missing_env = missing_required_env(step)
         if missing_env:
-            print(f"{step.name} requires environment variables: {', '.join(missing_env)}")
+            print(f"{step.name} requires concrete environment variables: {', '.join(missing_env)}")
             print("Use --dry-run to inspect the command template before setting hardware values.")
             return 2
         if args.quiet:
@@ -1151,12 +1173,31 @@ def self_test() -> int:
         raise AssertionError("recording-status must print a concise manual recording summary")
     if CATEGORIES["reference-playback"].steps != ("headphone-isolation-playback-session",):
         raise AssertionError("reference-playback must only run the explicit playback session")
+    score_required_env = (
+        "LANGUAGE_HEADPHONE_DEVICE_LABEL",
+        "LANGUAGE_ISOLATION_FIXTURE_LABEL",
+        "LANGUAGE_MEASUREMENT_MICROPHONE_LABEL",
+    )
+    if STEPS["headphone-isolation-collect-and-score-evidence"].required_env != score_required_env:
+        raise AssertionError("release-evidence-score must require concrete hardware labels")
     for playback_step in (
         STEPS["headphone-isolation-playback-plan"],
         STEPS["headphone-isolation-playback-session"],
     ):
         if playback_step.required_env != ("LANGUAGE_SOURCE_OUTPUT_DEVICE", "LANGUAGE_HEADPHONE_OUTPUT_DEVICE"):
             raise AssertionError(f"{playback_step.name} must require explicit source/headphone output devices")
+    old_env = os.environ.get("LANGUAGE_HEADPHONE_DEVICE_LABEL")
+    os.environ["LANGUAGE_HEADPHONE_DEVICE_LABEL"] = "REPLACE_WITH_HEADPHONE_MODEL"
+    try:
+        if "LANGUAGE_HEADPHONE_DEVICE_LABEL" not in missing_required_env(
+            STEPS["headphone-isolation-collect-and-score-evidence"]
+        ):
+            raise AssertionError("placeholder labels must be rejected as missing release score env")
+    finally:
+        if old_env is None:
+            os.environ.pop("LANGUAGE_HEADPHONE_DEVICE_LABEL", None)
+        else:
+            os.environ["LANGUAGE_HEADPHONE_DEVICE_LABEL"] = old_env
     for step in STEPS.values():
         for name in step.required_env:
             if not re.match(r"^[A-Z][A-Z0-9_]*$", name):
