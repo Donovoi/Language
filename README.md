@@ -104,6 +104,8 @@ Common categories:
 | `physical-audio-handoff` | Current host devices, route, manual kit, and checklist | Best first command before a hardware session. |
 | `evidence-kit` | Manual listener-ear recording kit/dropbox | Creates/checks the folder for the three release WAVs. |
 | `recording-status` | Listener-ear WAV readiness | Use after adding the three manual recordings. |
+| `reference-playback-dry-run` | Validate manual reference playback routing | Requires source/headphone output env vars; plays no audio. |
+| `reference-playback` | Play manual references for an external recorder | Explicit hardware action; not release evidence. |
 | `release-evidence` | One-command listener-ear evidence handoff | Prepare/import/check the kit, then print release status. |
 | `release-evidence-score` | Score complete listener-ear evidence | Requires real WAVs and concrete hardware labels. |
 | `release-status` | Concise release blocker summary | Low-token next-action handoff; exits zero by default. |
@@ -157,6 +159,15 @@ current checklist:
 python scripts/run_test_category.py physical-audio-handoff
 ```
 
+To verify and then play the manual references through explicit outputs for an external recorder:
+
+```powershell
+$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = "REPLACE_WITH_SOURCE_OUTPUT_ID"
+$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = "REPLACE_WITH_HEADPHONE_OUTPUT_ID"
+python scripts/run_test_category.py reference-playback-dry-run
+python scripts/run_test_category.py reference-playback
+```
+
 If preflight reports a capture-ready route and you have a real listener-ear mic in place, set the
 device IDs and labels, then run:
 
@@ -168,7 +179,7 @@ python scripts/run_test_category.py guided-capture
 Prepare/check the manual recording kit, import any complete dropbox WAVs, and print release status:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-evidence
+python scripts/run_test_category.py release-evidence
 ```
 
 After the three WAVs are in the dropbox, set concrete labels and score the evidence:
@@ -189,8 +200,8 @@ python scripts/run_test_category.py release-artifacts
 The focused commands remain available when you only want one part:
 
 ```powershell
-pwsh -NoProfile -File scripts/dev_container.ps1 test-category evidence-kit
-pwsh -NoProfile -File scripts/dev_container.ps1 test-category recording-status
+python scripts/run_test_category.py evidence-kit
+python scripts/run_test_category.py recording-status
 ```
 
 ## Release Gate
