@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -93,6 +94,7 @@ def build_progress(report: dict[str, Any]) -> dict[str, Any]:
     audio_percent, audio_evidence = _audio_percent(report)
     release_reports_exist = DEFAULT_GATE_REPORT.exists() and (ROOT / "artifacts/release/audio-gate-report.md").exists()
     checklist_ready = (ROOT / "artifacts/release/physical-audio-checklist.md").exists()
+    flutter_ready = shutil.which("flutter") is not None
     auth_tests_ready = _file_has_text("services/gateway/tests/test_gateway.py", "test_read_endpoints_remain_auth_free")
     auth_runtime_ready = _file_has_text("services/gateway/app/auth.py", "require_write_token")
     category_runner_ready = _file_has_text("scripts/run_test_category.py", "physical-audio-handoff")
@@ -109,9 +111,13 @@ def build_progress(report: dict[str, Any]) -> dict[str, Any]:
         Milestone(
             "release_smoke_artifacts",
             "Release smoke + artifact readiness",
-            100 if release_reports_exist and checklist_ready else 95,
+            100 if release_reports_exist and checklist_ready and flutter_ready else 95 if release_reports_exist and checklist_ready else 90,
             0.12,
-            "release reports and physical checklist exist" if release_reports_exist and checklist_ready else "release report artifact set incomplete",
+            "release reports, physical checklist, and Flutter host are ready"
+            if release_reports_exist and checklist_ready and flutter_ready
+            else "release reports/checklist exist; Flutter is not on PATH for local app validation"
+            if release_reports_exist and checklist_ready
+            else "release report artifact set incomplete",
         ),
         Milestone(
             "gateway_package_ergonomics",
