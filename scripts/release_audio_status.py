@@ -547,6 +547,19 @@ def _playback_helper_status_lines(report: dict[str, Any]) -> list[str]:
     ]
 
 
+def _label_helper_status_lines() -> list[str]:
+    return [
+        "Evidence scoring label helper (replace placeholders before running):",
+        "```powershell",
+        "$env:LANGUAGE_HEADPHONE_DEVICE_LABEL = \"REPLACE_WITH_HEADPHONE_MODEL\"",
+        "$env:LANGUAGE_ISOLATION_FIXTURE_LABEL = \"REPLACE_WITH_EARCUP_AND_MIC_POSITION\"",
+        "$env:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL = \"REPLACE_WITH_MIC_MODEL_AND_POSITION\"",
+        "python scripts/run_test_category.py release-evidence-score",
+        "python scripts/run_test_category.py release",
+        "```",
+    ]
+
+
 def render_status(report: dict[str, Any], gate_returncode: int, *, full_commands: bool = False) -> str:
     state, passed_count, gate_count = _release_state(report)
 
@@ -614,6 +627,8 @@ def render_status(report: dict[str, Any], gate_returncode: int, *, full_commands
         if playback_helper:
             lines.append("")
             lines.extend(playback_helper)
+        lines.append("")
+        lines.extend(_label_helper_status_lines())
         lines.append("Full command list: python scripts/release_audio_status.py --full-commands")
 
     markdown_path = ROOT / "artifacts/release/audio-gate-report.md"
@@ -740,6 +755,10 @@ def self_test() -> int:
         "Missing recordings: source-open-ear-recording.wav",
         "Next actions:",
         "Playback helper for an external listener-ear recorder (not release proof):",
+        "Evidence scoring label helper (replace placeholders before running):",
+        "$env:LANGUAGE_HEADPHONE_DEVICE_LABEL = \"REPLACE_WITH_HEADPHONE_MODEL\"",
+        "$env:LANGUAGE_ISOLATION_FIXTURE_LABEL = \"REPLACE_WITH_EARCUP_AND_MIC_POSITION\"",
+        "$env:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL = \"REPLACE_WITH_MIC_MODEL_AND_POSITION\"",
         "$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = \"12\"",
         "$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = \"10\"",
         "python scripts/run_test_category.py release-evidence",
