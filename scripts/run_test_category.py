@@ -59,6 +59,11 @@ STEPS: dict[str, Step] = {
         description="compact release status summary contract self-test",
         local_args=("{python}", "scripts/release_audio_status.py", "--self-test"),
     ),
+    "release-progress-self-test": Step(
+        name="release-progress-self-test",
+        description="release progress estimate contract self-test",
+        local_args=("{python}", "scripts/release_progress.py", "--self-test"),
+    ),
     "gateway-package-verifier-self-test": Step(
         name="gateway-package-verifier-self-test",
         description="gateway package entry-point verifier contract self-test",
@@ -68,6 +73,11 @@ STEPS: dict[str, Step] = {
         name="release-audio-status",
         description="compact release gate blocker, next-action summary, and physical-audio checklist",
         local_args=("{python}", "scripts/release_audio_status.py", "--write-operator-checklist"),
+    ),
+    "release-progress": Step(
+        name="release-progress",
+        description="evidence-linked milestone completion estimate",
+        local_args=("{python}", "scripts/release_progress.py"),
     ),
     "headphone-route-triage-handoff-self-test": Step(
         name="headphone-route-triage-handoff-self-test",
@@ -326,6 +336,7 @@ CATEGORIES: dict[str, Category] = {
         steps=(
             "release-audio-gate-self-test",
             "release-audio-status-self-test",
+            "release-progress-self-test",
             "gateway-package-verifier-self-test",
             "headphone-route-triage-handoff-self-test",
             "live-microphone-capture-contract",
@@ -339,6 +350,7 @@ CATEGORIES: dict[str, Category] = {
         steps=(
             "release-audio-gate-self-test",
             "release-audio-status-self-test",
+            "release-progress-self-test",
             "gateway-package-verifier-self-test",
             "headphone-route-triage-handoff-self-test",
             "live-microphone-capture-contract",
@@ -500,6 +512,15 @@ CATEGORIES: dict[str, Category] = {
         notes=(
             "Use release for the strict nonzero release gate.",
             "Use release-status in low-token agent handoffs.",
+        ),
+    ),
+    "release-progress": Category(
+        name="release-progress",
+        description="Evidence-linked milestone percentages and total completion estimate.",
+        steps=("release-progress",),
+        notes=(
+            "Use after each push to keep milestone percentages reproducible.",
+            "The hard release gate remains authoritative for pass/fail.",
         ),
     ),
     "all": Category(
