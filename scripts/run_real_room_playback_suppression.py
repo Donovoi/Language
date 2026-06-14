@@ -971,6 +971,7 @@ def run_route_probe(args: argparse.Namespace) -> int:
             "release_proof": False,
             "sample_rate_hz": sample_rate_hz,
         }
+        summary["route_failure_diagnosis"] = route_probe_failure_diagnosis(summary, args)
         gates = [
             {
                 "name": "route_probe_stream_opened",
@@ -1062,6 +1063,7 @@ def run_route_probe(args: argparse.Namespace) -> int:
         "route_probe_reference_distortion_db": metrics["distortion_db"],
         "sample_rate_hz": sample_rate_hz,
     }
+    summary["route_failure_diagnosis"] = route_probe_failure_diagnosis(summary, args)
     gates = route_probe_gates(summary, args)
     report = {
         "schema_version": 1,
@@ -1581,6 +1583,56 @@ def route_probe_attempt_metrics(summary: dict[str, Any], args: argparse.Namespac
     }
 
 
+def route_probe_failure_diagnosis(summary: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
+    reasons: list[str] = []
+    next_actions: list[str] = []
+
+    def add_action(action: str) -> None:
+        if action not in next_actions:
+            next_actions.append(action)
+
+    error = str(summary.get("error", "")).strip()
+    if error:
+        reasons.append("stream_open_error")
+        add_action("try a different PortAudio host API or explicit input/output device pair")
+        add_action("verify the selected output is unmuted and not reserved by another application")
+        return {"blocking_reasons": reasons, "next_actions": next_actions}
+
+    sample_rate_hz = max(1, int(summary.get("sample_rate_hz") or args.sample_rate_hz))
+    level = float(summary.get("route_probe_recording_dbfs", float("-inf")))
+    confidence = float(summary.get("route_probe_reference_confidence", float("-inf")))
+    distortion = float(summary.get("route_probe_reference_distortion_db", float("inf")))
+    peak = float(summary.get("route_probe_peak_dbfs", float("-inf")))
+    clipped = int(summary.get("route_probe_clipped_sample_count") or 0)
+    lag_ms = abs(float(summary.get("route_probe_lag_samples", 0))) * 1000.0 / float(sample_rate_hz)
+    min_level = float(getattr(args, "min_room_calibration_dbfs", DEFAULT_MIN_ROOM_CALIBRATION_DBFS))
+    min_confidence = float(getattr(args, "min_route_probe_confidence", DEFAULT_MIN_ROUTE_PROBE_CONFIDENCE))
+    max_distortion = float(getattr(args, "max_route_probe_distortion_db", DEFAULT_MAX_ROUTE_PROBE_DISTORTION_DB))
+    max_lag = float(getattr(args, "max_alignment_lag_ms", DEFAULT_MAX_ALIGNMENT_LAG_MS))
+    max_peak = float(getattr(args, "max_peak_dbfs", DEFAULT_MAX_PEAK_DBFS))
+    if not math.isfinite(level) or level < min_level:
+        reasons.append("recording_too_quiet")
+        add_action("move the microphone closer to the source speaker or raise playback gain without clipping")
+        add_action("verify the selected source output is the physical laptop/speaker path and is not muted")
+    if clipped > 0 or (math.isfinite(peak) and peak > max_peak):
+        reasons.append("recording_clipped")
+        add_action("lower playback gain before rerunning the route probe")
+    if not math.isfinite(confidence) or confidence < min_confidence:
+        reasons.append("reference_not_detected")
+        add_action("disable Windows audio enhancements, noise suppression, AGC, and echo processing")
+        add_action("try an alternate host API route for the same physical devices")
+    if not math.isfinite(distortion) or distortion > max_distortion:
+        reasons.append("reference_distorted")
+        add_action("reduce processing in the capture/playback path or use a wired speaker/microphone route")
+    if max_lag > 0 and lag_ms >= max_lag * 0.8:
+        reasons.append("alignment_lag_near_limit")
+        add_action("try a lower-latency host API route before increasing lag tolerance for triage")
+    if bool(summary.get("route_probe_recording_matches_reference")):
+        reasons.append("recording_matches_reference_clone")
+        add_action("discard this route result and rerun through a real microphone/speaker path")
+    return {"blocking_reasons": reasons, "next_actions": next_actions}
+
+
 def route_probe_score(metrics: dict[str, Any]) -> float:
     margins = metrics.get("margin_to_threshold", {})
     score = 0.0
@@ -1761,6 +1813,7 @@ def run_route_probe_sweep(args: argparse.Namespace) -> int:
                     "artifact_hashes": artifact_hashes if isinstance(artifact_hashes, dict) else {},
                     "artifact_paths": artifact_paths if isinstance(artifact_paths, dict) else {},
                     "device": benchmark.get("device") if isinstance(benchmark, dict) else None,
+                    "diagnosis": summary.get("route_failure_diagnosis", {}),
                     "failed_gates": failed_gates,
                     "metrics": metrics,
                     "passed": passed,
@@ -2056,24 +2109,52 @@ def self_test() -> int:
         "device_path_fingerprint": "0" * 64,
         "device_path_identity_recorded": True,
         "route_probe_clipped_sample_count": 0,
+        "route_probe_lag_samples": 0,
+        "route_probe_peak_dbfs": -6.0,
         "route_probe_recording_dbfs": -20.0,
         "route_probe_recording_matches_reference": False,
         "route_probe_reference_confidence": 0.95,
         "route_probe_reference_distortion_db": 3.0,
+        "sample_rate_hz": sample_rate_hz,
     }
     route_args = argparse.Namespace(
         max_route_probe_distortion_db=DEFAULT_MAX_ROUTE_PROBE_DISTORTION_DB,
+        max_alignment_lag_ms=DEFAULT_MAX_ALIGNMENT_LAG_MS,
+        max_peak_dbfs=DEFAULT_MAX_PEAK_DBFS,
         min_room_calibration_dbfs=DEFAULT_MIN_ROOM_CALIBRATION_DBFS,
         min_route_probe_confidence=DEFAULT_MIN_ROUTE_PROBE_CONFIDENCE,
+        sample_rate_hz=sample_rate_hz,
     )
     route_gates = route_probe_gates(route_summary, route_args)
     if not all(bool(gate["passed"]) for gate in route_gates):
         raise RuntimeError(f"expected self-test route probe gates to pass: {route_gates}")
+    route_diagnosis = route_probe_failure_diagnosis(route_summary, route_args)
+    if route_diagnosis["blocking_reasons"]:
+        raise RuntimeError(f"expected passing route probe diagnosis to be empty: {route_diagnosis}")
     clone_summary = dict(route_summary)
     clone_summary["route_probe_recording_matches_reference"] = True
     clone_gates = route_probe_gates(clone_summary, route_args)
     if all(bool(gate["passed"]) for gate in clone_gates):
         raise RuntimeError("expected reference-clone route probe gates to fail")
+    failing_route_summary = dict(route_summary)
+    failing_route_summary.update(
+        {
+            "route_probe_lag_samples": int(sample_rate_hz),
+            "route_probe_peak_dbfs": -40.0,
+            "route_probe_recording_dbfs": -72.0,
+            "route_probe_reference_confidence": 0.01,
+            "route_probe_reference_distortion_db": 75.0,
+        }
+    )
+    failing_route_diagnosis = route_probe_failure_diagnosis(failing_route_summary, route_args)
+    for expected_reason in (
+        "recording_too_quiet",
+        "reference_not_detected",
+        "reference_distorted",
+        "alignment_lag_near_limit",
+    ):
+        if expected_reason not in failing_route_diagnosis["blocking_reasons"]:
+            raise RuntimeError(f"expected {expected_reason} in route probe diagnosis: {failing_route_diagnosis}")
     print("real-room playback suppression contract self-test PASS")
     return 0
 
