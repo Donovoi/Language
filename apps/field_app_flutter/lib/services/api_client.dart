@@ -22,12 +22,18 @@ abstract class SessionApi {
 }
 
 class ApiClient implements SessionApi {
-  ApiClient({String? baseUrl}) : _baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultBaseUrl());
+  ApiClient({String? baseUrl, String? authToken})
+      : _baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultBaseUrl()),
+        _authToken = _normalizeAuthToken(authToken ?? _configuredAuthToken);
 
   final String _baseUrl;
+  final String? _authToken;
 
   static const String _configuredBaseUrl = String.fromEnvironment(
     'FIELD_APP_API_BASE_URL',
+  );
+  static const String _configuredAuthToken = String.fromEnvironment(
+    'FIELD_APP_AUTH_TOKEN',
   );
 
   @override
@@ -125,6 +131,7 @@ class ApiClient implements SessionApi {
     try {
       final request = await client.getUrl(uri);
       request.headers.set(HttpHeaders.acceptHeader, 'text/event-stream');
+      _applyAuthHeader(request);
       final response = await request.close();
       final statusCode = response.statusCode;
       if (statusCode < 200 || statusCode >= 300) {
@@ -170,6 +177,7 @@ class ApiClient implements SessionApi {
     final client = HttpClient();
     try {
       final request = await client.openUrl(method, uri);
+      _applyAuthHeader(request);
       final response = await request.close();
       final payload = await response.transform(utf8.decoder).join();
       if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -196,5 +204,18 @@ class ApiClient implements SessionApi {
       return baseUrl.substring(0, baseUrl.length - 1);
     }
     return baseUrl;
+  }
+
+  static String? _normalizeAuthToken(String authToken) {
+    final trimmed = authToken.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+
+  void _applyAuthHeader(HttpClientRequest request) {
+    final authToken = _authToken;
+    if (authToken == null) {
+      return;
+    }
+    request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $authToken');
   }
 }

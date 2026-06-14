@@ -26,11 +26,11 @@ than by inventing a second package version line.
 	- only promote notes into a numbered heading when cutting a tagged semver release
 - [ ] Review `docs/development/release-builds.md` so the artifact matrix still matches the repo's actual capabilities.
 - [ ] Review `docs/development/internal-beta-smoke-runbook.md` so the smoke path still matches the shipped artifact set.
-- [ ] Decide whether Flutter artifacts should embed `FIELD_APP_API_BASE_URL` at build time:
+- [ ] Decide which Flutter runtime values should be embedded at build time:
 	- leave it blank for the default emulator/local-host smoke path
-	- set it explicitly for device or hosted-gateway testing
-- [ ] Keep `LANGUAGE_GATEWAY_AUTH_TOKEN` unset for packaged-app smoke verification.
-	The current Flutter build supports base-URL injection, but it does **not** inject bearer tokens for write routes.
+	- set `FIELD_APP_API_BASE_URL` explicitly for device or hosted-gateway testing
+	- leave `FIELD_APP_AUTH_TOKEN` blank when gateway auth is unset
+	- set `FIELD_APP_AUTH_TOKEN` only for controlled internal smoke gateways, then rotate the matching gateway token after the run
 
 ## Build and validate the candidate
 
@@ -79,7 +79,7 @@ than by inventing a second package version line.
 - [ ] Verify the gateway responds on `/livez`, `/readyz`, and `/v1/session`.
 - [ ] Verify the app shows `Live updates connected` after launch.
 - [ ] Verify mode switching, session reset, and speaker lock/unlock from the app.
-- [ ] Trigger `POST /v1/mock/live-ingest` from the host side and verify live lane/status/caption updates in the app.
+- [ ] Trigger the mock live-ingest demo from the app and verify live lane/status/caption updates.
 - [ ] Record the tested commit SHA, workflow run URL, artifact names, and any known caveats.
 
 ## Promote or publish
