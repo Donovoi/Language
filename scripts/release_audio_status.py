@@ -86,7 +86,7 @@ def _manual_evidence_lines(report: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _recommended_commands(report: dict[str, Any]) -> list[str]:
+def _detailed_recommended_commands(report: dict[str, Any]) -> list[str]:
     handoff = _as_dict(report.get("operator_handoff"))
     collection = _as_dict(handoff.get("headphone_collection_plan_status"))
     commands = _as_dict(collection.get("recommended_commands"))
@@ -114,7 +114,38 @@ def _recommended_commands(report: dict[str, Any]) -> list[str]:
     return rendered
 
 
-def render_status(report: dict[str, Any], gate_returncode: int) -> str:
+def _compact_next_actions(report: dict[str, Any]) -> list[str]:
+    handoff = _as_dict(report.get("operator_handoff"))
+    manual = _as_dict(handoff.get("headphone_manual_status"))
+    collection = _as_dict(handoff.get("headphone_collection_plan_status"))
+    dropbox = _as_dict(collection.get("raw_recording_dropbox"))
+    dropbox_state = _as_dict(dropbox.get("state"))
+    dropbox_path = str(dropbox.get("path", "")).strip()
+    missing = [str(item) for item in _as_list(dropbox_state.get("missing_recordings"))]
+    status = str(manual.get("status", "")).strip()
+
+    if status == "SCORE-READY":
+        return [
+            "Run: python scripts/run_test_category.py release-evidence",
+            "Run: python scripts/run_test_category.py release",
+        ]
+    if status == "FILES-READY-LABELS-PENDING":
+        return [
+            "Replace REPLACE_WITH_* labels with concrete hardware/fixture labels.",
+            "Run: python scripts/run_test_category.py release-evidence",
+        ]
+
+    actions = ["Run: python scripts/run_test_category.py release-evidence"]
+    if dropbox_path and missing:
+        missing_text = ", ".join(missing)
+        actions.append(f"Record/export missing WAVs into {_repo_relative(dropbox_path)}: {missing_text}")
+        actions.append("Rerun: python scripts/run_test_category.py release-evidence")
+    else:
+        actions.append("Use --full-commands for the detailed hardware command list.")
+    return actions
+
+
+def render_status(report: dict[str, Any], gate_returncode: int, *, full_commands: bool = False) -> str:
     summary = _as_dict(report.get("summary"))
     gate_count = int(summary.get("release_blocking_gate_count", 0) or 0)
     failure_count = int(summary.get("release_blocking_failure_count", 0) or 0)
@@ -159,11 +190,17 @@ def render_status(report: dict[str, Any], gate_returncode: int) -> str:
         if verdict:
             lines.append(f"- Verdict: {verdict}")
 
-    if failures:
+    if failures and full_commands:
         lines.append("")
         lines.append("Next commands:")
-        for index, command in enumerate(_recommended_commands(report), start=1):
+        for index, command in enumerate(_detailed_recommended_commands(report), start=1):
             lines.append(f"{index}. {command}")
+    elif failures:
+        lines.append("")
+        lines.append("Next actions:")
+        for index, action in enumerate(_compact_next_actions(report), start=1):
+            lines.append(f"{index}. {action}")
+        lines.append("Full command list: python scripts/release_audio_status.py --full-commands")
 
     markdown_path = ROOT / "artifacts/release/audio-gate-report.md"
     json_path = ROOT / "artifacts/release/audio-gate-report.json"
@@ -225,13 +262,21 @@ def self_test() -> int:
         "Release gates: 1/2 passed",
         "playback_source_suppression_evidence",
         "Missing recordings: source_open_ear_recording",
-        "prepare command",
-        "release command",
+        "Next actions:",
+        "python scripts/run_test_category.py release-evidence",
+        "--full-commands",
         "Detractor check:",
     ]
     for text in required:
         if text not in rendered:
             raise AssertionError(f"missing rendered text: {text}")
+    if "prepare command" in rendered or "release command" in rendered:
+        raise AssertionError("compact status should not render detailed hardware commands")
+
+    detailed = render_status(failed_report, gate_returncode=1, full_commands=True)
+    for text in ("Next commands:", "prepare command", "release command"):
+        if text not in detailed:
+            raise AssertionError(f"missing detailed rendered text: {text}")
 
     passed_report: dict[str, Any] = {
         "summary": {
@@ -260,6 +305,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="exit with the release gate status; default exits 0 after printing the summary",
     )
+    parser.add_argument(
+        "--full-commands",
+        action="store_true",
+        help="print the detailed hardware command handoff instead of compact next actions",
+    )
     parser.add_argument("--self-test", action="store_true", help="run script contract checks")
     return parser.parse_args(argv)
 
@@ -274,7 +324,7 @@ def main(argv: list[str] | None = None) -> int:
         gate_returncode, report, warning = _run_release_gate()
     if warning:
         print(f"warning: {warning}", file=sys.stderr)
-    print(render_status(report, gate_returncode))
+    print(render_status(report, gate_returncode, full_commands=args.full_commands))
     return gate_returncode if args.strict else 0
 
 
