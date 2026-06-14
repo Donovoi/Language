@@ -226,6 +226,17 @@ STEPS: dict[str, Step] = {
         description="development-only virtual listener-ear lab",
         target="headphone-isolation-virtual-lab",
     ),
+    "headphone-isolation-collect-evidence": Step(
+        name="headphone-isolation-collect-evidence",
+        description="prepare/check the manual listener-ear evidence kit and raw WAV dropbox",
+        target="headphone-isolation-collect-evidence",
+        target_args=("--sample-rate-hz", "48000", "--playback-gain-db", "-18"),
+        make_env={
+            "HEADPHONE_ISOLATION_COLLECT_EVIDENCE_ARGS": (
+                "--sample-rate-hz 48000 --playback-gain-db -18"
+            )
+        },
+    ),
     "release-audio-gate": Step(
         name="release-audio-gate",
         description="strict release gate; fails until required evidence is present",
@@ -326,6 +337,15 @@ CATEGORIES: dict[str, Category] = {
         notes=(
             "Preflight does not play or record audio.",
             "Physical release evidence still requires real listener-ear WAVs.",
+        ),
+    ),
+    "evidence-kit": Category(
+        name="evidence-kit",
+        description="Prepare/check the manual listener-ear recording kit and raw WAV dropbox.",
+        steps=("headphone-isolation-collect-evidence",),
+        notes=(
+            "Does not play audio or record by itself.",
+            "After exporting the three listener-ear WAVs into the dropbox, rerun this category.",
         ),
     ),
     "release": Category(
