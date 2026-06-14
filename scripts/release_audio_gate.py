@@ -65,6 +65,9 @@ DEFAULT_HEADPHONE_COLLECTION_PLAN_REPORT = (
 DEFAULT_HEADPHONE_EVIDENCE_KIT_COMMAND = (
     "pwsh -NoProfile -File scripts/dev_container.ps1 test-category evidence-kit"
 )
+DEFAULT_HEADPHONE_RECORDING_STATUS_COMMAND = (
+    "pwsh -NoProfile -File scripts/dev_container.ps1 test-category recording-status"
+)
 DEFAULT_PLAYBACK_PROTOTYPE_REPORT = (
     DEFAULT_AUDIO_EVAL_DIR / "runs/fleurs-playback-ducking-suppression/playback-suppression-report.json"
 )
@@ -3556,6 +3559,7 @@ def headphone_collection_plan_handoff_lines(collection_plan: dict[str, Any] | No
                 "- Status: not loaded in this release report.",
                 f"- Default collection plan path: `{DEFAULT_HEADPHONE_COLLECTION_PLAN_REPORT}`",
                 f"- Simple command: `{DEFAULT_HEADPHONE_EVIDENCE_KIT_COMMAND}`",
+                f"- Readiness command after recording: `{DEFAULT_HEADPHONE_RECORDING_STATUS_COMMAND}`",
                 "- Next step: run the evidence-kit category to create the current physical evidence handoff.",
             ]
         )
@@ -3574,6 +3578,7 @@ def headphone_collection_plan_handoff_lines(collection_plan: dict[str, Any] | No
         if parse_error:
             lines.append(f"- Read error: `{parse_error}`")
         lines.append(f"- Simple command: `{DEFAULT_HEADPHONE_EVIDENCE_KIT_COMMAND}`")
+        lines.append(f"- Readiness command after recording: `{DEFAULT_HEADPHONE_RECORDING_STATUS_COMMAND}`")
         lines.append(f"- Next step: {collection_plan.get('next_step', '')}")
         return lines
 
@@ -3582,6 +3587,7 @@ def headphone_collection_plan_handoff_lines(collection_plan: dict[str, Any] | No
         issue_text = "; ".join(str(issue) for issue in identity_issues[:4])
         lines.append(f"- Identity issues: {issue_text}")
         lines.append(f"- Simple command: `{DEFAULT_HEADPHONE_EVIDENCE_KIT_COMMAND}`")
+        lines.append(f"- Readiness command after recording: `{DEFAULT_HEADPHONE_RECORDING_STATUS_COMMAND}`")
         lines.append(f"- Next step: {collection_plan.get('next_step', '')}")
         next_actions = collection_plan.get("next_actions", [])
         if isinstance(next_actions, list) and next_actions:
@@ -3635,6 +3641,7 @@ def headphone_collection_plan_handoff_lines(collection_plan: dict[str, Any] | No
     if isinstance(next_actions, list) and next_actions:
         lines.append(f"- Next actions: {'; '.join(str(action) for action in next_actions[:3])}")
     lines.append(f"- Simple command: `{DEFAULT_HEADPHONE_EVIDENCE_KIT_COMMAND}`")
+    lines.append(f"- Readiness command after recording: `{DEFAULT_HEADPHONE_RECORDING_STATUS_COMMAND}`")
     lines.append(f"- Next step: {collection_plan.get('next_step', '')}")
 
     commands = collection_plan.get("recommended_commands", {})
@@ -3980,6 +3987,15 @@ def playback_source_suppression_handoff_lines(
     lines = [
         "",
         "### Playback/Source Suppression Evidence Collection",
+        "",
+        "Simple category flow:",
+        "",
+        "```powershell",
+        DEFAULT_HEADPHONE_EVIDENCE_KIT_COMMAND,
+        "# Record or copy the three listener-ear WAVs into the generated dropbox.",
+        DEFAULT_HEADPHONE_RECORDING_STATUS_COMMAND,
+        "pwsh -NoProfile -File scripts/dev_container.ps1 test-category release",
+        "```",
         "",
         "Hardware setup:",
         "",
