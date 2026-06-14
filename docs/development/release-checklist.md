@@ -35,30 +35,41 @@ than by inventing a second package version line.
 ## Build and validate the candidate
 
 - [ ] Run repository validation on a clean branch:
-	- `make check`
-	- Windows without `make`: `pwsh -NoProfile -File scripts/check_local.ps1`
-	- `make smoke-local-demo`
-	- Windows without Bash/WSL: `pwsh -NoProfile -File scripts/smoke_local_demo.ps1`
-- [ ] For a product release that claims the realtime audio-loop goal, run the hard audio evidence gate:
-	- `make live-microphone-capture-check` on the release host or target capture device
-	- `make release-audio-gate`
-	- Treat any missing, warning-only, or failing audio report as a release blocker.
-	- Review `artifacts/release/audio-gate-report.md` for the operator handoff, but keep
-	  `artifacts/release/audio-gate-report.json` as the authoritative pass/fail artifact.
-	- Confirm live microphone evidence has matching WAV/chunk JSONL artifacts that the gate validates.
-	- Confirm prototype-only evidence is listed separately and is not being used to satisfy live
-	  microphone capture, causal diarization, real TSE/separation, streaming speech translation,
-	  same-voice/fallback TTS, or playback source-suppression gates.
-	- Confirm headphone/earpiece evidence, if used, is labeled
-	  `headphone_isolated_not_true_cancellation` and is not described as true room cancellation.
-	- Confirm fallback TTS reports contain hashed WAV artifacts, level matching, and no same-voice
-	  claim unless a same-speaker benchmark has passed.
-	- Confirm the gate rejects bare `summary.passed=true` reports and requires product-specific
-	  evidence fields for each release-blocking subsystem.
+	- `python scripts/run_test_category.py quick`
+	- `python scripts/run_test_category.py contracts`
+	- `python scripts/run_test_category.py core`
+	- `python scripts/run_test_category.py smoke-local`
+	- Optional full non-interactive sweep: `python scripts/run_test_category.py all --continue-on-failure`
+- [ ] For a product release that claims the realtime audio-loop goal, use the categorized release
+      evidence path first:
+	- `python scripts/run_test_category.py release-status`
+	- `python scripts/run_test_category.py physical-audio-handoff`
+	- `python scripts/run_test_category.py release-evidence`
+	- collect or import the three real listener-ear WAVs named by the manual kit:
+	  `source-open-ear-recording.wav`, `source-isolated-ear-recording.wav`, and
+	  `translated-headphone-recording.wav`
+	- set concrete `LANGUAGE_HEADPHONE_DEVICE_LABEL`, `LANGUAGE_ISOLATION_FIXTURE_LABEL`, and
+	  `LANGUAGE_MEASUREMENT_MICROPHONE_LABEL` values
+	- `python scripts/run_test_category.py release-evidence-score`
+	- `python scripts/run_test_category.py release`
+- [ ] Treat any missing, warning-only, stale, unrelated, or failing audio report as a release blocker.
+- [ ] Review `artifacts/release/audio-gate-report.md` for the operator handoff, but keep
+      `artifacts/release/audio-gate-report.json` as the authoritative pass/fail artifact.
+- [ ] Confirm the current headphone preflight and route-probe handoffs are fresh before trusting
+      device IDs. If the report says `STALE-TRIAGE` or `UNRELATED-TRIAGE`, rerun
+      `python scripts/run_test_category.py route-triage`.
+- [ ] Confirm live microphone evidence has matching WAV/chunk JSONL artifacts that the gate validates.
+- [ ] Confirm prototype-only evidence is listed separately and is not being used to satisfy live
+      microphone capture, causal diarization, real TSE/separation, streaming speech translation,
+      same-voice/fallback TTS, or playback source-suppression gates.
+- [ ] Confirm headphone/earpiece evidence, if used, is labeled
+      `headphone_isolated_not_true_cancellation` and is not described as true room cancellation.
+- [ ] Confirm fallback TTS reports contain hashed WAV artifacts, level matching, and no same-voice
+      claim unless a same-speaker benchmark has passed.
+- [ ] Confirm the gate rejects bare `summary.passed=true` reports and requires product-specific
+      evidence fields for each release-blocking subsystem.
 - [ ] Build the local artifacts that are practical on your host:
-	- `make gateway-package`
-	- `make source-bundle`
-	- Windows without `make`: `pwsh -NoProfile -File scripts/package_local.ps1`
+	- `python scripts/run_test_category.py release-artifacts`
 	- `make flutter-release-android` (only when Flutter + Android SDK are available locally)
 	- confirm the package script verifies the `language-gateway` wheel entry point
 	- For local Windows source/gateway handoff, verify `dist/local-release-artifacts/manifest.md` and
