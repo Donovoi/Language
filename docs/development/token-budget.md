@@ -1,10 +1,19 @@
 # Token Budget And Context Hygiene
 
 This repo has long-running release work, model experiments, Docker logs, and hardware diagnostics.
-That makes token discipline part of the engineering workflow.
+That makes token discipline part of the engineering workflow. There are two separate budgets:
+
+- Codex/OpenAI conversation tokens used while developing the product.
+- Product API tokens used later by Language itself.
+
+Treat the first one as the default concern in agent handoffs.
 
 ## Defaults For Agents
 
+- Keep progress updates to one or two short sentences unless the user asks for detail.
+- Batch tool summaries: report command, pass/fail, and artifact paths; avoid pasted logs.
+- Avoid subagents for small scoped edits; use them only when parallel research/review saves enough
+  context to justify the extra summaries.
 - Prefer the smallest relevant test category before broad sweeps.
 - Use `--dry-run` before running unfamiliar categories.
 - Use the quiet category-runner default so full logs land in `artifacts/test-categories/`.
@@ -59,7 +68,9 @@ local artifact discipline. Large logs should still be stored as files and summar
 compression for tool outputs, logs, files, RAG chunks, conversation history, Codex wrapping,
 OpenAI-compatible proxy mode, MCP tools, and reversible retrieval.
 
-Do not add it to the release path without a pinned dependency and a small eval. Suggested evaluation:
+Use it, if adopted, as development-agent context compression; it is not a substitute for app-side API
+limits. Do not add it to the release path without a pinned dependency and a small eval. Suggested
+evaluation:
 
 1. Run a noisy category with `--quiet` and keep the raw log artifacts.
 2. Run Headroom against the same logs or through its wrapper/proxy mode in a disposable environment.

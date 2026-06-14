@@ -237,6 +237,13 @@ STEPS: dict[str, Step] = {
             )
         },
     ),
+    "headphone-isolation-check-manual": Step(
+        name="headphone-isolation-check-manual",
+        description="check whether manual listener-ear WAVs are ready to score",
+        target="headphone-isolation-check-manual",
+        target_args=("--score-warning-only",),
+        make_env={"HEADPHONE_ISOLATION_CHECK_MANUAL_ARGS": "--score-warning-only"},
+    ),
     "release-audio-gate": Step(
         name="release-audio-gate",
         description="strict release gate; fails until required evidence is present",
@@ -346,6 +353,14 @@ CATEGORIES: dict[str, Category] = {
         notes=(
             "Does not play audio or record by itself.",
             "After exporting the three listener-ear WAVs into the dropbox, rerun this category.",
+        ),
+    ),
+    "recording-status": Category(
+        name="recording-status",
+        description="Check whether the three listener-ear WAVs are ready to score.",
+        steps=("headphone-isolation-check-manual",),
+        notes=(
+            "Use after placing the open-ear source, isolated source, and translated playback WAVs in the dropbox.",
         ),
     ),
     "release": Category(

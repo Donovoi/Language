@@ -91,6 +91,7 @@ Common categories:
 | `audio-fixtures` | Disposable Docker audio fixtures | Capture, translation, playback, fallback TTS. |
 | `hardware` | Host audio discovery and listener-ear planning | Run deliberately when testing devices. |
 | `evidence-kit` | Manual listener-ear recording kit/dropbox | Creates/checks the folder for the three release WAVs. |
+| `recording-status` | Listener-ear WAV readiness | Use after adding the three manual recordings. |
 | `release` | Strict release-gate status | Expected to fail until physical evidence is present. |
 | `all` | Automated non-interactive suites | Excludes hardware, release, optional model downloads, and artifact-dependent voice checks. |
 
@@ -122,6 +123,12 @@ Prepare the manual recording kit and dropbox:
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category evidence-kit
 ```
 
+After copying the three WAVs into the dropbox, check readiness:
+
+```powershell
+pwsh -NoProfile -File scripts/dev_container.ps1 test-category recording-status
+```
+
 ## Release Gate
 
 The release gate is intentionally stricter than fixture tests:
@@ -141,7 +148,8 @@ collected from real listener-ear recordings or true room-cancellation evidence.
 
 ## Token Budget
 
-For long agent or CI runs, prefer the quiet default:
+This is mainly about keeping Codex/OpenAI development threads small. For long agent or CI runs,
+prefer the quiet default:
 
 ```bash
 python3 scripts/run_test_category.py quick
