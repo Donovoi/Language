@@ -268,10 +268,12 @@ means the room path cannot currently produce release evidence, even before cance
 Run `probe-route` before speech qualification when the route is uncertain. It writes
 `artifacts/audio_eval/runs/real-room-route-probe/route-probe-report.json` with
 `release_proof=false`, a chirp sentinel reference, recording hashes, matched confidence, lag, gain,
-clipping, route errors, and structured blocking reasons/next actions. A passing route probe is only
-a prerequisite diagnostic. When the default route-probe report exists, the release-gate Markdown
-handoff embeds the current real-room route status and retry command as operator context without
-weakening the source-suppression evidence gate.
+clipping, aligned-overlap fraction, route errors, and structured blocking reasons/next actions. A
+passing route probe is only a prerequisite diagnostic. The overlap gate rejects tiny edge alignments
+so a wide lag window cannot make a bad route look clean, and reports missing that field are treated
+as stale triage that must be regenerated. When the default route-probe report exists, the release-gate
+Markdown handoff embeds the current real-room route status and retry command as operator context
+without weakening the source-suppression evidence gate.
 For the private-listener fallback path, use the guided headphone/earpiece capture after listing
 devices and probing the candidate routes. When the route is uncertain, `sweep-routes` tries bounded
 listener-ear input/source output/headphone output triples and writes

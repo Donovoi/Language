@@ -62,6 +62,7 @@ DEFAULT_ROUTE_PROBE_SWEEP_CHANNEL_CONFIGS = ((1, 2), (2, 2))
 DEFAULT_ROUTE_PROBE_SWEEP_MAX_ATTEMPTS = 24
 DEFAULT_MIN_ROUTE_PROBE_CONFIDENCE = 0.45
 DEFAULT_MAX_ROUTE_PROBE_DISTORTION_DB = 18.0
+DEFAULT_MIN_ROUTE_PROBE_OVERLAP = 0.75
 PCM_SUBTYPE = "PCM_16"
 MEASUREMENT_KIND = "real_room_loopback"
 SUPPRESSION_CLAIM_TRUE = "true_source_cancellation"
@@ -405,6 +406,14 @@ def align_pair(a: np.ndarray, b: np.ndarray, lag_samples: int) -> tuple[np.ndarr
     return a[:count], b[:count]
 
 
+def alignment_overlap_fraction(a: np.ndarray, b: np.ndarray, lag_samples: int) -> float:
+    frame_count = min(int(a.size), int(b.size))
+    if frame_count <= 0:
+        return 0.0
+    aligned_a, _aligned_b = align_pair(a, b, lag_samples)
+    return max(0.0, min(1.0, float(aligned_a.size) / float(frame_count)))
+
+
 def best_alignment_lag_samples(
     measured: np.ndarray,
     reference: np.ndarray,
@@ -584,6 +593,7 @@ def calibration_reference_metrics(
     lag_samples = best_alignment_lag_samples(recording, reference, sample_rate_hz, max_lag_ms)
     aligned_recording, aligned_reference = align_pair(recording, reference, lag_samples)
     return {
+        "alignment_overlap_fraction": round(alignment_overlap_fraction(recording, reference, lag_samples), 6),
         "correlation": round(correlation(aligned_recording, aligned_reference), 6),
         "distortion_db": round(distortion_db(aligned_recording, aligned_reference), 3),
         "lag_samples": lag_samples,
@@ -612,6 +622,7 @@ def route_probe_gates(summary: dict[str, Any], args: argparse.Namespace) -> list
     confidence = float(summary["route_probe_reference_confidence"])
     distortion = float(summary["route_probe_reference_distortion_db"])
     level = float(summary["route_probe_recording_dbfs"])
+    overlap = route_probe_alignment_overlap_fraction(summary)
     clipped = int(summary["route_probe_clipped_sample_count"])
     hashes = bool(summary["all_artifact_hashes_present"])
     reference_clone = bool(summary.get("route_probe_recording_matches_reference"))
@@ -620,6 +631,7 @@ def route_probe_gates(summary: dict[str, Any], args: argparse.Namespace) -> list
     audible = math.isfinite(level) and level >= float(args.min_room_calibration_dbfs)
     confidence_ok = math.isfinite(confidence) and confidence >= float(args.min_route_probe_confidence)
     distortion_ok = math.isfinite(distortion) and distortion <= float(args.max_route_probe_distortion_db)
+    overlap_ok = math.isfinite(overlap) and overlap >= float(args.min_route_probe_overlap)
     return [
         {
             "name": "route_probe_device_identity_recorded",
@@ -649,6 +661,12 @@ def route_probe_gates(summary: dict[str, Any], args: argparse.Namespace) -> list
             "value": distortion,
         },
         {
+            "name": "route_probe_alignment_overlap_sufficient",
+            "passed": overlap_ok,
+            "threshold": f"aligned overlap >= {float(args.min_route_probe_overlap):.3f}",
+            "value": round(overlap, 6) if math.isfinite(overlap) else overlap,
+        },
+        {
             "name": "route_probe_not_clipped",
             "passed": clipped == 0,
             "threshold": "no PCM samples at full-scale clipping",
@@ -667,6 +685,13 @@ def route_probe_gates(summary: dict[str, Any], args: argparse.Namespace) -> list
             "value": reference_clone,
         },
     ]
+
+
+def route_probe_alignment_overlap_fraction(summary: dict[str, Any]) -> float:
+    try:
+        return float(summary.get("route_probe_alignment_overlap_fraction"))
+    except (TypeError, ValueError):
+        return float("nan")
 
 
 def device_qualification_gates(
@@ -1046,6 +1071,7 @@ def run_route_probe(args: argparse.Namespace) -> int:
         "output_channels": int(args.output_channels),
         "playback_gain_db": float(args.playback_gain_db),
         "release_proof": False,
+        "route_probe_alignment_overlap_fraction": metrics["alignment_overlap_fraction"],
         "route_probe_clipped_sample_count": clipped_sample_count,
         "route_probe_gain_db": round(linear_to_db(abs(gain_value)), 3)
         if gain_value != 0.0
@@ -1545,6 +1571,7 @@ def route_probe_attempt_metrics(summary: dict[str, Any], args: argparse.Namespac
     confidence = float(summary.get("route_probe_reference_confidence", float("-inf")))
     correlation_value = float(summary.get("route_probe_reference_correlation", float("-inf")))
     distortion = float(summary.get("route_probe_reference_distortion_db", float("inf")))
+    overlap = route_probe_alignment_overlap_fraction(summary)
     peak = float(summary.get("route_probe_peak_dbfs", float("-inf")))
     clipped = int(summary.get("route_probe_clipped_sample_count") or 0)
     return {
@@ -1564,10 +1591,15 @@ def route_probe_attempt_metrics(summary: dict[str, Any], args: argparse.Namespac
                 float(args.max_route_probe_distortion_db) - distortion,
                 3,
             ),
+            "alignment_overlap": report_float(
+                overlap - float(args.min_route_probe_overlap),
+                6,
+            ),
             "alignment_lag_ms": report_float(float(args.max_alignment_lag_ms) - lag_ms, 3),
             "clipped_samples": report_float(-float(clipped), 3),
         },
         "output_channels": int(summary.get("output_channels") or args.output_channels),
+        "route_probe_alignment_overlap_fraction": report_float(overlap, 6),
         "route_probe_clipped_sample_count": clipped,
         "route_probe_gain_db": report_float(summary.get("route_probe_gain_db"), 3),
         "route_probe_lag_samples": int(summary.get("route_probe_lag_samples") or 0),
@@ -1602,12 +1634,14 @@ def route_probe_failure_diagnosis(summary: dict[str, Any], args: argparse.Namesp
     level = float(summary.get("route_probe_recording_dbfs", float("-inf")))
     confidence = float(summary.get("route_probe_reference_confidence", float("-inf")))
     distortion = float(summary.get("route_probe_reference_distortion_db", float("inf")))
+    overlap = route_probe_alignment_overlap_fraction(summary)
     peak = float(summary.get("route_probe_peak_dbfs", float("-inf")))
     clipped = int(summary.get("route_probe_clipped_sample_count") or 0)
     lag_ms = abs(float(summary.get("route_probe_lag_samples", 0))) * 1000.0 / float(sample_rate_hz)
     min_level = float(getattr(args, "min_room_calibration_dbfs", DEFAULT_MIN_ROOM_CALIBRATION_DBFS))
     min_confidence = float(getattr(args, "min_route_probe_confidence", DEFAULT_MIN_ROUTE_PROBE_CONFIDENCE))
     max_distortion = float(getattr(args, "max_route_probe_distortion_db", DEFAULT_MAX_ROUTE_PROBE_DISTORTION_DB))
+    min_overlap = float(getattr(args, "min_route_probe_overlap", DEFAULT_MIN_ROUTE_PROBE_OVERLAP))
     max_lag = float(getattr(args, "max_alignment_lag_ms", DEFAULT_MAX_ALIGNMENT_LAG_MS))
     max_peak = float(getattr(args, "max_peak_dbfs", DEFAULT_MAX_PEAK_DBFS))
     if not math.isfinite(level) or level < min_level:
@@ -1624,6 +1658,12 @@ def route_probe_failure_diagnosis(summary: dict[str, Any], args: argparse.Namesp
     if not math.isfinite(distortion) or distortion > max_distortion:
         reasons.append("reference_distorted")
         add_action("reduce processing in the capture/playback path or use a wired speaker/microphone route")
+    if not math.isfinite(overlap):
+        reasons.append("alignment_overlap_missing")
+        add_action("regenerate the route probe with the current scorer so aligned-overlap is recorded")
+    elif overlap < min_overlap:
+        reasons.append("alignment_overlap_too_small")
+        add_action("keep enough recorded/reference overlap; do not trust wide-lag edge matches as route evidence")
     if max_lag > 0 and lag_ms >= max_lag * 0.8:
         reasons.append("alignment_lag_near_limit")
         add_action("try a lower-latency host API route before increasing lag tolerance for triage")
@@ -2109,6 +2149,7 @@ def self_test() -> int:
         "device_path_fingerprint": "0" * 64,
         "device_path_identity_recorded": True,
         "route_probe_clipped_sample_count": 0,
+        "route_probe_alignment_overlap_fraction": 0.99,
         "route_probe_lag_samples": 0,
         "route_probe_peak_dbfs": -6.0,
         "route_probe_recording_dbfs": -20.0,
@@ -2119,6 +2160,7 @@ def self_test() -> int:
     }
     route_args = argparse.Namespace(
         max_route_probe_distortion_db=DEFAULT_MAX_ROUTE_PROBE_DISTORTION_DB,
+        min_route_probe_overlap=DEFAULT_MIN_ROUTE_PROBE_OVERLAP,
         max_alignment_lag_ms=DEFAULT_MAX_ALIGNMENT_LAG_MS,
         max_peak_dbfs=DEFAULT_MAX_PEAK_DBFS,
         min_room_calibration_dbfs=DEFAULT_MIN_ROOM_CALIBRATION_DBFS,
@@ -2131,11 +2173,56 @@ def self_test() -> int:
     route_diagnosis = route_probe_failure_diagnosis(route_summary, route_args)
     if route_diagnosis["blocking_reasons"]:
         raise RuntimeError(f"expected passing route probe diagnosis to be empty: {route_diagnosis}")
+    missing_overlap_summary = dict(route_summary)
+    del missing_overlap_summary["route_probe_alignment_overlap_fraction"]
+    missing_overlap_gates = route_probe_gates(missing_overlap_summary, route_args)
+    missing_overlap_gate = {
+        str(gate["name"]): bool(gate["passed"])
+        for gate in missing_overlap_gates
+        if isinstance(gate, dict)
+    }
+    if bool(missing_overlap_gate.get("route_probe_alignment_overlap_sufficient")):
+        raise RuntimeError("expected missing-overlap route probe alignment self-test fixture to fail")
+    missing_overlap_diagnosis = route_probe_failure_diagnosis(missing_overlap_summary, route_args)
+    if "alignment_overlap_missing" not in missing_overlap_diagnosis["blocking_reasons"]:
+        raise RuntimeError(f"expected missing-overlap route probe diagnosis: {missing_overlap_diagnosis}")
+    alias_overlap_summary = dict(missing_overlap_summary)
+    alias_overlap_summary["alignment_overlap_fraction"] = 0.99
+    alias_overlap_gates = route_probe_gates(alias_overlap_summary, route_args)
+    alias_overlap_gate = {
+        str(gate["name"]): bool(gate["passed"])
+        for gate in alias_overlap_gates
+        if isinstance(gate, dict)
+    }
+    if bool(alias_overlap_gate.get("route_probe_alignment_overlap_sufficient")):
+        raise RuntimeError("legacy unprefixed overlap must not satisfy route probe alignment gates")
+    alias_overlap_diagnosis = route_probe_failure_diagnosis(alias_overlap_summary, route_args)
+    if "alignment_overlap_missing" not in alias_overlap_diagnosis["blocking_reasons"]:
+        raise RuntimeError(f"expected legacy-alias overlap route probe diagnosis: {alias_overlap_diagnosis}")
     clone_summary = dict(route_summary)
     clone_summary["route_probe_recording_matches_reference"] = True
     clone_gates = route_probe_gates(clone_summary, route_args)
     if all(bool(gate["passed"]) for gate in clone_gates):
         raise RuntimeError("expected reference-clone route probe gates to fail")
+    edge_overlap_summary = dict(route_summary)
+    edge_overlap_summary.update(
+        {
+            "route_probe_alignment_overlap_fraction": 0.001333,
+            "route_probe_reference_confidence": 0.50,
+            "route_probe_reference_distortion_db": 8.0,
+        }
+    )
+    edge_overlap_gates = route_probe_gates(edge_overlap_summary, route_args)
+    edge_overlap_gate = {
+        str(gate["name"]): bool(gate["passed"])
+        for gate in edge_overlap_gates
+        if isinstance(gate, dict)
+    }
+    if bool(edge_overlap_gate.get("route_probe_alignment_overlap_sufficient")):
+        raise RuntimeError("expected tiny-overlap route probe alignment self-test fixture to fail")
+    edge_overlap_diagnosis = route_probe_failure_diagnosis(edge_overlap_summary, route_args)
+    if "alignment_overlap_too_small" not in edge_overlap_diagnosis["blocking_reasons"]:
+        raise RuntimeError(f"expected tiny-overlap route probe diagnosis: {edge_overlap_diagnosis}")
     failing_route_summary = dict(route_summary)
     failing_route_summary.update(
         {
@@ -2181,6 +2268,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     probe.add_argument("--min-room-calibration-dbfs", type=float, default=DEFAULT_MIN_ROOM_CALIBRATION_DBFS)
     probe.add_argument("--min-route-probe-confidence", type=float, default=DEFAULT_MIN_ROUTE_PROBE_CONFIDENCE)
     probe.add_argument("--max-route-probe-distortion-db", type=float, default=DEFAULT_MAX_ROUTE_PROBE_DISTORTION_DB)
+    probe.add_argument("--min-route-probe-overlap", type=float, default=DEFAULT_MIN_ROUTE_PROBE_OVERLAP)
     probe.add_argument("--max-alignment-lag-ms", type=float, default=DEFAULT_MAX_ALIGNMENT_LAG_MS)
     probe.add_argument("--max-peak-dbfs", type=float, default=DEFAULT_MAX_PEAK_DBFS)
     probe.add_argument("--score-warning-only", action="store_true")
@@ -2198,6 +2286,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     route_sweep.add_argument("--min-room-calibration-dbfs", type=float, default=DEFAULT_MIN_ROOM_CALIBRATION_DBFS)
     route_sweep.add_argument("--min-route-probe-confidence", type=float, default=DEFAULT_MIN_ROUTE_PROBE_CONFIDENCE)
     route_sweep.add_argument("--max-route-probe-distortion-db", type=float, default=DEFAULT_MAX_ROUTE_PROBE_DISTORTION_DB)
+    route_sweep.add_argument("--min-route-probe-overlap", type=float, default=DEFAULT_MIN_ROUTE_PROBE_OVERLAP)
     route_sweep.add_argument("--max-alignment-lag-ms", type=float, default=DEFAULT_MAX_ALIGNMENT_LAG_MS)
     route_sweep.add_argument("--max-peak-dbfs", type=float, default=DEFAULT_MAX_PEAK_DBFS)
     route_sweep.add_argument("--max-pairs", type=int, default=DEFAULT_SWEEP_MAX_PAIRS)
