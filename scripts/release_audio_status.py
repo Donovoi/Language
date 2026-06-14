@@ -111,6 +111,63 @@ def _preflight_lines(report: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _route_device_label(device: dict[str, Any]) -> str:
+    name = str(device.get("name", "")).strip()
+    index = str(device.get("index", "")).strip()
+    hostapi = str(device.get("hostapi_name", "")).strip()
+    label = name or "unknown"
+    details = [value for value in (f"index={index}" if index else "", hostapi) if value]
+    if details:
+        label = f"{label} ({', '.join(details)})"
+    return label
+
+
+def _route_metric_summary(name: str, metric: dict[str, Any]) -> str:
+    fields: list[str] = []
+    for label, key in (
+        ("dbfs", "recording_dbfs"),
+        ("peak", "peak_dbfs"),
+        ("corr", "reference_correlation"),
+    ):
+        value = metric.get(key)
+        if isinstance(value, (float, int)):
+            fields.append(f"{label}={value:.3g}")
+    return f"{name}: " + (", ".join(fields) if fields else "no metrics")
+
+
+def _route_probe_lines(report: dict[str, Any]) -> list[str]:
+    handoff = _as_dict(report.get("operator_handoff"))
+    probe = _as_dict(handoff.get("headphone_route_probe_status"))
+    if not probe:
+        return []
+
+    lines = [f"Status: {probe.get('status', 'unknown')}"]
+    route = _as_dict(probe.get("device_route"))
+    if route:
+        lines.append(
+            "Route: "
+            f"input={_route_device_label(_as_dict(route.get('measurement_input')))}; "
+            f"source={_route_device_label(_as_dict(route.get('source_output')))}; "
+            f"headphone={_route_device_label(_as_dict(route.get('headphone_output')))}"
+        )
+    source_metric = _as_dict(probe.get("source_route"))
+    headphone_metric = _as_dict(probe.get("headphone_route"))
+    if source_metric:
+        lines.append(_route_metric_summary("Source", source_metric))
+    if headphone_metric:
+        lines.append(_route_metric_summary("Headphone", headphone_metric))
+    reasons = [str(item) for item in _as_list(probe.get("blocking_reasons"))]
+    if reasons:
+        lines.append(f"Blocking reasons: {', '.join(reasons)}")
+    actions = [str(item) for item in _as_list(probe.get("next_actions"))]
+    if actions:
+        lines.append(f"Next: {actions[0]}")
+    path = str(probe.get("path", "")).strip()
+    if path:
+        lines.append(f"Report: {_repo_relative(path)}")
+    return lines
+
+
 def _detailed_recommended_commands(report: dict[str, Any]) -> list[str]:
     handoff = _as_dict(report.get("operator_handoff"))
     collection = _as_dict(handoff.get("headphone_collection_plan_status"))
@@ -210,6 +267,12 @@ def render_status(report: dict[str, Any], gate_returncode: int, *, full_commands
         lines.append("Host audio preflight:")
         lines.extend(f"- {line}" for line in preflight_lines)
 
+    route_probe_lines = _route_probe_lines(report)
+    if route_probe_lines:
+        lines.append("")
+        lines.append("Route probe:")
+        lines.extend(f"- {line}" for line in route_probe_lines)
+
     detractor = _as_dict(report.get("detractor_loop"))
     objection = str(detractor.get("strongest_current_objection", "")).strip()
     verdict = str(detractor.get("verdict", "")).strip()
@@ -290,6 +353,42 @@ def self_test() -> int:
                 "next_step": "Confirm a listener-ear input or use manual recordings.",
                 "markdown_path": "artifacts/audio_eval/runs/preflight/headphone-preflight-report.md",
             },
+            "headphone_route_probe_status": {
+                "status": "FAIL-TRIAGE",
+                "path": "artifacts/audio_eval/runs/headphone-earpiece-route-probe/headphone-route-probe-report.json",
+                "device_route": {
+                    "measurement_input": {
+                        "index": "1",
+                        "name": "Microphone Array",
+                        "hostapi_name": "MME",
+                    },
+                    "source_output": {
+                        "index": "5",
+                        "name": "Speakers",
+                        "hostapi_name": "MME",
+                    },
+                    "headphone_output": {
+                        "index": "4",
+                        "name": "Headphones",
+                        "hostapi_name": "MME",
+                    },
+                },
+                "source_route": {
+                    "recording_dbfs": -32.067,
+                    "peak_dbfs": -10.134,
+                    "reference_correlation": 0.00003,
+                },
+                "headphone_route": {
+                    "recording_dbfs": -51.135,
+                    "peak_dbfs": -25.644,
+                    "reference_correlation": -0.000164,
+                },
+                "blocking_reasons": [
+                    "source:reference_not_detected",
+                    "headphone:reference_not_detected",
+                ],
+                "next_actions": ["Disable Windows audio enhancements, then retry."],
+            },
         },
         "detractor_loop": {
             "strongest_current_objection": "reports alone are insufficient",
@@ -308,6 +407,9 @@ def self_test() -> int:
         "Host audio preflight:",
         "NEEDS-PHYSICAL-INPUT-CONFIRMATION",
         "capture_ready=1",
+        "Route probe:",
+        "FAIL-TRIAGE",
+        "source:reference_not_detected",
         "Detractor check:",
     ]
     for text in required:
