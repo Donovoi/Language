@@ -9,6 +9,7 @@ without hiding which commands will run.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import platform
 import re
@@ -17,13 +18,18 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 
 ROOT = Path(__file__).resolve().parents[1]
 DEV_CONTAINER = "scripts/dev_container.ps1"
 ENV_ARG_PATTERN = re.compile(r"^\{env:([A-Za-z_][A-Za-z0-9_]*)(?::([^{}]*))?\}$")
 PORTABLE_FLUTTER = Path("C:/tmp/flutter/bin/flutter.bat")
+MANUAL_RECORDING_FILENAMES = {
+    "source_open_ear_recording": "source-open-ear-recording.wav",
+    "source_isolated_ear_recording": "source-isolated-ear-recording.wav",
+    "translated_headphone_recording": "translated-headphone-recording.wav",
+}
 
 
 @dataclass(frozen=True)
@@ -50,6 +56,7 @@ class Category:
     includes: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
     success_hints: tuple[str, ...] = ()
+    manual_status_report: str = ""
 
 
 STEPS: dict[str, Step] = {
@@ -640,6 +647,7 @@ CATEGORIES: dict[str, Category] = {
             "Physical checklist: artifacts/release/physical-audio-checklist.md",
             "Raw WAV dropbox: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/raw-listener-ear-recordings",
         ),
+        manual_status_report="artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.json",
     ),
     "evidence-kit": Category(
         name="evidence-kit",
@@ -661,6 +669,7 @@ CATEGORIES: dict[str, Category] = {
             "Status handoff: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.md",
             "Required WAV map: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/raw-listener-ear-recordings/listener-ear-recording-dropbox.md",
         ),
+        manual_status_report="artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.json",
     ),
     "reference-playback-dry-run": Category(
         name="reference-playback-dry-run",
@@ -688,6 +697,7 @@ CATEGORIES: dict[str, Category] = {
             "Status handoff: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.md",
             "Next real audio command: python scripts/run_test_category.py reference-playback",
         ),
+        manual_status_report="artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.json",
     ),
     "reference-playback": Category(
         name="reference-playback",
@@ -714,6 +724,7 @@ CATEGORIES: dict[str, Category] = {
             "Status handoff: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.md",
             "Release status: artifacts/release/audio-gate-report.md",
         ),
+        manual_status_report="artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.json",
     ),
     "release-evidence-score": Category(
         name="release-evidence-score",
@@ -895,6 +906,72 @@ def tail_lines(path: Path, limit: int) -> list[str]:
     return lines[-limit:]
 
 
+def as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def manual_status_state(summary: dict[str, Any]) -> str:
+    if bool(summary.get("manual_score_ready")):
+        return "SCORE-READY"
+    if bool(summary.get("manual_recordings_ready_for_score_input")):
+        return "FILES-READY-LABELS-PENDING"
+    return "NOT-READY"
+
+
+def manual_status_summary_lines(report_path: str) -> list[str]:
+    path = ROOT / report_path
+    if not path.exists():
+        return [f"Manual status summary unavailable: {repo_relative(path)} does not exist yet."]
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        return [f"Manual status summary unavailable: {exc}"]
+    report = as_dict(report)
+    summary = as_dict(report.get("summary"))
+    requirements = as_dict(report.get("recording_requirements"))
+    lines = [f"Status: {manual_status_state(summary)}"]
+
+    missing_keys: set[str] = set()
+    for check in report.get("checks", []):
+        check = as_dict(check)
+        if check.get("name") != "manual_recording_wavs_ready":
+            continue
+        for name, details in as_dict(check.get("value")).items():
+            details = as_dict(details)
+            if not bool(details.get("exists")):
+                missing_keys.add(str(name))
+    missing = [
+        MANUAL_RECORDING_FILENAMES[key]
+        for key in MANUAL_RECORDING_FILENAMES
+        if key in missing_keys
+    ]
+    if missing:
+        lines.append(f"Missing WAVs: {', '.join(missing)}")
+
+    sample_rate = requirements.get("sample_rate_hz")
+    min_duration = requirements.get("min_duration_s")
+    wav_format = str(requirements.get("format", "")).strip()
+    requirement_parts = [
+        part
+        for part in (
+            wav_format,
+            f"{sample_rate} Hz" if sample_rate else "",
+            f">= {min_duration:g}s" if isinstance(min_duration, (int, float)) else "",
+        )
+        if part
+    ]
+    if requirement_parts:
+        lines.append(f"Required WAV shape: {', '.join(requirement_parts)}")
+
+    placeholder_count = int(summary.get("placeholder_label_count", 0) or 0)
+    if placeholder_count:
+        lines.append(
+            "Labels still needed: LANGUAGE_HEADPHONE_DEVICE_LABEL, "
+            "LANGUAGE_ISOLATION_FIXTURE_LABEL, LANGUAGE_MEASUREMENT_MICROPHONE_LABEL"
+        )
+    return lines
+
+
 def list_categories() -> int:
     print("Available test categories:\n")
     for name in sorted(CATEGORIES):
@@ -990,6 +1067,10 @@ def run_category(args: argparse.Namespace) -> int:
         print("Handoff:")
         for hint in category.success_hints:
             print(f"- {hint}")
+    if category.manual_status_report:
+        print("Manual recording summary:")
+        for line in manual_status_summary_lines(category.manual_status_report):
+            print(f"- {line}")
     return 0
 
 
@@ -1039,6 +1120,8 @@ def self_test() -> int:
         raise AssertionError("recording-session-dry-run must validate playback routing without audio")
     if not CATEGORIES["recording-status"].success_hints:
         raise AssertionError("recording-status must print where the manual status handoff was written")
+    if not CATEGORIES["recording-status"].manual_status_report:
+        raise AssertionError("recording-status must print a concise manual recording summary")
     if CATEGORIES["reference-playback"].steps != ("headphone-isolation-playback-session",):
         raise AssertionError("reference-playback must only run the explicit playback session")
     for playback_step in (
