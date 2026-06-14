@@ -39,6 +39,7 @@ Repository prep for the first internal beta release candidate based on the curre
 - The release audio handoff now also embeds the latest headphone/earpiece preflight status when present, including the recommended path, displayed or selected route candidate, next generated command, and physical-input confirmation state as non-evidentiary operator context.
 - The release audio handoff now includes the latest headphone/earpiece route-probe diagnosis when present, including opened devices, route levels, blocking reasons, and next actions while keeping route probes triage-only.
 - Quiet headphone/earpiece route-probe failures now print a copy/pasteable same-route retry command in the release handoff so operators can test a cautious 6 dB gain increase without weakening release evidence gates.
+- Real-room route probes now emit structured blocking reasons/next actions, and the release handoff can summarize the current laptop mic/speaker route-probe diagnosis without treating it as release evidence.
 
 #### Changed
 

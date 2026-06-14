@@ -44,6 +44,9 @@ DEFAULT_VOICE_REPORT = DEFAULT_AUDIO_EVAL_DIR / "runs/same-voice-tts/voice-clone
 DEFAULT_ROOM_SUPPRESSION_REPORT = (
     DEFAULT_AUDIO_EVAL_DIR / "runs/real-room-playback-suppression/room-playback-suppression-report.json"
 )
+DEFAULT_ROOM_ROUTE_PROBE_REPORT = (
+    DEFAULT_AUDIO_EVAL_DIR / "runs/real-room-route-probe/route-probe-report.json"
+)
 DEFAULT_HEADPHONE_ISOLATION_REPORT = (
     DEFAULT_AUDIO_EVAL_DIR / "runs/headphone-earpiece-isolation/headphone-isolation-report.json"
 )
@@ -77,6 +80,8 @@ EXPECTED_HEADPHONE_PREFLIGHT_FIXTURE_KIND = "headphone_earpiece_preflight"
 EXPECTED_HEADPHONE_PREFLIGHT_MEASUREMENT_KIND = "headphone_earpiece_preflight"
 EXPECTED_HEADPHONE_ROUTE_PROBE_FIXTURE_KIND = "headphone_earpiece_route_probe"
 EXPECTED_HEADPHONE_ROUTE_PROBE_MEASUREMENT_KIND = "headphone_earpiece_route_probe_triage"
+EXPECTED_ROOM_ROUTE_PROBE_FIXTURE_KIND = "real_room_route_probe"
+EXPECTED_ROOM_ROUTE_PROBE_MEASUREMENT_KIND = "real_room_route_probe_triage"
 
 LIVE_CAPTURE_REQUIRED_GATES = {
     "capture_source_is_microphone",
@@ -2823,7 +2828,8 @@ def _route_probe_retry_hints(
             playback_gain_db=current_gain,
         )
     }
-    if "source:recording_too_quiet" in blocking_reasons and current_gain <= -18.0:
+    has_clipping_reason = any(str(reason).endswith(":recording_clipped") for reason in blocking_reasons)
+    if "source:recording_too_quiet" in blocking_reasons and current_gain <= -18.0 and not has_clipping_reason:
         retry_gain = min(-12.0, current_gain + 6.0)
         hints["same_route_after_gain_adjustment"] = _route_probe_command(
             measurement_input_device=measurement_id,
@@ -2946,9 +2952,254 @@ def load_headphone_route_probe_status_handoff(path: Path | None) -> dict[str, An
     return handoff
 
 
+def _room_route_probe_device(device_info: dict[str, Any], key: str) -> dict[str, Any]:
+    device = device_info.get(key, {})
+    device = device if isinstance(device, dict) else {}
+    return {
+        "requested_device": _string_or_empty(device.get("requested_device")),
+        "index": _string_or_empty(device.get("index") or device.get("resolved_device_index")),
+        "name": _string_or_empty(device.get("name")),
+        "hostapi_name": _string_or_empty(device.get("hostapi_name")),
+    }
+
+
+def _room_route_probe_metric(summary: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "recording_dbfs": _float_or_none(summary.get("route_probe_recording_dbfs")),
+        "peak_dbfs": _float_or_none(summary.get("route_probe_peak_dbfs")),
+        "reference_confidence": _float_or_none(summary.get("route_probe_reference_confidence")),
+        "reference_correlation": _float_or_none(summary.get("route_probe_reference_correlation")),
+        "reference_distortion_db": _float_or_none(summary.get("route_probe_reference_distortion_db")),
+        "lag_ms": _float_or_none(summary.get("route_probe_lag_ms")),
+        "gain_db": _float_or_none(summary.get("route_probe_gain_db")),
+        "clipped_sample_count": _nonnegative_int(summary.get("route_probe_clipped_sample_count")),
+    }
+
+
+def _room_route_probe_command(
+    *,
+    input_device: str,
+    output_device: str,
+    sample_rate_hz: int,
+    input_channels: int,
+    output_channels: int,
+    playback_gain_db: float | None,
+) -> str:
+    gain = -18.0 if playback_gain_db is None else playback_gain_db
+    return (
+        "python scripts/run_real_room_playback_suppression.py probe-route "
+        f"--input-device {_powershell_single_quote_arg(input_device)} "
+        f"--output-device {_powershell_single_quote_arg(output_device)} "
+        f"--sample-rate-hz {sample_rate_hz} "
+        f"--input-channels {input_channels} "
+        f"--output-channels {output_channels} "
+        f"--playback-gain-db {gain:g} "
+        "--score-warning-only"
+    )
+
+
+def _room_route_probe_derived_diagnosis(summary: dict[str, Any]) -> dict[str, Any]:
+    diagnosis = summary.get("route_failure_diagnosis", {})
+    if isinstance(diagnosis, dict):
+        reasons = _limited_string_list(diagnosis.get("blocking_reasons"), limit=8)
+        actions = _limited_string_list(diagnosis.get("next_actions"), limit=6)
+        if reasons or actions:
+            return {"blocking_reasons": reasons, "next_actions": actions}
+
+    reasons: list[str] = []
+    actions: list[str] = []
+
+    def add_action(action: str) -> None:
+        if action not in actions:
+            actions.append(action)
+
+    error = _string_or_empty(summary.get("error"))
+    if error:
+        reasons.append("stream_open_error")
+        add_action("try a different PortAudio host API or explicit input/output device pair")
+        add_action("verify the selected output is unmuted and not reserved by another application")
+        return {"blocking_reasons": reasons, "next_actions": actions}
+
+    level = _float_or_none(summary.get("route_probe_recording_dbfs"))
+    confidence = _float_or_none(summary.get("route_probe_reference_confidence"))
+    distortion = _float_or_none(summary.get("route_probe_reference_distortion_db"))
+    peak = _float_or_none(summary.get("route_probe_peak_dbfs"))
+    clipped = _nonnegative_int(summary.get("route_probe_clipped_sample_count"))
+    lag_ms = abs(_float_or_none(summary.get("route_probe_lag_ms")) or 0.0)
+    max_lag = _float_or_none(summary.get("max_alignment_lag_ms")) or 500.0
+    if level is None or level < -60.0:
+        reasons.append("recording_too_quiet")
+        add_action("move the microphone closer to the source speaker or raise playback gain without clipping")
+        add_action("verify the selected source output is the physical laptop/speaker path and is not muted")
+    if clipped > 0 or (peak is not None and peak > -0.1):
+        reasons.append("recording_clipped")
+        add_action("lower playback gain before rerunning the route probe")
+    if confidence is None or confidence < 0.45:
+        reasons.append("reference_not_detected")
+        add_action("disable Windows audio enhancements, noise suppression, AGC, and echo processing")
+        add_action("try an alternate host API route for the same physical devices")
+    if distortion is None or distortion > 18.0:
+        reasons.append("reference_distorted")
+        add_action("reduce processing in the capture/playback path or use a wired speaker/microphone route")
+    if max_lag > 0 and lag_ms >= max_lag * 0.8:
+        reasons.append("alignment_lag_near_limit")
+        add_action("try a lower-latency host API route before increasing lag tolerance for triage")
+    if _literal_true(summary.get("route_probe_recording_matches_reference")):
+        reasons.append("recording_matches_reference_clone")
+        add_action("discard this route result and rerun through a real microphone/speaker path")
+    return {"blocking_reasons": reasons, "next_actions": actions}
+
+
+def _room_route_probe_retry_hints(
+    *,
+    blocking_reasons: list[str],
+    device_route: dict[str, dict[str, Any]],
+    sample_rate_hz: int,
+    input_channels: int,
+    output_channels: int,
+    playback_gain_db: float | None,
+) -> dict[str, Any]:
+    input_device = device_route.get("input_device", {})
+    output_device = device_route.get("output_device", {})
+    input_id = _string_or_empty(input_device.get("requested_device"))
+    output_id = _string_or_empty(output_device.get("requested_device"))
+    if not (input_id and output_id and sample_rate_hz and input_channels and output_channels):
+        return {}
+
+    current_gain = -18.0 if playback_gain_db is None else playback_gain_db
+    hints: dict[str, Any] = {
+        "same_route_after_processing_changes": _room_route_probe_command(
+            input_device=input_id,
+            output_device=output_id,
+            sample_rate_hz=sample_rate_hz,
+            input_channels=input_channels,
+            output_channels=output_channels,
+            playback_gain_db=current_gain,
+        )
+    }
+    if "recording_too_quiet" in blocking_reasons and "recording_clipped" not in blocking_reasons and current_gain <= -18.0:
+        retry_gain = min(-12.0, current_gain + 6.0)
+        hints["same_route_after_gain_adjustment"] = _room_route_probe_command(
+            input_device=input_id,
+            output_device=output_id,
+            sample_rate_hz=sample_rate_hz,
+            input_channels=input_channels,
+            output_channels=output_channels,
+            playback_gain_db=retry_gain,
+        )
+        hints["gain_adjustment_note"] = (
+            f"Real-room route was too quiet; retry 6 dB louder at {retry_gain:g} dB only if the route is not clipping."
+        )
+    return hints
+
+
+def load_room_route_probe_status_handoff(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    handoff: dict[str, Any] = {
+        "path": str(path),
+        "present": False,
+        "release_evidence": False,
+    }
+    try:
+        payload = _load_json(path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        handoff.update(
+            {
+                "status": "UNREADABLE",
+                "parse_error": str(exc),
+                "next_step": "Regenerate the real-room route probe report.",
+            }
+        )
+        return handoff
+    if payload is None:
+        handoff.update(
+            {
+                "status": "MISSING",
+                "next_step": "Run real-room route probe on the intended microphone/speaker path before device qualification.",
+            }
+        )
+        return handoff
+
+    summary = _summary(payload)
+    benchmarks = payload.get("benchmarks", {})
+    benchmark = benchmarks.get("room_route_probe", {}) if isinstance(benchmarks, dict) else {}
+    benchmark = benchmark if isinstance(benchmark, dict) else {}
+    probe_summary = benchmark.get("summary", {})
+    probe_summary = probe_summary if isinstance(probe_summary, dict) else {}
+    device_info = benchmark.get("device", {})
+    device_info = device_info if isinstance(device_info, dict) else {}
+    identity_issues: list[str] = []
+    if payload.get("fixture_kind") != EXPECTED_ROOM_ROUTE_PROBE_FIXTURE_KIND:
+        identity_issues.append("fixture_kind is not real-room route probe")
+    if payload.get("measurement_kind") != EXPECTED_ROOM_ROUTE_PROBE_MEASUREMENT_KIND:
+        identity_issues.append("measurement_kind is not real-room route probe")
+    if payload.get("release_proof") is not False or summary.get("release_proof") is not False:
+        identity_issues.append("route probe must keep release_proof=false")
+    if probe_summary.get("measurement_kind") not in ("", None, EXPECTED_ROOM_ROUTE_PROBE_MEASUREMENT_KIND):
+        identity_issues.append("route probe benchmark summary has wrong measurement_kind")
+    if probe_summary.get("release_proof") is not False:
+        identity_issues.append("route probe benchmark summary must keep release_proof=false")
+    if not probe_summary:
+        identity_issues.append("route probe benchmark summary is missing")
+
+    if identity_issues:
+        status = "INVALID"
+        next_step = "Regenerate route probe; the report identity or release-proof fields do not match the real-room route-probe contract."
+    elif _literal_true(summary.get("passed")):
+        status = "PASS-TRIAGE"
+        next_step = "Rerun this route with qualify-device, then collect full real-room playback/source suppression evidence."
+    else:
+        status = "FAIL-TRIAGE"
+        next_step = "Apply the route diagnosis, then rerun route probe or choose the headphone/earpiece listener-ear path."
+
+    device_route = {
+        "input_device": _room_route_probe_device(device_info, "input_device"),
+        "output_device": _room_route_probe_device(device_info, "output_device"),
+    }
+    sample_rate_hz = _nonnegative_int(probe_summary.get("sample_rate_hz"))
+    input_channels = _nonnegative_int(probe_summary.get("input_channels"))
+    output_channels = _nonnegative_int(probe_summary.get("output_channels"))
+    playback_gain_db = _float_or_none(probe_summary.get("playback_gain_db"))
+    diagnosis = _room_route_probe_derived_diagnosis(probe_summary)
+    blocking_reasons = _limited_string_list(diagnosis.get("blocking_reasons"), limit=8)
+    next_actions = _limited_string_list(diagnosis.get("next_actions"), limit=6)
+    recommended_commands: dict[str, Any] = {}
+    if status == "FAIL-TRIAGE":
+        recommended_commands = _room_route_probe_retry_hints(
+            blocking_reasons=blocking_reasons,
+            device_route=device_route,
+            sample_rate_hz=sample_rate_hz,
+            input_channels=input_channels,
+            output_channels=output_channels,
+            playback_gain_db=playback_gain_db,
+        )
+
+    handoff.update(
+        {
+            "present": True,
+            "status": status,
+            "next_step": next_step,
+            "release_proof": _literal_true(payload.get("release_proof")),
+            "identity_issues": identity_issues,
+            "sample_rate_hz": sample_rate_hz,
+            "input_channels": input_channels,
+            "output_channels": output_channels,
+            "playback_gain_db": playback_gain_db,
+            "device_route": device_route,
+            "route": _room_route_probe_metric(probe_summary),
+            "blocking_reasons": blocking_reasons,
+            "next_actions": next_actions,
+            "recommended_commands": recommended_commands,
+        }
+    )
+    return handoff
+
+
 def build_report(
     release_results: list[GateResult],
     prototype_results: list[GateResult],
+    room_route_probe_report: Path | None = None,
     headphone_manual_status_report: Path | None = None,
     headphone_preflight_report: Path | None = None,
     headphone_route_probe_report: Path | None = None,
@@ -2979,6 +3230,9 @@ def build_report(
         },
     }
     operator_handoff: dict[str, Any] = {}
+    room_route_probe_status = load_room_route_probe_status_handoff(room_route_probe_report)
+    if room_route_probe_status is not None:
+        operator_handoff["room_route_probe_status"] = room_route_probe_status
     manual_status = load_headphone_manual_status_handoff(headphone_manual_status_report)
     if manual_status is not None:
         operator_handoff["headphone_manual_status"] = manual_status
@@ -3273,7 +3527,101 @@ def headphone_route_probe_status_handoff_lines(route_probe_status: dict[str, Any
     return lines
 
 
+def room_route_probe_status_handoff_lines(route_probe_status: dict[str, Any] | None) -> list[str]:
+    lines = [
+        "",
+        "### Current Real-Room Route Probe Status",
+        "",
+        "This route probe is triage only; it is not release evidence.",
+        "",
+    ]
+    if not isinstance(route_probe_status, dict):
+        lines.extend(
+            [
+                "- Status: not loaded in this release report.",
+                f"- Default route-probe path: `{DEFAULT_ROOM_ROUTE_PROBE_REPORT}`",
+                "- Next step: run real-room route probe before device qualification or full room suppression capture.",
+            ]
+        )
+        return lines
+
+    status = str(route_probe_status.get("status", "UNKNOWN"))
+    lines.append(f"- Status: **{status}**")
+    lines.append(f"- JSON route probe: `{route_probe_status.get('path', '')}`")
+    if not route_probe_status.get("present"):
+        parse_error = str(route_probe_status.get("parse_error", "")).strip()
+        if parse_error:
+            lines.append(f"- Read error: `{parse_error}`")
+        lines.append(f"- Next step: {route_probe_status.get('next_step', '')}")
+        return lines
+
+    device_route = route_probe_status.get("device_route", {})
+    device_route = device_route if isinstance(device_route, dict) else {}
+    input_device = device_route.get("input_device", {})
+    output_device = device_route.get("output_device", {})
+    input_device = input_device if isinstance(input_device, dict) else {}
+    output_device = output_device if isinstance(output_device, dict) else {}
+    route_metric = route_probe_status.get("route", {})
+    route_metric = route_metric if isinstance(route_metric, dict) else {}
+    route = f"{input_device.get('requested_device', '')}:{output_device.get('requested_device', '')}"
+    lines.extend(
+        [
+            f"- Route: `{route}` at {route_probe_status.get('sample_rate_hz', 0)} Hz, "
+            f"{route_probe_status.get('input_channels', 0)}:{route_probe_status.get('output_channels', 0)} channels",
+            f"- Input: `{input_device.get('name', '')}` ({input_device.get('hostapi_name', '')})",
+            f"- Output: `{output_device.get('name', '')}` ({output_device.get('hostapi_name', '')})",
+            f"- Probe: level={_format_optional_float(route_metric.get('recording_dbfs'), ' dBFS')}, "
+            f"peak={_format_optional_float(route_metric.get('peak_dbfs'), ' dBFS')}, "
+            f"confidence={_format_optional_float(route_metric.get('reference_confidence'))}, "
+            f"distortion={_format_optional_float(route_metric.get('reference_distortion_db'), ' dB')}, "
+            f"lag={_format_optional_float(route_metric.get('lag_ms'), ' ms')}",
+        ]
+    )
+    identity_issues = route_probe_status.get("identity_issues", [])
+    if isinstance(identity_issues, list) and status == "INVALID":
+        issue_text = "; ".join(str(issue) for issue in identity_issues[:4])
+        lines.append(f"- Identity issues: {issue_text}")
+    blocking_reasons = route_probe_status.get("blocking_reasons", [])
+    if isinstance(blocking_reasons, list) and blocking_reasons:
+        lines.append(f"- Blocking reasons: {', '.join(str(reason) for reason in blocking_reasons)}")
+    next_actions = route_probe_status.get("next_actions", [])
+    if isinstance(next_actions, list) and next_actions:
+        lines.append(f"- Suggested next actions: {'; '.join(str(action) for action in next_actions[:3])}")
+    commands = route_probe_status.get("recommended_commands", {})
+    commands = commands if isinstance(commands, dict) else {}
+    if status != "FAIL-TRIAGE":
+        commands = {}
+    gain_note = str(commands.get("gain_adjustment_note", "")).strip()
+    if gain_note:
+        lines.append(f"- Gain retry note: {gain_note}")
+    gain_command = str(commands.get("same_route_after_gain_adjustment", "")).strip()
+    same_route_command = str(commands.get("same_route_after_processing_changes", "")).strip()
+    if gain_command:
+        lines.extend(
+            [
+                "- Suggested same-route gain retry:",
+                "",
+                "```powershell",
+                gain_command,
+                "```",
+            ]
+        )
+    elif same_route_command and status == "FAIL-TRIAGE":
+        lines.extend(
+            [
+                "- Suggested same-route retry after fixing processing/routing:",
+                "",
+                "```powershell",
+                same_route_command,
+                "```",
+            ]
+        )
+    lines.append(f"- Next step: {route_probe_status.get('next_step', '')}")
+    return lines
+
+
 def playback_source_suppression_handoff_lines(
+    room_route_probe_status: dict[str, Any] | None = None,
     preflight_status: dict[str, Any] | None = None,
     route_probe_status: dict[str, Any] | None = None,
     manual_status: dict[str, Any] | None = None,
@@ -3286,7 +3634,7 @@ def playback_source_suppression_handoff_lines(
         "",
         "- This laptop's built-in microphone and speakers can help with live-capture smoke checks, playback, and route triage.",
         "- Use a USB/lavalier microphone or phone/external recorder physically at the listener-ear point, inside or flush with the headphone/earpiece seal.",
-        "- Use the laptop built-in microphone only for `route_probe_triage_only`; it is not final release evidence.",
+        "- Use the laptop built-in microphone only for real-room/headphone route triage; it is not final listener-ear evidence.",
         "- Keep the source speaker, headphone/earpiece seal, playback gain, and listener-ear microphone position fixed between matching takes.",
         "- Export manual-recorder takes as mono 16-bit PCM WAV at the kit sample rate, or import stereo recorder exports with `--allow-downmix`.",
         "",
@@ -3317,6 +3665,7 @@ def playback_source_suppression_handoff_lines(
         "python scripts/release_audio_gate.py --json",
         "```",
     ]
+    lines.extend(room_route_probe_status_handoff_lines(room_route_probe_status))
     lines.extend(headphone_preflight_status_handoff_lines(preflight_status))
     lines.extend(headphone_route_probe_status_handoff_lines(route_probe_status))
     lines.extend(headphone_manual_status_handoff_lines(manual_status))
@@ -3405,13 +3754,22 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             )
             operator_handoff = report.get("operator_handoff", {})
             operator_handoff = operator_handoff if isinstance(operator_handoff, dict) else {}
+            room_route_probe_status = operator_handoff.get("room_route_probe_status")
+            room_route_probe_status = room_route_probe_status if isinstance(room_route_probe_status, dict) else None
             manual_status = operator_handoff.get("headphone_manual_status")
             manual_status = manual_status if isinstance(manual_status, dict) else None
             preflight_status = operator_handoff.get("headphone_preflight_status")
             preflight_status = preflight_status if isinstance(preflight_status, dict) else None
             route_probe_status = operator_handoff.get("headphone_route_probe_status")
             route_probe_status = route_probe_status if isinstance(route_probe_status, dict) else None
-            lines.extend(playback_source_suppression_handoff_lines(preflight_status, route_probe_status, manual_status))
+            lines.extend(
+                playback_source_suppression_handoff_lines(
+                    room_route_probe_status,
+                    preflight_status,
+                    route_probe_status,
+                    manual_status,
+                )
+            )
             included_playback_collection = True
         else:
             lines.append("- Address each failed release-blocking gate above, then rerun the gate.")
@@ -3935,6 +4293,110 @@ def _write_room_suppression_fixture_report(
     )
 
 
+def _write_room_route_probe_status_report(
+    path: Path,
+    *,
+    passed: bool = False,
+    wrong_fixture: bool = False,
+    summary_overrides: dict[str, Any] | None = None,
+) -> None:
+    sample_rate_hz = 48_000
+    device_info = {
+        "input_device": {
+            "default": False,
+            "default_samplerate": sample_rate_hz,
+            "hostapi": 0,
+            "hostapi_name": "unit-hostapi",
+            "max_input_channels": 1,
+            "max_output_channels": 0,
+            "name": "unit-room-mic",
+            "requested_device": 1,
+            "resolved_device_index": 1,
+        },
+        "output_device": {
+            "default": False,
+            "default_samplerate": sample_rate_hz,
+            "hostapi": 0,
+            "hostapi_name": "unit-hostapi",
+            "max_input_channels": 0,
+            "max_output_channels": 2,
+            "name": "unit-room-speaker",
+            "requested_device": 2,
+            "resolved_device_index": 2,
+        },
+    }
+    probe_summary: dict[str, Any] = {
+        "all_artifact_hashes_present": True,
+        "device_path_fingerprint": _device_path_fingerprint(
+            device_info,
+            sample_rate_hz=sample_rate_hz,
+            input_channels=1,
+            output_channels=2,
+        ),
+        "device_path_identity_recorded": True,
+        "input_channels": 1,
+        "max_alignment_lag_ms": 500.0,
+        "measurement_kind": EXPECTED_ROOM_ROUTE_PROBE_MEASUREMENT_KIND,
+        "output_channels": 2,
+        "playback_gain_db": -18.0,
+        "release_proof": False,
+        "route_probe_clipped_sample_count": 0,
+        "route_probe_gain_db": -90.0,
+        "route_probe_lag_ms": 420.0,
+        "route_probe_peak_dbfs": -42.0,
+        "route_probe_recording_dbfs": -70.0,
+        "route_probe_recording_matches_reference": False,
+        "route_probe_reference_confidence": 0.01,
+        "route_probe_reference_correlation": 0.01,
+        "route_probe_reference_distortion_db": 64.0,
+        "sample_rate_hz": sample_rate_hz,
+    }
+    if passed:
+        probe_summary.update(
+            {
+                "route_probe_gain_db": -4.0,
+                "route_probe_lag_ms": 12.0,
+                "route_probe_peak_dbfs": -9.0,
+                "route_probe_recording_dbfs": -24.0,
+                "route_probe_reference_confidence": 0.95,
+                "route_probe_reference_correlation": 0.95,
+                "route_probe_reference_distortion_db": 3.0,
+            }
+        )
+    if summary_overrides:
+        probe_summary.update(summary_overrides)
+    if not passed and "route_failure_diagnosis" not in probe_summary:
+        probe_summary["route_failure_diagnosis"] = {
+            "blocking_reasons": [
+                "recording_too_quiet",
+                "reference_not_detected",
+                "reference_distorted",
+                "alignment_lag_near_limit",
+            ],
+            "next_actions": [
+                "move the microphone closer to the source speaker or raise playback gain without clipping",
+                "disable Windows audio enhancements, noise suppression, AGC, and echo processing",
+                "try an alternate host API route for the same physical devices",
+            ],
+        }
+    payload = _report(
+        passed,
+        [{"name": "unit_room_route_probe", "passed": passed}],
+        fixture_kind="forged_room_route_probe" if wrong_fixture else EXPECTED_ROOM_ROUTE_PROBE_FIXTURE_KIND,
+        measurement_kind=EXPECTED_ROOM_ROUTE_PROBE_MEASUREMENT_KIND,
+        release_proof=False,
+        benchmarks={
+            "room_route_probe": {
+                "adapter_id": "unit_room_route_probe",
+                "device": device_info,
+                "summary": probe_summary,
+            }
+        },
+    )
+    payload["summary"]["release_proof"] = False
+    _write_json(path, payload)
+
+
 def _headphone_summary_from_recomputed(
     recomputed: dict[str, float],
     *,
@@ -4165,6 +4627,8 @@ def self_test() -> None:
             raise AssertionError("expected release gate to load the default headphone preflight path")
         if parse_args([]).headphone_route_probe_report != DEFAULT_HEADPHONE_ROUTE_PROBE_REPORT:
             raise AssertionError("expected release gate to load the default headphone route probe path")
+        if parse_args([]).room_route_probe_report != DEFAULT_ROOM_ROUTE_PROBE_REPORT:
+            raise AssertionError("expected release gate to load the default real-room route probe path")
         if _specific_measurement_label("REPLACE_WITH_MIC_MODEL_AND_POSITION"):
             raise AssertionError("REPLACE_WITH labels must be rejected as placeholder measurement labels")
         stub = root / "stub.json"
@@ -4204,6 +4668,12 @@ def self_test() -> None:
         sweep_room = root / "sweep-room.json"
         route_probe_room = root / "route-probe-room.json"
         route_sweep_room = root / "route-sweep-room.json"
+        missing_room_route_probe_status = root / "missing-room-route-probe-report.json"
+        room_route_probe_status_failed = root / "room-route-probe-report-failed.json"
+        room_route_probe_status_passed = root / "room-route-probe-report-passed.json"
+        room_route_probe_status_quiet_clipped = root / "room-route-probe-report-quiet-clipped.json"
+        room_route_probe_status_wrong_fixture = root / "room-route-probe-report-wrong-fixture.json"
+        room_route_probe_status_wrong_nested_release = root / "room-route-probe-report-wrong-nested-release.json"
         playback = root / "playback.json"
         missing_manual_status = root / "missing-manual-status.json"
         manual_status_not_ready = root / "manual-recording-status-not-ready.json"
@@ -4480,6 +4950,27 @@ def self_test() -> None:
                     }
                 },
             ),
+        )
+        _write_room_route_probe_status_report(room_route_probe_status_failed)
+        _write_room_route_probe_status_report(room_route_probe_status_passed, passed=True)
+        _write_room_route_probe_status_report(
+            room_route_probe_status_quiet_clipped,
+            summary_overrides={
+                "route_failure_diagnosis": {
+                    "blocking_reasons": ["recording_too_quiet", "recording_clipped"],
+                    "next_actions": [
+                        "move the microphone closer to the source speaker or raise playback gain without clipping",
+                        "lower playback gain before rerunning the route probe",
+                    ],
+                },
+                "route_probe_clipped_sample_count": 24,
+                "route_probe_peak_dbfs": 0.0,
+            },
+        )
+        _write_room_route_probe_status_report(room_route_probe_status_wrong_fixture, wrong_fixture=True)
+        _write_room_route_probe_status_report(
+            room_route_probe_status_wrong_nested_release,
+            summary_overrides={"release_proof": True},
         )
         _write_json(
             route_sweep_room,
@@ -5384,6 +5875,75 @@ def self_test() -> None:
             raise AssertionError("expected report JSON to keep both manual and preflight handoffs")
         if combined_handoff_report["summary"] != report["summary"]:
             raise AssertionError("combined operator handoffs must not change release gate summary")
+        missing_room_route_probe_report = build_report(
+            release_results,
+            prototype_results,
+            room_route_probe_report=missing_room_route_probe_status,
+        )
+        if missing_room_route_probe_report["summary"] != report["summary"]:
+            raise AssertionError("real-room route probe handoff must not change release gate summary")
+        missing_room_route_probe_markdown = render_markdown_report(missing_room_route_probe_report)
+        if (
+            "Current Real-Room Route Probe Status" not in missing_room_route_probe_markdown
+            or "MISSING" not in missing_room_route_probe_markdown
+        ):
+            raise AssertionError("expected missing real-room route probe status to be called out in Markdown")
+        failed_room_route_probe_report = build_report(
+            release_results,
+            prototype_results,
+            room_route_probe_report=room_route_probe_status_failed,
+        )
+        if failed_room_route_probe_report["release_blocking_gates"] != report["release_blocking_gates"]:
+            raise AssertionError("real-room route probe handoff must not change release-blocking gates")
+        failed_room_route_probe_markdown = render_markdown_report(failed_room_route_probe_report)
+        if "FAIL-TRIAGE" not in failed_room_route_probe_markdown or "not release evidence" not in failed_room_route_probe_markdown:
+            raise AssertionError("expected failed real-room route probe to stay non-evidentiary in Markdown")
+        if "recording_too_quiet" not in failed_room_route_probe_markdown or "reference_distorted" not in failed_room_route_probe_markdown:
+            raise AssertionError("expected failed real-room route probe handoff to include blocking reasons")
+        if "Suggested same-route gain retry" not in failed_room_route_probe_markdown or "--playback-gain-db -12" not in failed_room_route_probe_markdown:
+            raise AssertionError("expected quiet real-room route probe handoff to include a cautious -12 dB retry command")
+        quiet_clipped_room_route_probe_report = build_report(
+            release_results,
+            prototype_results,
+            room_route_probe_report=room_route_probe_status_quiet_clipped,
+        )
+        quiet_clipped_room_route_probe_markdown = render_markdown_report(quiet_clipped_room_route_probe_report)
+        if "recording_clipped" not in quiet_clipped_room_route_probe_markdown:
+            raise AssertionError("expected quiet+clipped real-room route probe to render clipping diagnosis")
+        if "Suggested same-route gain retry" in quiet_clipped_room_route_probe_markdown or "--playback-gain-db -12" in quiet_clipped_room_route_probe_markdown:
+            raise AssertionError("quiet+clipped real-room route probe must not render a louder retry command")
+        passed_room_route_probe_report = build_report(
+            release_results,
+            prototype_results,
+            room_route_probe_report=room_route_probe_status_passed,
+        )
+        passed_room_route_probe_markdown = render_markdown_report(passed_room_route_probe_report)
+        if "PASS-TRIAGE" not in passed_room_route_probe_markdown or "not release evidence" not in passed_room_route_probe_markdown:
+            raise AssertionError("expected passing real-room route probe to remain triage-only")
+        wrong_room_route_probe_report = build_report(
+            release_results,
+            prototype_results,
+            room_route_probe_report=room_route_probe_status_wrong_fixture,
+        )
+        wrong_room_route_probe_markdown = render_markdown_report(wrong_room_route_probe_report)
+        if "INVALID" not in wrong_room_route_probe_markdown or "fixture_kind is not real-room route probe" not in wrong_room_route_probe_markdown:
+            raise AssertionError("wrong real-room route probe fixture kind must render invalid")
+        wrong_room_route_probe_handoff = wrong_room_route_probe_report.get("operator_handoff", {}).get("room_route_probe_status", {})
+        if isinstance(wrong_room_route_probe_handoff, dict) and wrong_room_route_probe_handoff.get("recommended_commands"):
+            raise AssertionError("invalid real-room route probe handoff must not emit retry commands")
+        if "Suggested same-route" in wrong_room_route_probe_markdown or "--playback-gain-db -12" in wrong_room_route_probe_markdown:
+            raise AssertionError("invalid real-room route probe Markdown must not render retry commands")
+        wrong_nested_release_room_route_probe_report = build_report(
+            release_results,
+            prototype_results,
+            room_route_probe_report=room_route_probe_status_wrong_nested_release,
+        )
+        wrong_nested_release_room_route_probe_markdown = render_markdown_report(wrong_nested_release_room_route_probe_report)
+        if "INVALID" not in wrong_nested_release_room_route_probe_markdown or "benchmark summary must keep release_proof=false" not in wrong_nested_release_room_route_probe_markdown:
+            raise AssertionError("wrong real-room route probe nested release_proof must render invalid")
+        wrong_nested_release_room_route_probe_handoff = wrong_nested_release_room_route_probe_report.get("operator_handoff", {}).get("room_route_probe_status", {})
+        if isinstance(wrong_nested_release_room_route_probe_handoff, dict) and wrong_nested_release_room_route_probe_handoff.get("recommended_commands"):
+            raise AssertionError("invalid nested release_proof route probe handoff must not emit retry commands")
         missing_route_probe_report = build_report(
             release_results,
             prototype_results,
@@ -5520,6 +6080,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--streaming-translation-report", type=Path, default=DEFAULT_STREAMING_TRANSLATION_REPORT)
     parser.add_argument("--voice-report", type=Path, default=DEFAULT_VOICE_REPORT)
     parser.add_argument("--room-suppression-report", type=Path, default=DEFAULT_ROOM_SUPPRESSION_REPORT)
+    parser.add_argument("--room-route-probe-report", type=Path, default=DEFAULT_ROOM_ROUTE_PROBE_REPORT)
     parser.add_argument("--headphone-isolation-report", type=Path, default=DEFAULT_HEADPHONE_ISOLATION_REPORT)
     parser.add_argument("--headphone-preflight-report", type=Path, default=DEFAULT_HEADPHONE_PREFLIGHT_REPORT)
     parser.add_argument("--headphone-route-probe-report", type=Path, default=DEFAULT_HEADPHONE_ROUTE_PROBE_REPORT)
@@ -5540,6 +6101,7 @@ def main(argv: list[str] | None = None) -> int:
     report = build_report(
         release_results,
         prototype_results,
+        room_route_probe_report=args.room_route_probe_report,
         headphone_manual_status_report=args.headphone_manual_status_report,
         headphone_preflight_report=args.headphone_preflight_report,
         headphone_route_probe_report=args.headphone_route_probe_report,

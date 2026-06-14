@@ -617,7 +617,10 @@ release substitute.
 `probe-route` writes `artifacts/audio_eval/runs/real-room-route-probe/route-probe-report.json` with
 `measurement_kind=real_room_route_probe_triage` and `release_proof=false`. It plays a chirp sentinel,
 records the selected route, and reports matched-reference confidence, lag, gain, clipping, route
-errors, hashes, and device fingerprint before speech qualification is attempted.
+errors, hashes, device fingerprint, and structured `route_failure_diagnosis` before speech
+qualification is attempted. The release gate renders that route-probe diagnosis in the operator
+handoff when the default report exists, but route probes remain triage-only and never satisfy
+source-suppression evidence.
 `sweep-routes` writes
 `artifacts/audio_eval/runs/real-room-route-probe-sweep/route-probe-sweep-report.json` with
 `measurement_kind=real_room_route_probe_sweep_triage` and `release_proof=false`. It tries bounded
