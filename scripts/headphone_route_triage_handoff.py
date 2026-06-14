@@ -30,6 +30,13 @@ def _repo_relative(path: Path) -> str:
         return str(path)
 
 
+def _display_device_name(value: Any) -> str:
+    name = str(value or "").strip()
+    if name.endswith("()"):
+        name = name[:-2].rstrip()
+    return name or "unknown"
+
+
 def _preflight_benchmark(report: dict[str, Any]) -> dict[str, Any]:
     benchmarks = _as_dict(report.get("benchmarks"))
     return _as_dict(benchmarks.get("headphone_earpiece_preflight"))
@@ -108,9 +115,9 @@ def render_handoff(report: dict[str, Any], report_path: Path) -> str:
     if candidate:
         lines.append(
             "- Candidate: "
-            f"input {candidate.get('input_device')} {candidate.get('input_name')}; "
-            f"source {candidate.get('source_output_device')} {candidate.get('source_name')}; "
-            f"headphone {candidate.get('headphone_output_device')} {candidate.get('headphone_name')}"
+            f"input {candidate.get('input_device')} {_display_device_name(candidate.get('input_name'))}; "
+            f"source {candidate.get('source_output_device')} {_display_device_name(candidate.get('source_name'))}; "
+            f"headphone {candidate.get('headphone_output_device')} {_display_device_name(candidate.get('headphone_name'))}"
         )
     lines.extend(
         [
@@ -141,7 +148,7 @@ def self_test() -> int:
             "headphone_earpiece_preflight": {
                 "candidate_route_triples": [
                     {
-                        "headphone_name": "Headphones",
+                        "headphone_name": "Headphones ()",
                         "headphone_output_device": 9,
                         "input_device": 7,
                         "input_name": "Laptop mic",
@@ -159,6 +166,7 @@ def self_test() -> int:
         "--measurement-input-device 7",
         "--source-output-device 8",
         "--headphone-output-device 9",
+        "headphone 9 Headphones",
         "--score-warning-only",
         "route triage only",
         "$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = \"8\"",
@@ -170,6 +178,8 @@ def self_test() -> int:
             raise AssertionError(f"missing rendered text: {text}")
     if "-Python $env:LANGUAGE_PYTHON" in rendered:
         raise AssertionError("handoff should rely on wrapper Python auto-selection")
+    if "Headphones ()" in rendered:
+        raise AssertionError("handoff should hide empty parentheses in display names")
     print("headphone route triage handoff self-test PASS")
     return 0
 

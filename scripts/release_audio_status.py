@@ -145,7 +145,10 @@ def _preflight_candidate_device_label(candidate: dict[str, Any], role: str) -> s
         name_key = "headphone_name"
         hostapi_key = "headphone_hostapi_name"
 
-    name = str(candidate.get(name_key, "")).strip() or "unknown"
+    name = str(candidate.get(name_key, "")).strip()
+    if name.endswith("()"):
+        name = name[:-2].rstrip()
+    name = name or "unknown"
     index = str(candidate.get(index_key, "")).strip()
     hostapi = str(candidate.get(hostapi_key, "")).strip()
     details = [value for value in (f"index={index}" if index else "", hostapi) if value]
@@ -811,6 +814,7 @@ def self_test() -> int:
         "python scripts/run_test_category.py reference-playback-dry-run",
         "python scripts/run_test_category.py recording-session-dry-run",
         "python scripts/run_test_category.py reference-playback",
+        "headphone=Headphones (index=10, Windows WDM-KS)",
         "Output 1 (SoundWire Speaker)",
         "python scripts/run_test_category.py release-evidence-score",
         "route probes and virtual labs stay `release_proof=false`",
@@ -824,6 +828,8 @@ def self_test() -> int:
     for text in ("Measurement input:", "source:reference_not_detected"):
         if text in stale_checklist:
             raise AssertionError(f"stale checklist should suppress old probe detail: {text}")
+    if "Headphones ()" in checklist:
+        raise AssertionError("checklist should hide empty parentheses in display names")
 
     passed_report: dict[str, Any] = {
         "summary": {
