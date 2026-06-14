@@ -252,8 +252,9 @@ The playback helper requires explicit source/headphone output devices, or one de
 This writes `manual-playback-log.json` with `release_proof=false`. It is only an operator trace; the
 release evidence still comes from the scored listener-ear WAV recordings.
 
-If your recorder exports arbitrary filenames, import them into the manifest's expected paths before
-checking or scoring:
+If your recorder exports arbitrary filenames, place the three WAVs in the generated
+`raw-listener-ear-recordings/` dropbox and rerun `collect-headphone-evidence`, or import them into
+the manifest's expected paths before checking or scoring:
 
 ```powershell
 $env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
@@ -264,7 +265,9 @@ pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action import-manua
 normalize loudness, denoise, repair clipping, resample, auto-select best takes, or trim for score. It
 rejects exact reference clones, duplicate raw takes, placeholder labels supplied to the importer, and
 target overwrites unless `--allow-overwrite` is explicit. It writes `manual-import-log.json` with
-`release_proof=false`; only `score-manual` can produce release evidence.
+`release_proof=false`; only `score-manual` can produce release evidence. The collection wrapper uses
+the same importer automatically when all three dropbox WAVs exist, and skips auto-import instead of
+implicitly replacing target recordings on reruns.
 
 Then run the manual-recording doctor without warning-only and with the real labels you will use for
 scoring. It checks that the kit manifest remains `release_proof=false`, both reference WAVs exist and

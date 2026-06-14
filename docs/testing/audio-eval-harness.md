@@ -705,13 +705,16 @@ that diagnosis in the operator handoff. Quiet source-route failures include a sa
 6 dB louder, capped at -12 dB; this is still triage only, and laptop built-in microphones remain
 insufficient for final listener-ear release evidence.
 When PortAudio routing is the blocker, `headphone-isolation-collect-evidence` is the preferred
-single-command handoff. It prepares the manual kit, optionally imports raw recorder WAV paths,
+single-command handoff. It prepares the manual kit, optionally imports raw recorder WAV paths or
+complete dropbox WAVs,
 runs the readiness doctor, and writes `headphone-evidence-collection-plan.json` plus Markdown with
 hardware instructions and next commands. When a preflight report is available, the collection plan
 uses its best source/headphone output route only to fill the `play-manual` helper command; explicit
 `--source-output-device` and `--headphone-output-device` arguments still take precedence. The
 collection plan also creates `raw-listener-ear-recordings/` with exact filenames for phone/USB
-recorder exports and an import command that points at those paths. It remains `release_proof=false`.
+recorder exports and an import command that points at those paths. Rerunning the collection command
+auto-imports those files when all three are present and refuses implicit overwrites. It remains
+`release_proof=false`.
 Underneath it, `headphone-isolation-prepare-manual` creates non-release reference WAVs,
 `manual-recording-manifest.json`, and `manual-recording-checklist.md` for a phone/USB mic/external
 recorder flow. Use `headphone-isolation-score-manual` after collecting real listener-ear, 16-bit PCM
@@ -721,8 +724,9 @@ WAV recordings trimmed within the 500 ms release alignment window to write the r
 and writes `manual-playback-log.json` with `release_proof=false`; it is recording assistance only.
 It requires explicit source/headphone output devices unless `--output-device` or
 `--allow-default-output` is passed deliberately.
-If recorder exports do not already use the manifest's expected filenames, run
-`headphone-isolation-import-manual` with the three raw take paths. It writes
+If recorder exports do not already use the manifest's expected filenames, place them in the dropbox
+and rerun `headphone-isolation-collect-evidence`, or run `headphone-isolation-import-manual` with the
+three raw take paths. It writes
 `manual-import-log.json` with `release_proof=false`, can explicitly downmix stereo WAVs, and rejects
 reference clones, duplicate takes, placeholder labels supplied to import, and implicit overwrites.
 Run `headphone-isolation-check-manual` after recording and before scoring; it writes

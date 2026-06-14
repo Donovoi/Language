@@ -4171,6 +4171,61 @@ def write_manual_raw_recording_dropbox(
     readme_path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def manual_dropbox_import_state(
+    *,
+    manifest_path: Path,
+    dropbox: dict[str, Any],
+    allow_overwrite: bool,
+) -> dict[str, Any]:
+    expected = dropbox.get("expected_recordings", {})
+    expected = expected if isinstance(expected, dict) else {}
+    source_paths = {
+        key: str(expected.get(key, ""))
+        for key in MANUAL_REQUIRED_RECORDINGS
+    }
+    missing_sources = [
+        key
+        for key, path in source_paths.items()
+        if not path or not Path(path).exists()
+    ]
+    target_paths: dict[str, str] = {}
+    existing_targets: list[str] = []
+    manifest_error = ""
+    if manifest_path.exists():
+        try:
+            manifest = load_manual_manifest(manifest_path)
+            expected_targets = manifest.get("expected_recording_paths")
+            expected_targets = expected_targets if isinstance(expected_targets, dict) else {}
+            for key in MANUAL_REQUIRED_RECORDINGS:
+                target = resolve_manual_manifest_path(manifest_path, expected_targets.get(key))
+                target_paths[key] = str(target)
+                if target.exists():
+                    existing_targets.append(key)
+        except Exception as exc:
+            manifest_error = str(exc)
+    else:
+        manifest_error = f"manual manifest is missing: {manifest_path}"
+
+    blocked_reason = ""
+    if manifest_error:
+        blocked_reason = "manifest_not_ready"
+    elif missing_sources:
+        blocked_reason = "dropbox_recordings_missing"
+    elif existing_targets and not bool(allow_overwrite):
+        blocked_reason = "target_recordings_exist"
+    return {
+        "all_recordings_present": not missing_sources,
+        "allow_overwrite": bool(allow_overwrite),
+        "auto_import_ready": not blocked_reason,
+        "blocked_reason": blocked_reason,
+        "existing_target_recordings": existing_targets,
+        "expected_recordings": source_paths,
+        "manifest_error": manifest_error,
+        "missing_recordings": missing_sources,
+        "target_recording_paths": target_paths,
+    }
+
+
 def _string_or_none(value: Any) -> str | None:
     if value is None:
         return None
@@ -4351,19 +4406,20 @@ def manual_collection_commands(
     raw_recording_dropbox = raw_recording_dropbox if isinstance(raw_recording_dropbox, dict) else {}
     expected_raw = raw_recording_dropbox.get("expected_recordings", {})
     expected_raw = expected_raw if isinstance(expected_raw, dict) else {}
+    use_dropbox_raw_defaults = not manual_collection_import_requested(args)
     source_open = (
         getattr(args, "source_open_ear_recording", None)
-        or expected_raw.get("source_open_ear_recording")
+        or (expected_raw.get("source_open_ear_recording") if use_dropbox_raw_defaults else None)
         or "RAW_SOURCE_OPEN.wav"
     )
     source_isolated = (
         getattr(args, "source_isolated_ear_recording", None)
-        or expected_raw.get("source_isolated_ear_recording")
+        or (expected_raw.get("source_isolated_ear_recording") if use_dropbox_raw_defaults else None)
         or "RAW_SOURCE_ISOLATED.wav"
     )
     translated = (
         getattr(args, "translated_headphone_recording", None)
-        or expected_raw.get("translated_headphone_recording")
+        or (expected_raw.get("translated_headphone_recording") if use_dropbox_raw_defaults else None)
         or "RAW_TRANSLATED.wav"
     )
     return {
@@ -4411,6 +4467,8 @@ def render_manual_collection_markdown(plan: dict[str, Any]) -> str:
     raw_dropbox = raw_dropbox if isinstance(raw_dropbox, dict) else {}
     expected_raw = raw_dropbox.get("expected_recordings", {})
     expected_raw = expected_raw if isinstance(expected_raw, dict) else {}
+    dropbox_import_state = plan.get("dropbox_import_state", {})
+    dropbox_import_state = dropbox_import_state if isinstance(dropbox_import_state, dict) else {}
     lines = [
         "# Headphone/Earpiece Evidence Collection Plan",
         "",
@@ -4468,13 +4526,22 @@ def render_manual_collection_markdown(plan: dict[str, Any]) -> str:
             "",
             "## Raw Recording Dropbox",
             "",
-            "Put phone, USB microphone, or external-recorder WAV exports at these exact paths before running `import_recordings`.",
+            "Put phone, USB microphone, or external-recorder WAV exports at these exact paths, then rerun this collection command or run `import_recordings`.",
             "",
             f"- Folder: `{markdown_inline_path(raw_dropbox.get('path', ''))}`",
             f"- Instructions: `{markdown_inline_path(raw_dropbox.get('readme_path', ''))}`",
             f"- Source open-ear WAV: `{markdown_inline_path(expected_raw.get('source_open_ear_recording', ''))}`",
             f"- Source isolated-ear WAV: `{markdown_inline_path(expected_raw.get('source_isolated_ear_recording', ''))}`",
             f"- Translated headphone WAV: `{markdown_inline_path(expected_raw.get('translated_headphone_recording', ''))}`",
+            f"- Auto-import ready at start: `{summary.get('dropbox_auto_import_ready')}`",
+            f"- Auto-import used this run: `{summary.get('dropbox_auto_import_used')}`",
+            f"- Auto-import dry-run this run: `{summary.get('dropbox_auto_import_dry_run')}`",
+            f"- Auto-import plan succeeded this run: `{summary.get('dropbox_auto_import_plan_succeeded')}`",
+            f"- Auto-import wrote files this run: `{summary.get('dropbox_auto_import_succeeded')}`",
+            f"- Auto-import ready now: `{dropbox_import_state.get('auto_import_ready')}`",
+            f"- Auto-import blocked reason now: `{markdown_inline(dropbox_import_state.get('blocked_reason', ''))}`",
+            f"- Missing dropbox recordings: `{', '.join(str(item) for item in dropbox_import_state.get('missing_recordings', []) if str(item).strip()) or 'none'}`",
+            f"- Existing target recordings: `{', '.join(str(item) for item in dropbox_import_state.get('existing_target_recordings', []) if str(item).strip()) or 'none'}`",
             "",
             "## Issues",
             "",
@@ -4549,6 +4616,7 @@ def collect_headphone_evidence(args: argparse.Namespace) -> int:
     step_results: list[dict[str, Any]] = []
     issues: list[str] = []
     next_actions: list[str] = []
+    import_result: int | None = None
     score_result: int | None = None
     if args.manifest and not bool(args.skip_prepare):
         issues.append("--manifest is only used with --skip-prepare; prepared kit uses the run-id manifest path")
@@ -4585,8 +4653,35 @@ def collect_headphone_evidence(args: argparse.Namespace) -> int:
     else:
         add_step("prepare_manual_kit", None, "skipped")
 
-    import_requested = manual_collection_import_requested(args)
-    if import_requested and not manual_collection_import_ready(args):
+    playback_route = manual_collection_preflight_playback_route(args)
+    raw_recording_dropbox = manual_raw_recording_dropbox(manifest_path)
+    write_manual_raw_recording_dropbox(
+        dropbox=raw_recording_dropbox,
+        manifest_path=manifest_path,
+        playback_route=playback_route,
+    )
+    dropbox_import_state_before_import = manual_dropbox_import_state(
+        manifest_path=manifest_path,
+        dropbox=raw_recording_dropbox,
+        allow_overwrite=bool(args.allow_overwrite),
+    )
+    explicit_import_requested = manual_collection_import_requested(args)
+    dropbox_auto_import_ready = (
+        not explicit_import_requested
+        and bool(dropbox_import_state_before_import.get("auto_import_ready"))
+    )
+    import_requested = explicit_import_requested or dropbox_auto_import_ready
+    source_open_ear_recording = args.source_open_ear_recording
+    source_isolated_ear_recording = args.source_isolated_ear_recording
+    translated_headphone_recording = args.translated_headphone_recording
+    if dropbox_auto_import_ready:
+        dropbox_sources = dropbox_import_state_before_import.get("expected_recordings", {})
+        dropbox_sources = dropbox_sources if isinstance(dropbox_sources, dict) else {}
+        source_open_ear_recording = Path(str(dropbox_sources["source_open_ear_recording"]))
+        source_isolated_ear_recording = Path(str(dropbox_sources["source_isolated_ear_recording"]))
+        translated_headphone_recording = Path(str(dropbox_sources["translated_headphone_recording"]))
+
+    if explicit_import_requested and not manual_collection_import_ready(args):
         issues.append("all three raw listener-ear recording paths are required before import")
         add_step("import_manual_recordings", 1, "incomplete raw recording path set")
     elif import_requested and not issues:
@@ -4601,17 +4696,22 @@ def collect_headphone_evidence(args: argparse.Namespace) -> int:
                 manifest=manifest_path,
                 measurement_microphone_label=args.measurement_microphone_label,
                 skip_check=False,
-                source_isolated_ear_recording=args.source_isolated_ear_recording,
-                source_open_ear_recording=args.source_open_ear_recording,
+                source_isolated_ear_recording=source_isolated_ear_recording,
+                source_open_ear_recording=source_open_ear_recording,
                 status_report=status_report_path,
-                translated_headphone_recording=args.translated_headphone_recording,
+                translated_headphone_recording=translated_headphone_recording,
             )
         )
-        add_step("import_manual_recordings", import_result, str(status_report_path))
+        import_detail = "auto dropbox import" if dropbox_auto_import_ready else str(status_report_path)
+        add_step("import_manual_recordings", import_result, import_detail)
         if import_result != 0:
             issues.append("manual recording import failed")
     else:
-        add_step("import_manual_recordings", None, "not requested")
+        if explicit_import_requested:
+            import_detail = "not ready"
+        else:
+            import_detail = str(dropbox_import_state_before_import.get("blocked_reason") or "not requested")
+        add_step("import_manual_recordings", None, import_detail)
 
     check_result = check_manual_recordings(
         argparse.Namespace(
@@ -4678,12 +4778,10 @@ def collect_headphone_evidence(args: argparse.Namespace) -> int:
         if score_ready:
             next_actions.append("run score-manual or rerun collect-headphone-evidence with --score-if-ready")
 
-    playback_route = manual_collection_preflight_playback_route(args)
-    raw_recording_dropbox = manual_raw_recording_dropbox(manifest_path)
-    write_manual_raw_recording_dropbox(
-        dropbox=raw_recording_dropbox,
+    dropbox_import_state = manual_dropbox_import_state(
         manifest_path=manifest_path,
-        playback_route=playback_route,
+        dropbox=raw_recording_dropbox,
+        allow_overwrite=bool(args.allow_overwrite),
     )
     commands = manual_collection_commands(
         args=args,
@@ -4702,7 +4800,22 @@ def collect_headphone_evidence(args: argparse.Namespace) -> int:
         "manual_status_report_path": str(status_report_path),
         "score_report_path": str(score_report_path),
         "summary": {
+            "dropbox_auto_import_dry_run": (
+                dropbox_auto_import_ready
+                and bool(args.dry_run_import)
+                and import_result is not None
+            ),
+            "dropbox_auto_import_plan_succeeded": dropbox_auto_import_ready and import_result == 0,
+            "dropbox_auto_import_ready": dropbox_auto_import_ready,
+            "dropbox_auto_import_succeeded": (
+                dropbox_auto_import_ready
+                and import_result == 0
+                and not bool(args.dry_run_import)
+            ),
+            "dropbox_auto_import_used": dropbox_auto_import_ready and import_result is not None,
+            "explicit_import_requested": explicit_import_requested,
             "import_requested": import_requested,
+            "import_result": import_result,
             "manual_recordings_ready_for_score_input": status_summary.get("manual_recordings_ready_for_score_input"),
             "manual_score_labels_specific": status_summary.get("manual_score_labels_specific"),
             "manual_score_ready": score_ready,
@@ -4713,6 +4826,8 @@ def collect_headphone_evidence(args: argparse.Namespace) -> int:
         },
         "issues": issues + status_issues,
         "next_actions": next_actions,
+        "dropbox_import_state_before_import": dropbox_import_state_before_import,
+        "dropbox_import_state": dropbox_import_state,
         "preflight_playback_route": playback_route,
         "raw_recording_dropbox": raw_recording_dropbox,
         "recommended_commands": commands,
@@ -5872,6 +5987,8 @@ def self_test() -> int:
             raise RuntimeError("collection plan should report NOT-READY before listener-ear recordings exist")
         if collection_plan.get("summary", {}).get("score_attempted") is not False:
             raise RuntimeError("collection plan must not score before manual status is ready")
+        if collection_plan.get("summary", {}).get("dropbox_auto_import_ready") is not False:
+            raise RuntimeError("collection plan must not auto-import before all dropbox WAVs exist")
         if collection_plan.get("preflight_playback_route", {}).get("status") != "MISSING":
             raise RuntimeError("collection plan should report missing preflight playback route without a preflight report")
         explicit_play_command = collection_plan.get("recommended_commands", {}).get("play_references", "")
@@ -5904,6 +6021,7 @@ def self_test() -> int:
             "built-in laptop mic is not listener-ear proof",
             "Playback Route Suggestion",
             "Raw Recording Dropbox",
+            "Auto-import ready",
             "play_references",
             "import_recordings",
             "release_audio_gate.py --json",
@@ -5970,6 +6088,144 @@ def self_test() -> int:
             + junk_chunk
             + source_reference_bytes[12:]
         )
+        auto_output_dir = root / "auto-dropbox-out"
+        auto_run_id = "unit-auto-dropbox-kit"
+        auto_manifest_path = auto_output_dir / "runs" / auto_run_id / "manual-recording-manifest.json"
+        auto_prepare_result = prepare_manual_kit(
+            argparse.Namespace(
+                adapter_id=DEFAULT_MANUAL_KIT_ADAPTER_ID,
+                gap_s=DEFAULT_GAP_S,
+                lead_s=0.1,
+                max_peak_dbfs=DEFAULT_MAX_PEAK_DBFS,
+                max_reference_duration_s=0.0,
+                min_measurement_duration_s=DEFAULT_MIN_MEASUREMENT_DURATION_S,
+                output_dir=auto_output_dir,
+                playback_gain_db=DEFAULT_PLAYBACK_GAIN_DB,
+                run_id=auto_run_id,
+                sample_rate_hz=sample_rate_hz,
+                score_run_id="unit-auto-dropbox-score",
+                source_reference=source_path,
+                tail_s=0.1,
+                translated_playback_reference=translated_path,
+                tts_report=DEFAULT_TTS_REPORT,
+            )
+        )
+        if auto_prepare_result != 0:
+            raise RuntimeError("auto dropbox manual kit preparation should pass")
+        auto_dropbox = manual_raw_recording_dropbox(auto_manifest_path)
+        auto_sources = auto_dropbox["expected_recordings"]
+        Path(auto_dropbox["path"]).mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source_open_import, auto_sources["source_open_ear_recording"])
+        shutil.copyfile(source_isolated_import, auto_sources["source_isolated_ear_recording"])
+        shutil.copyfile(translated_import, auto_sources["translated_headphone_recording"])
+        auto_collect_args = argparse.Namespace(
+            adapter_id=DEFAULT_MANUAL_KIT_ADAPTER_ID,
+            allow_downmix=True,
+            allow_overwrite=False,
+            dry_run_import=False,
+            gap_s=DEFAULT_GAP_S,
+            headphone_device_label=None,
+            headphone_output_device=None,
+            import_log=None,
+            isolation_fixture_label=None,
+            lead_s=0.1,
+            manifest=auto_manifest_path,
+            markdown_report=auto_manifest_path.parent / "collection-plan.md",
+            max_alignment_lag_ms=DEFAULT_MAX_ALIGNMENT_LAG_MS,
+            max_peak_dbfs=DEFAULT_MAX_PEAK_DBFS,
+            max_reference_duration_s=0.0,
+            max_translated_distortion_db=DEFAULT_MAX_TRANSLATED_DISTORTION_DB,
+            measurement_microphone_label=None,
+            min_measurement_duration_s=DEFAULT_MIN_MEASUREMENT_DURATION_S,
+            min_source_isolation_db=DEFAULT_MIN_SOURCE_ISOLATION_DB,
+            min_source_open_correlation=DEFAULT_MIN_SOURCE_OPEN_CORRELATION,
+            min_source_open_dbfs=DEFAULT_MIN_SOURCE_OPEN_DBFS,
+            min_translated_correlation=DEFAULT_MIN_TRANSLATED_CORRELATION,
+            min_translated_dbfs=DEFAULT_MIN_TRANSLATED_DBFS,
+            output_dir=auto_output_dir,
+            plan_report=auto_manifest_path.parent / "collection-plan.json",
+            playback_gain_db=DEFAULT_PLAYBACK_GAIN_DB,
+            preflight_report=None,
+            procedure_note="unit auto dropbox import",
+            run_id=auto_run_id,
+            sample_rate_hz=sample_rate_hz,
+            score_if_ready=True,
+            score_run_id="unit-auto-dropbox-score",
+            score_warning_only=False,
+            skip_prepare=True,
+            source_isolated_ear_recording=None,
+            source_open_ear_recording=None,
+            source_output_device=None,
+            source_reference=source_path,
+            status_report=auto_manifest_path.parent / "manual-recording-status-collection.json",
+            tail_s=0.1,
+            translated_headphone_recording=None,
+            translated_playback_reference=translated_path,
+            tts_report=DEFAULT_TTS_REPORT,
+        )
+        auto_collect_dry_run_args = argparse.Namespace(**vars(auto_collect_args))
+        auto_collect_dry_run_args.dry_run_import = True
+        auto_collect_dry_run_args.markdown_report = auto_manifest_path.parent / "collection-plan-dry-run.md"
+        auto_collect_dry_run_args.plan_report = auto_manifest_path.parent / "collection-plan-dry-run.json"
+        auto_collect_dry_run_args.status_report = auto_manifest_path.parent / "manual-recording-status-collection-dry-run.json"
+        auto_collect_dry_run_result = collect_headphone_evidence(auto_collect_dry_run_args)
+        if auto_collect_dry_run_result != 0:
+            raise RuntimeError("dry-run collect should validate complete dropbox recordings")
+        auto_dry_plan = json.loads(
+            (auto_manifest_path.parent / "collection-plan-dry-run.json").read_text(encoding="utf-8")
+        )
+        auto_dry_summary = auto_dry_plan.get("summary", {})
+        if auto_dry_summary.get("dropbox_auto_import_used") is not True:
+            raise RuntimeError("dry-run collect should still exercise the auto-import path")
+        if auto_dry_summary.get("dropbox_auto_import_dry_run") is not True:
+            raise RuntimeError("dry-run collect should report dry-run auto-import")
+        if auto_dry_summary.get("dropbox_auto_import_plan_succeeded") is not True:
+            raise RuntimeError("dry-run collect should report a successful import plan")
+        if auto_dry_summary.get("dropbox_auto_import_succeeded") is not False:
+            raise RuntimeError("dry-run collect must not report that auto-import wrote files")
+        auto_manifest = load_manual_manifest(auto_manifest_path)
+        auto_expected_recordings = auto_manifest.get("expected_recording_paths", {})
+        if any(Path(str(path)).exists() for path in auto_expected_recordings.values()):
+            raise RuntimeError("dry-run auto-import must not write target listener-ear recordings")
+        auto_collect_result = collect_headphone_evidence(auto_collect_args)
+        if auto_collect_result != 0:
+            raise RuntimeError("collect-headphone-evidence should auto-import complete dropbox recordings")
+        auto_collection_plan = json.loads((auto_manifest_path.parent / "collection-plan.json").read_text(encoding="utf-8"))
+        auto_summary = auto_collection_plan.get("summary", {})
+        if auto_summary.get("dropbox_auto_import_used") is not True:
+            raise RuntimeError("complete dropbox recordings should be auto-imported")
+        if auto_summary.get("dropbox_auto_import_succeeded") is not True:
+            raise RuntimeError("complete dropbox recordings should auto-import successfully")
+        if auto_collection_plan.get("dropbox_import_state_before_import", {}).get("auto_import_ready") is not True:
+            raise RuntimeError("auto-import plan should retain the pre-import ready state")
+        if auto_collection_plan.get("dropbox_import_state", {}).get("blocked_reason") != "target_recordings_exist":
+            raise RuntimeError("auto-import plan should render current post-import target state")
+        if auto_summary.get("status") != "FILES-READY-LABELS-PENDING":
+            raise RuntimeError("auto-imported collection should stop at labels-pending before scoring")
+        if auto_summary.get("manual_recordings_ready_for_score_input") is not True:
+            raise RuntimeError("auto-imported collection should make recordings ready for score input")
+        if auto_summary.get("score_attempted") is not False:
+            raise RuntimeError("auto-imported collection must not score without specific labels")
+        auto_import_steps = {
+            step.get("name"): step
+            for step in auto_collection_plan.get("step_results", [])
+            if isinstance(step, dict)
+        }
+        if auto_import_steps.get("import_manual_recordings", {}).get("result") != 0:
+            raise RuntimeError("auto dropbox import step should pass")
+        auto_import_log = json.loads((auto_manifest_path.parent / DEFAULT_MANUAL_IMPORT_LOG).read_text(encoding="utf-8"))
+        if auto_import_log.get("release_proof") is not False:
+            raise RuntimeError("auto dropbox import log must not set release_proof")
+        auto_collect_result_again = collect_headphone_evidence(auto_collect_args)
+        if auto_collect_result_again != 0:
+            raise RuntimeError("re-running collect after auto-import should not fail on existing targets")
+        auto_collection_plan_again = json.loads(
+            (auto_manifest_path.parent / "collection-plan.json").read_text(encoding="utf-8")
+        )
+        if auto_collection_plan_again.get("summary", {}).get("dropbox_auto_import_used") is not False:
+            raise RuntimeError("collect should not auto-overwrite existing target recordings")
+        if auto_collection_plan_again.get("dropbox_import_state", {}).get("blocked_reason") != "target_recordings_exist":
+            raise RuntimeError("rerun should explain that existing target recordings blocked auto-import")
         import_without_downmix_result = import_manual_recordings(
             argparse.Namespace(
                 allow_downmix=False,
@@ -6929,6 +7185,36 @@ def self_test() -> int:
                 raise RuntimeError("explicit raw recording overrides with shell-sensitive paths should be quoted")
         if "dropbox-default" in raw_override_import_command:
             raise RuntimeError("explicit raw recording overrides should take precedence over dropbox defaults")
+        partial_raw_commands = manual_collection_commands(
+            args=argparse.Namespace(
+                headphone_output_device=None,
+                playback_gain_db=DEFAULT_PLAYBACK_GAIN_DB,
+                sample_rate_hz=sample_rate_hz,
+                source_isolated_ear_recording=None,
+                source_open_ear_recording=raw_source_open,
+                source_output_device=None,
+                translated_headphone_recording=None,
+            ),
+            manifest_path=manual_manifest_path,
+            score_report_path=root / "partial-raw-override-headphone-isolation-report.json",
+            playback_route=preflight_playback_route,
+            raw_recording_dropbox={
+                "expected_recordings": {
+                    "source_open_ear_recording": str(root / "dropbox-default" / "source-open-ear-recording.wav"),
+                    "source_isolated_ear_recording": str(
+                        root / "dropbox-default" / "source-isolated-ear-recording.wav"
+                    ),
+                    "translated_headphone_recording": str(
+                        root / "dropbox-default" / "translated-headphone-recording.wav"
+                    ),
+                }
+            },
+        )
+        partial_raw_import_command = partial_raw_commands.get("import_recordings", "")
+        if "dropbox-default" in partial_raw_import_command:
+            raise RuntimeError("partial explicit raw imports must not be completed from dropbox defaults")
+        if "RAW_SOURCE_ISOLATED.wav" not in partial_raw_import_command or "RAW_TRANSLATED.wav" not in partial_raw_import_command:
+            raise RuntimeError("partial explicit raw imports should keep placeholders for missing raw paths")
         forged_preflight = json.loads(json.dumps(confirmed_preflight_report))
         forged_candidate = forged_preflight["benchmarks"]["headphone_earpiece_preflight"]["candidate_route_triples"][0]
         forged_candidate["source_output_device"] = "$env:TEMP"
