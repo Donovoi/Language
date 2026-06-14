@@ -9,6 +9,8 @@ class FakeSessionApi implements SessionApi {
     this.resetSessionHandler,
     this.setSpeakerLockHandler,
     this.fetchMockSceneHandler,
+    this.startMockLiveIngestHandler,
+    this.stopMockLiveIngestHandler,
     this.watchSessionEventsHandler,
   });
 
@@ -21,6 +23,9 @@ class FakeSessionApi implements SessionApi {
       setSpeakerLockHandler;
   final Future<SessionStateModel> Function(SessionMode mode)?
       fetchMockSceneHandler;
+  final Future<void> Function(SessionMode mode, int intervalMs)?
+      startMockLiveIngestHandler;
+  final Future<void> Function()? stopMockLiveIngestHandler;
   final Stream<SessionStreamEvent> Function(SessionMode? mode)?
       watchSessionEventsHandler;
 
@@ -30,6 +35,9 @@ class FakeSessionApi implements SessionApi {
   final List<({String speakerId, bool isLocked})> setSpeakerLockRequests =
       <({String speakerId, bool isLocked})>[];
   final List<SessionMode> fetchMockSceneModes = <SessionMode>[];
+  final List<({SessionMode mode, int intervalMs})> startMockLiveIngestRequests =
+      <({SessionMode mode, int intervalMs})>[];
+  int stopMockLiveIngestCallCount = 0;
   final List<SessionMode?> watchSessionEventsModes = <SessionMode?>[];
 
   @override
@@ -80,6 +88,29 @@ class FakeSessionApi implements SessionApi {
       throw UnimplementedError('fetchMockSceneHandler was not provided.');
     }
     return handler(mode);
+  }
+
+  @override
+  Future<void> startMockLiveIngest({
+    required SessionMode mode,
+    int intervalMs = 350,
+  }) {
+    startMockLiveIngestRequests.add((mode: mode, intervalMs: intervalMs));
+    final handler = startMockLiveIngestHandler;
+    if (handler == null) {
+      throw UnimplementedError('startMockLiveIngestHandler was not provided.');
+    }
+    return handler(mode, intervalMs);
+  }
+
+  @override
+  Future<void> stopMockLiveIngest() {
+    stopMockLiveIngestCallCount += 1;
+    final handler = stopMockLiveIngestHandler;
+    if (handler == null) {
+      throw UnimplementedError('stopMockLiveIngestHandler was not provided.');
+    }
+    return handler();
   }
 
   @override

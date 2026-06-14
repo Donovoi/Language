@@ -41,6 +41,25 @@ class _SessionScreenState extends State<SessionScreen> {
             title: const Text('Language Field Console'),
             actions: <Widget>[
               IconButton(
+                onPressed: widget.repository.isLoading
+                    ? null
+                    : () {
+                        if (widget.repository.isLiveIngestRunning) {
+                          widget.repository.stopLiveIngestDemo();
+                        } else {
+                          widget.repository.startLiveIngestDemo();
+                        }
+                      },
+                icon: Icon(
+                  widget.repository.isLiveIngestRunning
+                      ? Icons.stop_circle_outlined
+                      : Icons.play_circle_outline,
+                ),
+                tooltip: widget.repository.isLiveIngestRunning
+                    ? 'Stop live ingest demo'
+                    : 'Start live ingest demo',
+              ),
+              IconButton(
                 onPressed: widget.repository.isLoading ? null : widget.repository.reset,
                 icon: const Icon(Icons.restart_alt),
                 tooltip: 'Reset session',

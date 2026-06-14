@@ -248,6 +248,74 @@ void main() {
     repository.dispose();
   });
 
+  test('startLiveIngestDemo uses the current session mode', () async {
+    final controller = StreamController<SessionStreamEvent>();
+    addTearDown(controller.close);
+    final api = FakeSessionApi(
+      startMockLiveIngestHandler: (_, __) async {},
+      watchSessionEventsHandler: (_) => controller.stream,
+    );
+    final repository = MockRepository(
+      api: api,
+      initialSession: SessionStateModel.fallback(mode: SessionMode.crowd),
+    );
+
+    await repository.startLiveIngestDemo(intervalMs: 125);
+
+    expect(
+      api.startMockLiveIngestRequests,
+      <({SessionMode mode, int intervalMs})>[
+        (mode: SessionMode.crowd, intervalMs: 125),
+      ],
+    );
+    expect(api.watchSessionEventsModes, <SessionMode?>[null]);
+    expect(repository.isLiveIngestRunning, isTrue);
+    expect(repository.errorMessage, isNull);
+    expect(repository.isLoading, isFalse);
+
+    repository.dispose();
+  });
+
+  test('stopLiveIngestDemo clears running state', () async {
+    final controller = StreamController<SessionStreamEvent>();
+    addTearDown(controller.close);
+    final api = FakeSessionApi(
+      startMockLiveIngestHandler: (_, __) async {},
+      stopMockLiveIngestHandler: () async {},
+      watchSessionEventsHandler: (_) => controller.stream,
+    );
+    final repository = MockRepository(
+      api: api,
+      initialSession: SessionStateModel.fallback(mode: SessionMode.focus),
+    );
+
+    await repository.startLiveIngestDemo();
+    await repository.stopLiveIngestDemo();
+
+    expect(api.stopMockLiveIngestCallCount, 1);
+    expect(repository.isLiveIngestRunning, isFalse);
+    expect(repository.errorMessage, isNull);
+
+    repository.dispose();
+  });
+
+  test('startLiveIngestDemo reports gateway failures without changing session',
+      () async {
+    final repository = MockRepository(
+      api: FakeSessionApi(
+        startMockLiveIngestHandler: (_, __) async => throw Exception('offline'),
+      ),
+      initialSession: SessionStateModel.fallback(mode: SessionMode.locked),
+    );
+
+    await repository.startLiveIngestDemo();
+
+    expect(repository.session.mode, SessionMode.locked);
+    expect(repository.isLiveIngestRunning, isFalse);
+    expect(repository.errorMessage, 'Unable to start live ingest demo.');
+    expect(repository.isLoading, isFalse);
+  });
+
   test('applies streamed speaker updates after loading a session', () async {
     final controller = StreamController<SessionStreamEvent>();
     addTearDown(controller.close);

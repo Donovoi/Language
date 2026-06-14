@@ -13,6 +13,11 @@ abstract class SessionApi {
   Future<SessionStateModel> resetSession(SessionMode mode);
   Future<SessionStateModel> setSpeakerLock(String speakerId, bool isLocked);
   Future<SessionStateModel> fetchMockScene(SessionMode mode);
+  Future<void> startMockLiveIngest({
+    required SessionMode mode,
+    int intervalMs = 350,
+  });
+  Future<void> stopMockLiveIngest();
   Stream<SessionStreamEvent> watchSessionEvents({SessionMode? mode});
 }
 
@@ -79,6 +84,30 @@ class ApiClient implements SessionApi {
       ),
     );
     return SessionStateModel.fromJson(response['session'] as Map<String, dynamic>);
+  }
+
+  @override
+  Future<void> startMockLiveIngest({
+    required SessionMode mode,
+    int intervalMs = 350,
+  }) async {
+    await _readJson(
+      Uri.parse('$_baseUrl/v1/mock/live-ingest').replace(
+        queryParameters: <String, String>{
+          'mode': mode.apiValue,
+          'interval_ms': '$intervalMs',
+        },
+      ),
+      method: 'POST',
+    );
+  }
+
+  @override
+  Future<void> stopMockLiveIngest() async {
+    await _readJson(
+      Uri.parse('$_baseUrl/v1/mock/live-ingest'),
+      method: 'DELETE',
+    );
   }
 
   @override

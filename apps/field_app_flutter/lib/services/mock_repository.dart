@@ -22,6 +22,7 @@ class MockRepository extends ChangeNotifier {
   StreamSubscription<SessionStreamEvent>? _liveSubscription;
   bool _isLoading = false;
   bool _isStreaming = false;
+  bool _isLiveIngestRunning = false;
   bool _isDisposed = false;
   bool _reconnectScheduled = false;
   int _streamGeneration = 0;
@@ -30,6 +31,7 @@ class MockRepository extends ChangeNotifier {
   SessionStateModel get session => _session;
   bool get isLoading => _isLoading;
   bool get isStreaming => _isStreaming;
+  bool get isLiveIngestRunning => _isLiveIngestRunning;
   String? get errorMessage => _errorMessage;
 
   Future<void> load() async {
@@ -79,6 +81,42 @@ class MockRepository extends ChangeNotifier {
       await _restartLiveUpdates();
     } catch (_) {
       _errorMessage = 'Unable to update speaker lock. Session state was preserved.';
+    } finally {
+      _isLoading = false;
+      _notifySafely();
+    }
+  }
+
+  Future<void> startLiveIngestDemo({int intervalMs = 350}) async {
+    final mode = _session.mode == SessionMode.unspecified
+        ? SessionMode.focus
+        : _session.mode;
+    _isLoading = true;
+    _errorMessage = null;
+    _notifySafely();
+
+    try {
+      await _api.startMockLiveIngest(mode: mode, intervalMs: intervalMs);
+      _isLiveIngestRunning = true;
+      await _restartLiveUpdates();
+    } catch (_) {
+      _errorMessage = 'Unable to start live ingest demo.';
+    } finally {
+      _isLoading = false;
+      _notifySafely();
+    }
+  }
+
+  Future<void> stopLiveIngestDemo() async {
+    _isLoading = true;
+    _errorMessage = null;
+    _notifySafely();
+
+    try {
+      await _api.stopMockLiveIngest();
+      _isLiveIngestRunning = false;
+    } catch (_) {
+      _errorMessage = 'Unable to stop live ingest demo.';
     } finally {
       _isLoading = false;
       _notifySafely();
