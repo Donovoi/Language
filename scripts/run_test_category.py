@@ -30,6 +30,9 @@ MANUAL_RECORDING_FILENAMES = {
     "source_isolated_ear_recording": "source-isolated-ear-recording.wav",
     "translated_headphone_recording": "translated-headphone-recording.wav",
 }
+MANUAL_RECORDING_DROPBOX = (
+    "artifacts/audio_eval/runs/headphone-earpiece-manual-kit/raw-listener-ear-recordings"
+)
 PLACEHOLDER_REQUIRED_ENV_VALUES = {
     "HEADPHONE_OUTPUT",
     "LANGUAGE_HEADPHONE_OUTPUT_DEVICE",
@@ -960,7 +963,8 @@ def manual_status_summary_lines(report_path: str) -> list[str]:
     report = as_dict(report)
     summary = as_dict(report.get("summary"))
     requirements = as_dict(report.get("recording_requirements"))
-    lines = [f"Status: {manual_status_state(summary)}"]
+    status = manual_status_state(summary)
+    lines = [f"Status: {status}", f"Raw WAV dropbox: {MANUAL_RECORDING_DROPBOX}"]
 
     missing_keys: set[str] = set()
     for check in report.get("checks", []):
@@ -1000,6 +1004,12 @@ def manual_status_summary_lines(report_path: str) -> list[str]:
             "Labels still needed: LANGUAGE_HEADPHONE_DEVICE_LABEL, "
             "LANGUAGE_ISOLATION_FIXTURE_LABEL, LANGUAGE_MEASUREMENT_MICROPHONE_LABEL"
         )
+    if status == "NOT-READY":
+        lines.append("Next: add missing WAVs, then run python scripts/run_test_category.py release-evidence")
+    elif status == "FILES-READY-LABELS-PENDING":
+        lines.append("Next: set concrete labels, then run python scripts/run_test_category.py release-evidence-score")
+    else:
+        lines.append("Next: run python scripts/run_test_category.py release-evidence-score")
     return lines
 
 
@@ -1177,6 +1187,12 @@ def self_test() -> int:
         raise AssertionError("recording-status must print where the manual status handoff was written")
     if not CATEGORIES["recording-status"].manual_status_report:
         raise AssertionError("recording-status must print a concise manual recording summary")
+    recording_status_report = ROOT / CATEGORIES["recording-status"].manual_status_report
+    if recording_status_report.exists():
+        summary_text = "\n".join(manual_status_summary_lines(CATEGORIES["recording-status"].manual_status_report))
+        for expected in ("Raw WAV dropbox:", "Next:"):
+            if expected not in summary_text:
+                raise AssertionError(f"recording-status summary must include {expected!r}")
     if CATEGORIES["reference-playback"].steps != ("headphone-isolation-playback-session",):
         raise AssertionError("reference-playback must only run the explicit playback session")
     score_required_env = (
