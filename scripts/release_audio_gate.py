@@ -2971,6 +2971,7 @@ def _room_route_probe_metric(summary: dict[str, Any]) -> dict[str, Any]:
         "reference_correlation": _float_or_none(summary.get("route_probe_reference_correlation")),
         "reference_distortion_db": _float_or_none(summary.get("route_probe_reference_distortion_db")),
         "lag_ms": _float_or_none(summary.get("route_probe_lag_ms")),
+        "alignment_overlap_fraction": _float_or_none(summary.get("route_probe_alignment_overlap_fraction")),
         "gain_db": _float_or_none(summary.get("route_probe_gain_db")),
         "clipped_sample_count": _nonnegative_int(summary.get("route_probe_clipped_sample_count")),
     }
@@ -2999,23 +3000,36 @@ def _room_route_probe_command(
 
 
 def _room_route_probe_derived_diagnosis(summary: dict[str, Any]) -> dict[str, Any]:
-    diagnosis = summary.get("route_failure_diagnosis", {})
-    if isinstance(diagnosis, dict):
-        reasons = _limited_string_list(diagnosis.get("blocking_reasons"), limit=8)
-        actions = _limited_string_list(diagnosis.get("next_actions"), limit=6)
-        if reasons or actions:
-            return {"blocking_reasons": reasons, "next_actions": actions}
-
     reasons: list[str] = []
     actions: list[str] = []
+
+    def add_reason(reason: str) -> None:
+        if reason not in reasons:
+            reasons.append(reason)
 
     def add_action(action: str) -> None:
         if action not in actions:
             actions.append(action)
 
+    diagnosis = summary.get("route_failure_diagnosis", {})
+    if isinstance(diagnosis, dict):
+        diagnosis_reasons = _limited_string_list(diagnosis.get("blocking_reasons"), limit=8)
+        diagnosis_actions = _limited_string_list(diagnosis.get("next_actions"), limit=6)
+        if diagnosis_reasons or diagnosis_actions:
+            reasons = diagnosis_reasons
+            actions = diagnosis_actions
+            overlap = _float_or_none(summary.get("route_probe_alignment_overlap_fraction"))
+            if overlap is None:
+                add_reason("alignment_overlap_missing")
+                add_action("regenerate the route probe with the current scorer so aligned-overlap is recorded")
+            elif overlap < 0.75:
+                add_reason("alignment_overlap_too_small")
+                add_action("keep enough recorded/reference overlap; do not trust wide-lag edge matches as route evidence")
+            return {"blocking_reasons": reasons, "next_actions": actions}
+
     error = _string_or_empty(summary.get("error"))
     if error:
-        reasons.append("stream_open_error")
+        add_reason("stream_open_error")
         add_action("try a different PortAudio host API or explicit input/output device pair")
         add_action("verify the selected output is unmuted and not reserved by another application")
         return {"blocking_reasons": reasons, "next_actions": actions}
@@ -3023,29 +3037,36 @@ def _room_route_probe_derived_diagnosis(summary: dict[str, Any]) -> dict[str, An
     level = _float_or_none(summary.get("route_probe_recording_dbfs"))
     confidence = _float_or_none(summary.get("route_probe_reference_confidence"))
     distortion = _float_or_none(summary.get("route_probe_reference_distortion_db"))
+    overlap = _float_or_none(summary.get("route_probe_alignment_overlap_fraction"))
     peak = _float_or_none(summary.get("route_probe_peak_dbfs"))
     clipped = _nonnegative_int(summary.get("route_probe_clipped_sample_count"))
     lag_ms = abs(_float_or_none(summary.get("route_probe_lag_ms")) or 0.0)
     max_lag = _float_or_none(summary.get("max_alignment_lag_ms")) or 500.0
     if level is None or level < -60.0:
-        reasons.append("recording_too_quiet")
+        add_reason("recording_too_quiet")
         add_action("move the microphone closer to the source speaker or raise playback gain without clipping")
         add_action("verify the selected source output is the physical laptop/speaker path and is not muted")
     if clipped > 0 or (peak is not None and peak > -0.1):
-        reasons.append("recording_clipped")
+        add_reason("recording_clipped")
         add_action("lower playback gain before rerunning the route probe")
     if confidence is None or confidence < 0.45:
-        reasons.append("reference_not_detected")
+        add_reason("reference_not_detected")
         add_action("disable Windows audio enhancements, noise suppression, AGC, and echo processing")
         add_action("try an alternate host API route for the same physical devices")
     if distortion is None or distortion > 18.0:
-        reasons.append("reference_distorted")
+        add_reason("reference_distorted")
         add_action("reduce processing in the capture/playback path or use a wired speaker/microphone route")
+    if overlap is None:
+        add_reason("alignment_overlap_missing")
+        add_action("regenerate the route probe with the current scorer so aligned-overlap is recorded")
+    elif overlap < 0.75:
+        add_reason("alignment_overlap_too_small")
+        add_action("keep enough recorded/reference overlap; do not trust wide-lag edge matches as route evidence")
     if max_lag > 0 and lag_ms >= max_lag * 0.8:
-        reasons.append("alignment_lag_near_limit")
+        add_reason("alignment_lag_near_limit")
         add_action("try a lower-latency host API route before increasing lag tolerance for triage")
     if _literal_true(summary.get("route_probe_recording_matches_reference")):
-        reasons.append("recording_matches_reference_clone")
+        add_reason("recording_matches_reference_clone")
         add_action("discard this route result and rerun through a real microphone/speaker path")
     return {"blocking_reasons": reasons, "next_actions": actions}
 
@@ -3164,6 +3185,9 @@ def load_room_route_probe_status_handoff(path: Path | None) -> dict[str, Any] | 
     diagnosis = _room_route_probe_derived_diagnosis(probe_summary)
     blocking_reasons = _limited_string_list(diagnosis.get("blocking_reasons"), limit=8)
     next_actions = _limited_string_list(diagnosis.get("next_actions"), limit=6)
+    if status == "PASS-TRIAGE" and blocking_reasons:
+        status = "FAIL-TRIAGE"
+        next_step = "Apply the route diagnosis, then rerun route probe or choose the headphone/earpiece listener-ear path."
     recommended_commands: dict[str, Any] = {}
     if status == "FAIL-TRIAGE":
         recommended_commands = _room_route_probe_retry_hints(
@@ -3574,7 +3598,8 @@ def room_route_probe_status_handoff_lines(route_probe_status: dict[str, Any] | N
             f"peak={_format_optional_float(route_metric.get('peak_dbfs'), ' dBFS')}, "
             f"confidence={_format_optional_float(route_metric.get('reference_confidence'))}, "
             f"distortion={_format_optional_float(route_metric.get('reference_distortion_db'), ' dB')}, "
-            f"lag={_format_optional_float(route_metric.get('lag_ms'), ' ms')}",
+            f"lag={_format_optional_float(route_metric.get('lag_ms'), ' ms')}, "
+            f"overlap={_format_optional_float(route_metric.get('alignment_overlap_fraction'))}",
         ]
     )
     identity_issues = route_probe_status.get("identity_issues", [])
@@ -4299,6 +4324,7 @@ def _write_room_route_probe_status_report(
     passed: bool = False,
     wrong_fixture: bool = False,
     summary_overrides: dict[str, Any] | None = None,
+    omit_summary_keys: set[str] | None = None,
 ) -> None:
     sample_rate_hz = 48_000
     device_info = {
@@ -4340,6 +4366,7 @@ def _write_room_route_probe_status_report(
         "output_channels": 2,
         "playback_gain_db": -18.0,
         "release_proof": False,
+        "route_probe_alignment_overlap_fraction": 0.99125,
         "route_probe_clipped_sample_count": 0,
         "route_probe_gain_db": -90.0,
         "route_probe_lag_ms": 420.0,
@@ -4365,6 +4392,9 @@ def _write_room_route_probe_status_report(
         )
     if summary_overrides:
         probe_summary.update(summary_overrides)
+    if omit_summary_keys:
+        for key in omit_summary_keys:
+            probe_summary.pop(key, None)
     if not passed and "route_failure_diagnosis" not in probe_summary:
         probe_summary["route_failure_diagnosis"] = {
             "blocking_reasons": [
@@ -4671,6 +4701,8 @@ def self_test() -> None:
         missing_room_route_probe_status = root / "missing-room-route-probe-report.json"
         room_route_probe_status_failed = root / "room-route-probe-report-failed.json"
         room_route_probe_status_passed = root / "room-route-probe-report-passed.json"
+        room_route_probe_status_tiny_overlap = root / "room-route-probe-report-tiny-overlap.json"
+        room_route_probe_status_missing_overlap = root / "room-route-probe-report-missing-overlap.json"
         room_route_probe_status_quiet_clipped = root / "room-route-probe-report-quiet-clipped.json"
         room_route_probe_status_wrong_fixture = root / "room-route-probe-report-wrong-fixture.json"
         room_route_probe_status_wrong_nested_release = root / "room-route-probe-report-wrong-nested-release.json"
@@ -4953,6 +4985,32 @@ def self_test() -> None:
         )
         _write_room_route_probe_status_report(room_route_probe_status_failed)
         _write_room_route_probe_status_report(room_route_probe_status_passed, passed=True)
+        _write_room_route_probe_status_report(
+            room_route_probe_status_missing_overlap,
+            passed=True,
+            summary_overrides={
+                "route_failure_diagnosis": {
+                    "blocking_reasons": [],
+                    "next_actions": ["legacy scorer action without aligned-overlap validation"],
+                }
+            },
+            omit_summary_keys={"route_probe_alignment_overlap_fraction"},
+        )
+        _write_room_route_probe_status_report(
+            room_route_probe_status_tiny_overlap,
+            summary_overrides={
+                "route_failure_diagnosis": {
+                    "blocking_reasons": ["alignment_overlap_too_small"],
+                    "next_actions": [
+                        "keep enough recorded/reference overlap; do not trust wide-lag edge matches as route evidence"
+                    ],
+                },
+                "route_probe_alignment_overlap_fraction": 0.001333,
+                "route_probe_recording_dbfs": -22.0,
+                "route_probe_reference_confidence": 0.50,
+                "route_probe_reference_distortion_db": 8.0,
+            },
+        )
         _write_room_route_probe_status_report(
             room_route_probe_status_quiet_clipped,
             summary_overrides={
@@ -5902,6 +5960,28 @@ def self_test() -> None:
             raise AssertionError("expected failed real-room route probe handoff to include blocking reasons")
         if "Suggested same-route gain retry" not in failed_room_route_probe_markdown or "--playback-gain-db -12" not in failed_room_route_probe_markdown:
             raise AssertionError("expected quiet real-room route probe handoff to include a cautious -12 dB retry command")
+        tiny_overlap_room_route_probe_report = build_report(
+            release_results,
+            prototype_results,
+            room_route_probe_report=room_route_probe_status_tiny_overlap,
+        )
+        if tiny_overlap_room_route_probe_report["release_blocking_gates"] != report["release_blocking_gates"]:
+            raise AssertionError("tiny-overlap real-room route probe handoff must not change release-blocking gates")
+        tiny_overlap_room_route_probe_markdown = render_markdown_report(tiny_overlap_room_route_probe_report)
+        if "alignment_overlap_too_small" not in tiny_overlap_room_route_probe_markdown or "overlap=0.001" not in tiny_overlap_room_route_probe_markdown:
+            raise AssertionError("expected tiny-overlap real-room route probe handoff to show overlap diagnosis")
+        missing_overlap_room_route_probe_report = build_report(
+            release_results,
+            prototype_results,
+            room_route_probe_report=room_route_probe_status_missing_overlap,
+        )
+        missing_overlap_room_route_probe_markdown = render_markdown_report(missing_overlap_room_route_probe_report)
+        if "PASS-TRIAGE" in missing_overlap_room_route_probe_markdown:
+            raise AssertionError("missing-overlap real-room route probe must not pass triage")
+        if "FAIL-TRIAGE" not in missing_overlap_room_route_probe_markdown or "alignment_overlap_missing" not in missing_overlap_room_route_probe_markdown:
+            raise AssertionError("expected missing-overlap real-room route probe handoff to request regeneration")
+        if "overlap=n/a" not in missing_overlap_room_route_probe_markdown:
+            raise AssertionError("expected missing-overlap real-room route probe metric to render as n/a")
         quiet_clipped_room_route_probe_report = build_report(
             release_results,
             prototype_results,
