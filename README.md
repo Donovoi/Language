@@ -61,6 +61,7 @@ files by default; pass `--verbose` only when you want live logs in the terminal.
 ```bash
 python3 scripts/run_test_category.py quick
 python3 scripts/run_test_category.py list
+python3 scripts/run_test_category.py release-status
 python3 scripts/run_test_category.py all
 ```
 
@@ -69,6 +70,7 @@ Windows:
 ```powershell
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category quick
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category list
+pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-status
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category all
 ```
 
@@ -92,6 +94,7 @@ Common categories:
 | `hardware` | Host audio discovery and listener-ear planning | Run deliberately when testing devices. |
 | `evidence-kit` | Manual listener-ear recording kit/dropbox | Creates/checks the folder for the three release WAVs. |
 | `recording-status` | Listener-ear WAV readiness | Use after adding the three manual recordings. |
+| `release-status` | Concise release blocker summary | Low-token next-action handoff; exits zero by default. |
 | `release` | Strict release-gate status | Expected to fail until physical evidence is present. |
 | `all` | Automated non-interactive suites | Excludes hardware, release, optional model downloads, and artifact-dependent voice checks. |
 
@@ -135,6 +138,12 @@ The release gate is intentionally stricter than fixture tests:
 
 ```bash
 python3 scripts/release_audio_gate.py
+```
+
+For a shorter status and next-action handoff:
+
+```bash
+python3 scripts/run_test_category.py release-status
 ```
 
 It writes:

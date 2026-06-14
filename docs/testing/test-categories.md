@@ -5,6 +5,7 @@ Use `scripts/run_test_category.py` when you do not know which low-level target t
 ```bash
 python3 scripts/run_test_category.py list
 python3 scripts/run_test_category.py quick
+python3 scripts/run_test_category.py release-status
 python3 scripts/run_test_category.py all
 ```
 
@@ -13,6 +14,7 @@ Windows:
 ```powershell
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category list
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category quick
+pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-status
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category all
 ```
 
@@ -33,6 +35,7 @@ Use `--dry-run` to inspect the command plan. By default, full output goes to
 | `hardware` | Host device listing, listener-ear route preflight, and virtual listener-ear lab. | Release proof. Run physical capture/score commands from the runbook when ready. |
 | `evidence-kit` | Manual listener-ear recording kit, readiness check, and raw WAV dropbox. | Audio playback/recording. Put the three exported WAVs in the dropbox, then rerun. |
 | `recording-status` | Readiness check for the three manual listener-ear WAVs. | Playback, recording, scoring, or release proof. |
+| `release-status` | Compact release-gate blocker and next-action handoff. | Exits zero by default; use `release` for strict failure semantics. |
 | `release` | Strict audio release gate. | Evidence generation. Expected to fail until required artifacts are present. |
 | `all` | `quick`, `core`, and `audio-fixtures`. | Hardware, release, optional model downloads, and artifact-dependent voice candidate scoring. |
 
@@ -60,12 +63,15 @@ Before release review:
 
 ```bash
 python3 scripts/run_test_category.py all --continue-on-failure
+python3 scripts/run_test_category.py release-status
 python3 scripts/run_test_category.py recording-status
 python3 scripts/run_test_category.py release
 ```
 
 The `release` category is allowed to fail when the operator handoff says physical evidence is
 missing. Do not treat fixture-only passes as source-suppression release proof.
+Use `release-status` first when you only need the current blocker and the next commands without a
+large JSON or Markdown handoff.
 
 ## Low-Level Commands
 
