@@ -33,7 +33,7 @@ Use `--dry-run` to inspect the command plan. By default, full output goes to
 | Category | Runs | Does not run |
 | --- | --- | --- |
 | `quick` | Local contract sanity checks for release-gate, live-capture, headphone isolation, and real-room playback reports. | Docker, model downloads, hardware capture, release gate. |
-| `contracts` | All local audio/report contract self-tests. | Docker, model downloads, hardware capture, release gate. |
+| `contracts` | All local audio/report contract self-tests. | Docker, model downloads, hardware capture, release gate. Creates `.venv-audio-contract/` for fixture dependencies. |
 | `core` | The repository core check path: `make check` on Make runners or `scripts/check_local.ps1` on PowerShell. | Audio model profiles and physical audio evidence. |
 | `smoke-local` | Local gateway smoke baseline for `/health`, `/v1/session`, and deterministic SSE. | Flutter UI, audio fixtures, or physical release proof. |
 | `audio-fixtures` | Disposable Docker audio fixtures for deterministic overlap, real-speech smoke, crowd-noise fixture, translation, capture replay, playback/suppression fixture, and fallback TTS. | Hardware capture, optional large model baselines, release gate. |
@@ -66,6 +66,11 @@ Before a normal code handoff:
 ```bash
 python3 scripts/run_test_category.py contracts
 ```
+
+`contracts` uses `scripts/run_audio_contract.py` for fixture self-tests that need `numpy`, `scipy`,
+and `soundfile`. The helper creates `.venv-audio-contract/` from
+`docker/dev/requirements-audio-eval.txt`; the first run may need PyPI access or a warm pip cache.
+Set `LANGUAGE_AUDIO_CONTRACT_PYTHON` to override the base Python.
 
 Before an audio-fixture change handoff:
 
