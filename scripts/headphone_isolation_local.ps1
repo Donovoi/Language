@@ -2,7 +2,7 @@ param(
     [Parameter(Position = 0)]
     [ValidateSet("self-test", "list-devices", "preflight", "sweep-routes", "probe-route", "virtual-lab", "prepare-manual", "collect-headphone-evidence", "check-manual", "play-manual", "import-manual", "score-manual", "capture", "score")]
     [string]$Action = "self-test",
-    [string]$Python = $(if ($env:PYTHON) { $env:PYTHON } else { "python" }),
+    [string]$Python = "",
     [string]$Venv = "",
     [switch]$RecreateVenv,
     [switch]$SkipDependencyInstall,
@@ -49,10 +49,67 @@ function Get-PythonVersion {
 function Assert-SupportedPython {
     param([string]$FilePath, [string]$Label)
 
+    $errorMessage = Get-PythonSupportError -FilePath $FilePath -Label $Label
+    if ($errorMessage) {
+        throw $errorMessage
+    }
+}
+
+function Get-PythonSupportError {
+    param([string]$FilePath, [string]$Label)
+
     $version = Get-PythonVersion -FilePath $FilePath -Label $Label
     if ($version.Major -ne 3 -or $version.Minor -lt 11 -or $version.Minor -ge 14) {
-        throw "$Label uses Python $version, but the local audio evidence path supports >=3.11,<3.14. Pass -Python pointing at a supported interpreter."
+        return "$Label uses Python $version, but the local audio evidence path supports >=3.11,<3.14. Pass -Python or set LANGUAGE_PYTHON to a supported interpreter."
     }
+    return ""
+}
+
+function Get-PythonCandidates {
+    param([string]$RequestedPython, [string]$RepoRoot)
+
+    $candidates = New-Object System.Collections.Generic.List[object]
+    if (-not [string]::IsNullOrWhiteSpace($RequestedPython)) {
+        $candidates.Add([pscustomobject]@{ Label = "Python argument"; Candidate = $RequestedPython })
+        return $candidates.ToArray()
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:LANGUAGE_PYTHON)) {
+        $candidates.Add([pscustomobject]@{ Label = "LANGUAGE_PYTHON"; Candidate = $env:LANGUAGE_PYTHON })
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:PYTHON)) {
+        $candidates.Add([pscustomobject]@{ Label = "PYTHON"; Candidate = $env:PYTHON })
+    }
+
+    $codexRuntimePython = Join-Path $HOME ".cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+    if (Test-Path -LiteralPath $codexRuntimePython -PathType Leaf) {
+        $candidates.Add([pscustomobject]@{ Label = "Codex bundled Python"; Candidate = $codexRuntimePython })
+    }
+
+    $candidates.Add([pscustomobject]@{ Label = "PATH python"; Candidate = "python" })
+    return $candidates.ToArray()
+}
+
+function Resolve-SupportedPython {
+    param([string]$RequestedPython, [string]$RepoRoot)
+
+    $errors = New-Object System.Collections.Generic.List[string]
+    foreach ($candidate in Get-PythonCandidates -RequestedPython $RequestedPython -RepoRoot $RepoRoot) {
+        try {
+            $candidatePath = Resolve-Executable -Candidate $candidate.Candidate -Label $candidate.Label
+            $supportError = Get-PythonSupportError -FilePath $candidatePath -Label $candidate.Label
+            if (-not $supportError) {
+                Write-Host "Using $($candidate.Label): $candidatePath"
+                return $candidatePath
+            }
+            $errors.Add($supportError)
+        } catch {
+            $errors.Add("$($candidate.Label): $($_.Exception.Message)")
+        }
+    }
+
+    $details = $errors -join " "
+    throw "Could not find a supported Python >=3.11,<3.14 for local audio evidence. $details"
 }
 
 function Invoke-CheckedCommand {
@@ -159,8 +216,7 @@ $venvPath = if ([string]::IsNullOrWhiteSpace($Venv)) {
 }
 Assert-PathInsideRepo -RepoRoot $repoRoot -Path $venvPath -Label "Audio local venv"
 
-$pythonPath = Resolve-Executable -Candidate $Python -Label "Python"
-Assert-SupportedPython -FilePath $pythonPath -Label "Python"
+$pythonPath = Resolve-SupportedPython -RequestedPython $Python -RepoRoot $repoRoot
 
 if ($RecreateVenv -and (Test-Path -LiteralPath $venvPath)) {
     Assert-RecreateVenvTarget -VenvPath $venvPath

@@ -111,11 +111,13 @@ devices need direct access to the host audio stack.
 Start with a non-recording preflight:
 
 ```powershell
-$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action self-test -Python $env:LANGUAGE_PYTHON
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action list-devices -Python $env:LANGUAGE_PYTHON
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action self-test
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action list-devices
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight --sample-rate-hz 48000 --input-channels 1 --output-channels 2
 ```
+
+The wrapper auto-selects a supported Python `>=3.11,<3.14`; set `LANGUAGE_PYTHON` only when you need
+to point it at a specific interpreter.
 
 A laptop built-in mic and speakers are useful for route triage. Release evidence still needs real
 listener-ear recordings: open-ear source, isolated source, and translated headphone playback from the
