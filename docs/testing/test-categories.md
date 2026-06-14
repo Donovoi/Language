@@ -38,6 +38,7 @@ Use `--dry-run` to inspect the command plan. By default, full output goes to
 | `evidence-kit` | Manual listener-ear recording kit, readiness check, and raw WAV dropbox. | Audio playback/recording. Put the three exported WAVs in the dropbox, then rerun. |
 | `recording-status` | Readiness check for the three manual listener-ear WAVs. | Playback, recording, scoring, or release proof. |
 | `release-evidence` | Prepare/import/check the manual listener-ear kit, then print compact release status. | Audio playback/recording, placeholder-label scoring, or release proof. |
+| `release-evidence-score` | Import/check and score complete listener-ear evidence when WAVs and concrete labels are ready. | Audio playback/recording. Placeholder labels keep scoring blocked. |
 | `release-status` | Compact release-gate blocker and next-action handoff. | Exits zero by default; use `release` for strict failure semantics. |
 | `release` | Strict audio release gate. | Evidence generation. Expected to fail until required artifacts are present. |
 | `all` | `quick`, `core`, and `audio-fixtures`. | Hardware, release, optional model downloads, and artifact-dependent voice candidate scoring. |
@@ -78,6 +79,9 @@ Use `physical-audio-handoff` before a hardware session when you want route triag
 readiness status, and `artifacts/release/physical-audio-checklist.md` refreshed together.
 Use `release-evidence` when you want the listener-ear kit prepared, current WAV dropbox imported if
 complete, readiness checked, and the compact status printed in one pass.
+Use `release-evidence-score` after the WAVs are present and these environment variables hold concrete
+labels: `LANGUAGE_HEADPHONE_DEVICE_LABEL`, `LANGUAGE_ISOLATION_FIXTURE_LABEL`, and
+`LANGUAGE_MEASUREMENT_MICROPHONE_LABEL`.
 Use `python3 scripts/release_audio_status.py --full-commands` when you need the detailed hardware
 command list in the terminal.
 

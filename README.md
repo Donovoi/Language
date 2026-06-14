@@ -97,6 +97,7 @@ Common categories:
 | `evidence-kit` | Manual listener-ear recording kit/dropbox | Creates/checks the folder for the three release WAVs. |
 | `recording-status` | Listener-ear WAV readiness | Use after adding the three manual recordings. |
 | `release-evidence` | One-command listener-ear evidence handoff | Prepare/import/check the kit, then print release status. |
+| `release-evidence-score` | Score complete listener-ear evidence | Requires real WAVs and concrete hardware labels. |
 | `release-status` | Concise release blocker summary | Low-token next-action handoff; exits zero by default. |
 | `release` | Strict release-gate status | Expected to fail until physical evidence is present. |
 | `all` | Automated non-interactive suites | Excludes hardware, release, optional model downloads, and artifact-dependent voice checks. |
@@ -142,6 +143,15 @@ Prepare/check the manual recording kit, import any complete dropbox WAVs, and pr
 
 ```powershell
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-evidence
+```
+
+After the three WAVs are in the dropbox, set concrete labels and score the evidence:
+
+```powershell
+$env:LANGUAGE_HEADPHONE_DEVICE_LABEL = "Sony WH-1000XM6"
+$env:LANGUAGE_ISOLATION_FIXTURE_LABEL = "left earcup sealed over phone recorder"
+$env:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL = "phone WAV recorder at listener-ear point"
+python scripts/run_test_category.py release-evidence-score
 ```
 
 The focused commands remain available when you only want one part:
