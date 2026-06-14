@@ -43,6 +43,7 @@ Repository prep for the first internal beta release candidate based on the curre
 - Real-room route-probe scoring now records aligned-overlap fraction and rejects tiny edge alignments or stale reports missing that field, preventing wide lag windows from making distorted routes look artificially good.
 - `collect-headphone-evidence` now wraps manual headphone/earpiece kit prep, optional raw WAV import, readiness checks, score handoff, and release-gate commands into one non-evidentiary collection plan for the remaining source-suppression release blocker.
 - The release audio handoff now embeds the current headphone/earpiece evidence collection plan when present, including readiness, next actions, and the next physical-recording command while keeping it non-evidentiary.
+- `collect-headphone-evidence` can now read the latest headphone/earpiece preflight report to fill concrete source/headphone output devices in the non-evidentiary `play-manual` command.
 
 #### Changed
 

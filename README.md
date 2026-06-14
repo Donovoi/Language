@@ -329,7 +329,10 @@ optionally imports raw recorder WAVs when paths are supplied, and writes
 `artifacts/audio_eval/runs/headphone-earpiece-manual-kit/`. The wrapper remains
 `release_proof=false`; only the scored listener-ear report can satisfy the release gate. The release
 audio gate also embeds the latest collection plan as non-evidentiary operator guidance when it is
-present.
+present. If a headphone/earpiece preflight report exists, the collection plan uses its best source
+and headphone outputs to make the `play-manual` command concrete; pass `--preflight-report` to use a
+specific report or pass explicit `--source-output-device`/`--headphone-output-device` values to
+override it.
 Under the hood, `headphone-isolation-prepare-manual` writes `source-reference.wav`,
 `translated-playback-reference.wav`, and `manual-recording-manifest.json` plus a human-readable
 `manual-recording-checklist.md`; record the three expected listener-ear WAVs named in that
