@@ -682,6 +682,7 @@ Windows:
 ```powershell
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-contract-check
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-list-devices
+pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-collect-evidence --sample-rate-hz 48000 --playback-gain-db -18
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-prepare-manual --sample-rate-hz 48000 --playback-gain-db -18
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-check-manual --score-warning-only
 pwsh -NoProfile -File scripts/dev_container.ps1 headphone-isolation-sweep-routes --triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only
@@ -703,11 +704,14 @@ When a single-route headphone/earpiece probe is present, `scripts/release_audio_
 that diagnosis in the operator handoff. Quiet source-route failures include a same-route retry command
 6 dB louder, capped at -12 dB; this is still triage only, and laptop built-in microphones remain
 insufficient for final listener-ear release evidence.
-When PortAudio routing is the blocker, `headphone-isolation-prepare-manual` creates non-release
-reference WAVs, `manual-recording-manifest.json`, and `manual-recording-checklist.md` for a
-phone/USB mic/external recorder flow. The manual kit remains `release_proof=false`; use
-`headphone-isolation-score-manual` after collecting real listener-ear, 16-bit PCM WAV recordings
-trimmed within the 500 ms release alignment window to write the release-gated
+When PortAudio routing is the blocker, `headphone-isolation-collect-evidence` is the preferred
+single-command handoff. It prepares the manual kit, optionally imports raw recorder WAV paths,
+runs the readiness doctor, and writes `headphone-evidence-collection-plan.json` plus Markdown with
+hardware instructions and next commands. The collection plan remains `release_proof=false`.
+Underneath it, `headphone-isolation-prepare-manual` creates non-release reference WAVs,
+`manual-recording-manifest.json`, and `manual-recording-checklist.md` for a phone/USB mic/external
+recorder flow. Use `headphone-isolation-score-manual` after collecting real listener-ear, 16-bit PCM
+WAV recordings trimmed within the 500 ms release alignment window to write the release-gated
 `headphone-isolation-report.json`. The optional
 `headphone-isolation-play-manual` host helper plays the manifest references through selected outputs
 and writes `manual-playback-log.json` with `release_proof=false`; it is recording assistance only.
