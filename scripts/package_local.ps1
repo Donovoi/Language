@@ -200,6 +200,7 @@ function Build-GatewayPackage {
         -FilePath $gatewayPython `
         -Arguments @("-m", "pip", "install", "-e", ".[dev]") `
         -WorkingDirectory $gatewayDir
+    Assert-GatewayConsoleEntryPoint -GatewayPython $gatewayPython -GatewayDir $gatewayDir
     Invoke-CheckedCommand `
         -Label "build gateway distributions" `
         -FilePath $gatewayPython `
@@ -214,11 +215,90 @@ function Build-GatewayPackage {
     if ($wheels.Count -ne 1) {
         throw "Expected exactly one gateway wheel in $distDir, found $($wheels.Count)."
     }
+    Assert-GatewayDistributionEntryPoint `
+        -GatewayPython $gatewayPython `
+        -GatewayDir $gatewayDir `
+        -WheelPath $wheels[0].FullName `
+        -SdistPath $sdists[0].FullName
 
     Write-Host "Wrote $($sdists[0].FullName)"
     Write-Host "Wrote $($wheels[0].FullName)"
     $ArtifactPaths.Add($sdists[0].FullName)
     $ArtifactPaths.Add($wheels[0].FullName)
+}
+
+function Assert-GatewayConsoleEntryPoint {
+    param([string]$GatewayPython, [string]$GatewayDir)
+
+    $snippet = @"
+from importlib.metadata import entry_points
+
+matches = [ep for ep in entry_points(group="console_scripts") if ep.name == "language-gateway"]
+if len(matches) != 1:
+    raise SystemExit(f"expected one language-gateway console script, found {len(matches)}")
+if matches[0].value != "app.cli:main":
+    raise SystemExit(f"unexpected language-gateway entry point: {matches[0].value!r}")
+
+from app.cli import build_parser
+
+help_text = build_parser().format_help()
+for token in ("--host", "--port", "--log-level"):
+    if token not in help_text:
+        raise SystemExit(f"gateway CLI help missing {token}")
+
+print("gateway console entry point PASS")
+"@
+
+    Invoke-CheckedCommand `
+        -Label "verify gateway console entry point" `
+        -FilePath $GatewayPython `
+        -Arguments @("-c", $snippet) `
+        -WorkingDirectory $GatewayDir
+}
+
+function Assert-GatewayDistributionEntryPoint {
+    param(
+        [string]$GatewayPython,
+        [string]$GatewayDir,
+        [string]$WheelPath,
+        [string]$SdistPath
+    )
+
+    $snippet = @"
+from pathlib import Path
+import sys
+import tarfile
+import zipfile
+
+wheel = Path(sys.argv[1])
+sdist = Path(sys.argv[2])
+
+with zipfile.ZipFile(wheel) as archive:
+    names = archive.namelist()
+    entry_files = [name for name in names if name.endswith(".dist-info/entry_points.txt")]
+    if len(entry_files) != 1:
+        raise SystemExit(f"expected one wheel entry_points.txt, found {len(entry_files)}")
+    entry_text = archive.read(entry_files[0]).decode("utf-8")
+    if "language-gateway = app.cli:main" not in entry_text:
+        raise SystemExit("wheel does not expose language-gateway = app.cli:main")
+    if "app/cli.py" not in names:
+        raise SystemExit("wheel does not include app/cli.py")
+
+with tarfile.open(sdist, "r:gz") as archive:
+    names = archive.getnames()
+    if not any(name.endswith("/app/cli.py") for name in names):
+        raise SystemExit("sdist does not include app/cli.py")
+    if not any(name.endswith("/pyproject.toml") for name in names):
+        raise SystemExit("sdist does not include pyproject.toml")
+
+print("gateway distribution entry point PASS")
+"@
+
+    Invoke-CheckedCommand `
+        -Label "verify gateway distribution entry point" `
+        -FilePath $GatewayPython `
+        -Arguments @("-c", $snippet, $WheelPath, $SdistPath) `
+        -WorkingDirectory $GatewayDir
 }
 
 function Write-LocalArtifactManifest {
