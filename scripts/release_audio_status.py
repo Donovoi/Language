@@ -93,7 +93,8 @@ def _preflight_lines(report: dict[str, Any]) -> list[str]:
     if not preflight:
         return []
 
-    lines = [f"Status: {preflight.get('status', 'unknown')}"]
+    status = str(preflight.get("status", "unknown")).strip()
+    lines = [f"Status: {status or 'unknown'}"]
     recommended_path = str(preflight.get("recommended_path", "")).strip()
     if recommended_path:
         lines.append(f"Recommended path: {recommended_path}")
@@ -107,6 +108,11 @@ def _preflight_lines(report: dict[str, Any]) -> list[str]:
     if candidate_summary:
         lines.append(f"Suggested current route: {candidate_summary}")
     next_step = str(preflight.get("next_step", "")).strip()
+    if status == "TRIAGE-ONLY":
+        next_step = (
+            "For release evidence, use the manual listener-ear recorder path. "
+            "Use route probes only for optional routing diagnostics."
+        )
     if next_step:
         lines.append(f"Next: {next_step}")
     path = str(preflight.get("markdown_path") or preflight.get("path") or "").strip()
@@ -464,8 +470,8 @@ def _preflight_next_actions(report: dict[str, Any]) -> list[str]:
         ]
     if status == "TRIAGE-ONLY":
         return [
-            "Current host route is triage-only; use the printed probe command only for diagnostics.",
             "For release evidence, connect a real listener-ear mic or use the manual recorder WAV path below.",
+            "Optional diagnostics: run python scripts/run_test_category.py route-triage for a fresh probe command.",
         ]
     if status in {"MISSING", "UNREADABLE"}:
         return ["Run: python scripts/run_test_category.py route-triage"]
@@ -746,8 +752,9 @@ def self_test() -> int:
     )
     triage_rendered = render_status(triage_report, gate_returncode=1)
     for text in (
-        "Current host route is triage-only",
+        "For release evidence, use the manual listener-ear recorder path",
         "real listener-ear mic",
+        "Optional diagnostics",
         "STALE-TRIAGE",
         "fresh probe command",
     ):
