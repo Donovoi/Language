@@ -22,6 +22,7 @@ from typing import Iterable
 
 ROOT = Path(__file__).resolve().parents[1]
 DEV_CONTAINER = "scripts/dev_container.ps1"
+ENV_ARG_PATTERN = re.compile(r"^\{env:([A-Za-z_][A-Za-z0-9_]*)(?::([^{}]*))?\}$")
 
 
 @dataclass(frozen=True)
@@ -280,6 +281,29 @@ STEPS: dict[str, Step] = {
             )
         },
     ),
+    "headphone-isolation-collect-and-score-evidence": Step(
+        name="headphone-isolation-collect-and-score-evidence",
+        description="import/check and score manual listener-ear evidence when WAVs and labels are ready",
+        local_args=(
+            "pwsh",
+            "-NoProfile",
+            "-File",
+            DEV_CONTAINER,
+            "headphone-isolation-collect-evidence",
+            "--sample-rate-hz",
+            "48000",
+            "--playback-gain-db",
+            "-18",
+            "--allow-downmix",
+            "--score-if-ready",
+            "--headphone-device-label",
+            "{env:LANGUAGE_HEADPHONE_DEVICE_LABEL:REPLACE_WITH_HEADPHONE_MODEL}",
+            "--isolation-fixture-label",
+            "{env:LANGUAGE_ISOLATION_FIXTURE_LABEL:REPLACE_WITH_EARCUP_AND_MIC_POSITION}",
+            "--measurement-microphone-label",
+            "{env:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL:REPLACE_WITH_MIC_MODEL_AND_POSITION}",
+        ),
+    ),
     "headphone-isolation-check-manual": Step(
         name="headphone-isolation-check-manual",
         description="check whether manual listener-ear WAVs are ready to score",
@@ -452,6 +476,18 @@ CATEGORIES: dict[str, Category] = {
             "Use after placing recorder exports in the raw WAV dropbox, or before capture to create the kit.",
         ),
     ),
+    "release-evidence-score": Category(
+        name="release-evidence-score",
+        description="Import/check/score listener-ear evidence when WAVs and real labels are ready.",
+        steps=(
+            "headphone-isolation-collect-and-score-evidence",
+            "release-audio-status",
+        ),
+        notes=(
+            "Set LANGUAGE_HEADPHONE_DEVICE_LABEL, LANGUAGE_ISOLATION_FIXTURE_LABEL, and LANGUAGE_MEASUREMENT_MICROPHONE_LABEL first.",
+            "Unset or placeholder labels keep the score blocked instead of creating release evidence.",
+        ),
+    ),
     "release": Category(
         name="release",
         description="Strict release gate status. A nonzero exit means release evidence is still missing or failing.",
@@ -517,11 +553,17 @@ def choose_runner(runner: str) -> str:
     return "make"
 
 
-def expand_local_args(args: Iterable[str]) -> list[str]:
+def expand_arg_templates(args: Iterable[str]) -> list[str]:
     expanded: list[str] = []
     for arg in args:
         if arg == "{python}":
             expanded.append(sys.executable)
+            continue
+        match = ENV_ARG_PATTERN.match(arg)
+        if match:
+            name = match.group(1)
+            default = match.group(2) or ""
+            expanded.append(os.environ.get(name, default))
         else:
             expanded.append(arg)
     return expanded
@@ -529,13 +571,20 @@ def expand_local_args(args: Iterable[str]) -> list[str]:
 
 def command_for_step(step: Step, runner: str) -> tuple[list[str], dict[str, str]]:
     if step.is_local:
-        return expand_local_args(step.local_args), {}
+        return expand_arg_templates(step.local_args), {}
     if not step.target:
         raise ValueError(f"step {step.name} has no local_args or target")
     if runner == "make":
         return ["make", step.target], dict(step.make_env)
     if runner == "powershell":
-        return ["pwsh", "-NoProfile", "-File", DEV_CONTAINER, step.target, *step.target_args], {}
+        return [
+            "pwsh",
+            "-NoProfile",
+            "-File",
+            DEV_CONTAINER,
+            step.target,
+            *expand_arg_templates(step.target_args),
+        ], {}
     raise ValueError(f"unsupported runner for target step {step.name}: {runner}")
 
 

@@ -275,11 +275,16 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
             "   python scripts/run_test_category.py release-evidence",
             "   ```",
             "",
-            "6. When the manual status is score-ready, run the full command handoff and score with real labels for the headset, fixture, and measurement mic:",
+            "6. When the WAVs are ready, set real labels for the headset, fixture, and measurement mic, then score the evidence:",
             "",
             "   ```powershell",
-            "   python scripts/release_audio_status.py --full-commands",
+            "   $env:LANGUAGE_HEADPHONE_DEVICE_LABEL = \"Sony WH-1000XM6\"",
+            "   $env:LANGUAGE_ISOLATION_FIXTURE_LABEL = \"left earcup sealed over phone recorder\"",
+            "   $env:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL = \"phone WAV recorder at listener-ear point\"",
+            "   python scripts/run_test_category.py release-evidence-score",
             "   ```",
+            "",
+            "   Use `python scripts/release_audio_status.py --full-commands` only when you need the lower-level score command.",
         ]
     )
 
@@ -346,6 +351,7 @@ def _compact_next_actions(report: dict[str, Any]) -> list[str]:
         missing_text = ", ".join(missing)
         actions.append(f"Record/export missing WAVs into {_repo_relative(dropbox_path)}: {missing_text}")
         actions.append("Rerun: python scripts/run_test_category.py release-evidence")
+        actions.append("When WAVs are ready and labels are set, run: python scripts/run_test_category.py release-evidence-score")
     else:
         actions.append("Use --full-commands for the detailed hardware command list.")
     return actions
@@ -523,6 +529,7 @@ def self_test() -> int:
         "Missing recordings: source_open_ear_recording",
         "Next actions:",
         "python scripts/run_test_category.py release-evidence",
+        "python scripts/run_test_category.py release-evidence-score",
         "--full-commands",
         "Host audio preflight:",
         "NEEDS-PHYSICAL-INPUT-CONFIRMATION",
@@ -549,6 +556,7 @@ def self_test() -> int:
         "Release status: **NOT READY**",
         "source-open-ear-recording.wav",
         "python scripts/run_test_category.py route-triage",
+        "python scripts/run_test_category.py release-evidence-score",
         "route probes and virtual labs stay `release_proof=false`",
     ):
         if text not in checklist:
