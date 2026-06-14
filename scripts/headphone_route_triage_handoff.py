@@ -73,6 +73,22 @@ def build_route_probe_command(report: dict[str, Any]) -> str:
     )
 
 
+def reference_playback_handoff(candidate: dict[str, Any]) -> list[str]:
+    source_device = str(candidate.get("source_output_device", "")).strip()
+    headphone_device = str(candidate.get("headphone_output_device", "")).strip()
+    if not source_device.isdigit() or not headphone_device.isdigit() or source_device == headphone_device:
+        return []
+    return [
+        "",
+        "Reference playback helper for external recorder (not release proof):",
+        f'$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = "{source_device}"',
+        f'$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = "{headphone_device}"',
+        "python scripts/run_test_category.py reference-playback-dry-run",
+        "python scripts/run_test_category.py recording-session-dry-run",
+        "python scripts/run_test_category.py reference-playback",
+    ]
+
+
 def render_handoff(report: dict[str, Any], report_path: Path) -> str:
     summary = _as_dict(report.get("summary"))
     command = build_route_probe_command(report)
@@ -105,6 +121,7 @@ def render_handoff(report: dict[str, Any], report_path: Path) -> str:
             command,
         ]
     )
+    lines.extend(reference_playback_handoff(candidate))
     return "\n".join(lines)
 
 
@@ -144,6 +161,9 @@ def self_test() -> int:
         "--headphone-output-device 9",
         "--score-warning-only",
         "route triage only",
+        "$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = \"8\"",
+        "$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = \"9\"",
+        "python scripts/run_test_category.py recording-session-dry-run",
     ]
     for text in required:
         if text not in rendered:
