@@ -1134,6 +1134,10 @@ def self_test() -> int:
         for name in step.required_env:
             if not re.match(r"^[A-Z][A-Z0-9_]*$", name):
                 raise AssertionError(f"invalid required env name on {step.name}: {name}")
+    if not parse_args(["--list"]).list:
+        raise AssertionError("--list must be accepted as a category listing alias")
+    if parse_args(["list"]).category != "list":
+        raise AssertionError("positional list category must remain available")
     if not shutil.which("pwsh"):
         print("warning: pwsh not found; dry-run still validates command construction")
     print("test category self-test PASS")
@@ -1149,6 +1153,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         choices=(*sorted(CATEGORIES), "list"),
         help="category to run, or 'list' to show categories",
     )
+    parser.add_argument("--list", action="store_true", help="show categories and exit")
     parser.add_argument(
         "--runner",
         choices=("auto", "make", "powershell"),
@@ -1194,7 +1199,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
     if args.self_test:
         return self_test()
-    if args.category == "list":
+    if args.list or args.category == "list":
         return list_categories()
     return run_category(args)
 
