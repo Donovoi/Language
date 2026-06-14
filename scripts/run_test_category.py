@@ -56,6 +56,7 @@ class Category:
     includes: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
     success_hints: tuple[str, ...] = ()
+    handoff_log_steps: tuple[str, ...] = ()
     manual_status_report: str = ""
 
 
@@ -616,6 +617,7 @@ CATEGORIES: dict[str, Category] = {
             "Does not run the printed probe command automatically.",
             "The printed command plays/records a short probe and remains release_proof=false.",
         ),
+        handoff_log_steps=("headphone-route-triage-handoff",),
     ),
     "guided-capture": Category(
         name="guided-capture",
@@ -983,9 +985,19 @@ def list_categories() -> int:
     return 0
 
 
+def quiet_handoff_lines(path: Path) -> list[str]:
+    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    if lines and lines[0].startswith("$ "):
+        lines = lines[1:]
+    while lines and not lines[0].strip():
+        lines = lines[1:]
+    return lines[:80]
+
+
 def run_category(args: argparse.Namespace) -> int:
     runner = choose_runner(args.runner)
     steps = resolve_category_steps(args.category)
+    quiet_step_logs: dict[str, Path] = {}
     log_dir = Path(args.log_dir)
     if not log_dir.is_absolute():
         log_dir = ROOT / log_dir
@@ -1028,6 +1040,7 @@ def run_category(args: argparse.Namespace) -> int:
             return 2
         if args.quiet:
             log_path = log_dir / f"{index:02d}-{safe_filename(step.name)}.log"
+            quiet_step_logs[step.name] = log_path
             with log_path.open("w", encoding="utf-8", errors="replace") as log_file:
                 log_file.write(f"$ {format_command(command, env_delta)}\n\n")
                 log_file.flush()
@@ -1067,6 +1080,15 @@ def run_category(args: argparse.Namespace) -> int:
         print("Handoff:")
         for hint in category.success_hints:
             print(f"- {hint}")
+    if args.quiet and category.handoff_log_steps:
+        print("Command handoff:")
+        for step_name in category.handoff_log_steps:
+            log_path = quiet_step_logs.get(step_name)
+            if not log_path or not log_path.exists():
+                print(f"- Handoff log unavailable for {step_name}.")
+                continue
+            for line in quiet_handoff_lines(log_path):
+                print(line)
     if category.manual_status_report:
         print("Manual recording summary:")
         for line in manual_status_summary_lines(category.manual_status_report):
@@ -1118,6 +1140,8 @@ def self_test() -> int:
         raise AssertionError("reference-playback-dry-run must only validate the playback plan")
     if "headphone-isolation-playback-plan" not in CATEGORIES["recording-session-dry-run"].steps:
         raise AssertionError("recording-session-dry-run must validate playback routing without audio")
+    if CATEGORIES["route-triage"].handoff_log_steps != ("headphone-route-triage-handoff",):
+        raise AssertionError("route-triage must print the generated probe handoff in quiet mode")
     if not CATEGORIES["recording-status"].success_hints:
         raise AssertionError("recording-status must print where the manual status handoff was written")
     if not CATEGORIES["recording-status"].manual_status_report:
