@@ -2780,6 +2780,19 @@ def _preflight_candidate_route(candidate: dict[str, Any]) -> str:
     )
 
 
+def _preflight_candidate_routes(candidates: Any) -> list[str]:
+    if not isinstance(candidates, list):
+        return []
+    routes: list[str] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        route = _preflight_candidate_route(candidate)
+        if route != "::" and route not in routes:
+            routes.append(route)
+    return routes
+
+
 def _preflight_candidate_capture_ready(candidate: dict[str, Any]) -> bool:
     input_roles = set(_string_list(candidate.get("input_roles")))
     source_roles = set(_string_list(candidate.get("source_roles")))
@@ -2925,10 +2938,12 @@ def load_headphone_preflight_status_handoff(path: Path | None) -> dict[str, Any]
             "present": True,
             "status": status,
             "next_step": next_step,
+            "generated_at_unix": _nonnegative_int(payload.get("generated_at_unix")),
             "release_proof": _literal_true(payload.get("release_proof")),
             "recommended_path": recommended_path,
             "physical_listener_ear_input_confirmed": physical_confirmed,
             "planning_passed": planning_passed,
+            "inventory_fingerprint": _string_or_empty(summary.get("inventory_fingerprint")),
             "selected_route": selected_route,
             "selected_route_requested": _literal_true(summary.get("selected_route_requested")),
             "selected_route_found": _literal_true(summary.get("selected_route_found")),
@@ -2939,6 +2954,7 @@ def load_headphone_preflight_status_handoff(path: Path | None) -> dict[str, Any]
             "candidate_route_triple_count": _nonnegative_int(summary.get("candidate_route_triple_count")),
             "capture_ready_route_triple_count": _nonnegative_int(summary.get("capture_ready_route_triple_count")),
             "likely_external_input_count": _nonnegative_int(summary.get("likely_external_input_count")),
+            "candidate_routes": _preflight_candidate_routes(candidates),
             "displayed_candidate": _first_preflight_candidate(candidates),
             "selected_candidate": _first_preflight_candidate([selected_candidate] if selected_candidate else []),
             "contract_issues": contract_issues,
@@ -3137,12 +3153,14 @@ def load_headphone_route_probe_status_handoff(path: Path | None) -> dict[str, An
             "present": True,
             "status": status,
             "next_step": next_step,
+            "generated_at_unix": _nonnegative_int(payload.get("generated_at_unix")),
             "release_proof": _literal_true(payload.get("release_proof")),
             "identity_issues": identity_issues,
             "sample_rate_hz": sample_rate_hz,
             "input_channels": input_channels,
             "output_channels": output_channels,
             "playback_gain_db": playback_gain_db,
+            "device_path_fingerprint": _string_or_empty(probe_summary.get("device_path_fingerprint")),
             "source_route": source_metric,
             "headphone_route": headphone_metric,
             "device_route": device_route,
@@ -3152,6 +3170,73 @@ def load_headphone_route_probe_status_handoff(path: Path | None) -> dict[str, An
         }
     )
     return handoff
+
+
+def _route_probe_handoff_route(route_probe_status: dict[str, Any]) -> str:
+    device_route = route_probe_status.get("device_route", {})
+    device_route = device_route if isinstance(device_route, dict) else {}
+
+    def device_id(name: str) -> str:
+        device = device_route.get(name, {})
+        device = device if isinstance(device, dict) else {}
+        return _string_or_empty(device.get("requested_device") or device.get("index"))
+
+    return f"{device_id('measurement_input')}:{device_id('source_output')}:{device_id('headphone_output')}"
+
+
+def annotate_headphone_route_probe_freshness(
+    preflight_status: dict[str, Any] | None,
+    route_probe_status: dict[str, Any] | None,
+) -> None:
+    if not isinstance(preflight_status, dict) or not isinstance(route_probe_status, dict):
+        return
+    if not preflight_status.get("present") or not route_probe_status.get("present"):
+        return
+
+    issues: list[str] = []
+    preflight_generated = _nonnegative_int(preflight_status.get("generated_at_unix"))
+    probe_generated = _nonnegative_int(route_probe_status.get("generated_at_unix"))
+    if preflight_generated and probe_generated and probe_generated < preflight_generated:
+        issues.append("route probe predates the current preflight")
+
+    for field, label in (
+        ("sample_rate_hz", "sample rate"),
+        ("input_channels", "input channel count"),
+        ("output_channels", "output channel count"),
+    ):
+        preflight_value = _nonnegative_int(preflight_status.get(field))
+        probe_value = _nonnegative_int(route_probe_status.get(field))
+        if preflight_value and probe_value and preflight_value != probe_value:
+            issues.append(f"route probe {label} does not match the current preflight")
+
+    probe_route = _route_probe_handoff_route(route_probe_status)
+    selected_route = _string_or_empty(preflight_status.get("selected_route"))
+    candidate_routes = [
+        route
+        for route in _string_list(preflight_status.get("candidate_routes"))
+        if route and route != "::"
+    ]
+    displayed_candidate = preflight_status.get("displayed_candidate", {})
+    if not candidate_routes and isinstance(displayed_candidate, dict):
+        displayed_route = _preflight_candidate_route(displayed_candidate)
+        if displayed_route != "::":
+            candidate_routes.append(displayed_route)
+    if selected_route and probe_route and probe_route != selected_route:
+        issues.append("route probe device triple does not match the selected preflight route")
+    elif candidate_routes and probe_route and probe_route not in candidate_routes:
+        issues.append("route probe device triple is not in the current preflight candidate list")
+
+    if issues:
+        freshness_status = "STALE" if any("predates" in issue for issue in issues) else "UNRELATED"
+        rerun_action = "rerun headphone route triage with the current preflight before trusting these device IDs"
+        route_probe_status["next_actions"] = [rerun_action]
+        route_probe_status["next_step"] = rerun_action
+        route_probe_status["recommended_commands"] = {}
+    else:
+        freshness_status = "CURRENT"
+
+    route_probe_status["freshness_status"] = freshness_status
+    route_probe_status["freshness_issues"] = issues
 
 
 def _room_route_probe_device(device_info: dict[str, Any], key: str) -> dict[str, Any]:
@@ -3471,6 +3556,7 @@ def build_report(
     if preflight_status is not None:
         operator_handoff["headphone_preflight_status"] = preflight_status
     route_probe_status = load_headphone_route_probe_status_handoff(headphone_route_probe_report)
+    annotate_headphone_route_probe_freshness(preflight_status, route_probe_status)
     if route_probe_status is not None:
         operator_handoff["headphone_route_probe_status"] = route_probe_status
     if operator_handoff:
@@ -3805,6 +3891,11 @@ def headphone_route_probe_status_handoff_lines(route_probe_status: dict[str, Any
             lines.append(f"- Read error: `{parse_error}`")
         lines.append(f"- Next step: {route_probe_status.get('next_step', '')}")
         return lines
+    freshness_status = str(route_probe_status.get("freshness_status", "")).strip()
+    freshness_issues = _string_list(route_probe_status.get("freshness_issues"))
+    if freshness_status and freshness_status != "CURRENT":
+        details = "; ".join(freshness_issues) if freshness_issues else "route probe freshness is unknown"
+        lines.append(f"- Freshness: **{freshness_status}** ({details})")
 
     device_route = route_probe_status.get("device_route", {})
     device_route = device_route if isinstance(device_route, dict) else {}
@@ -5081,6 +5172,7 @@ def self_test() -> None:
         missing_route_probe_status = root / "missing-route-probe-report.json"
         route_probe_status_failed = root / "headphone-route-probe-report-failed.json"
         route_probe_status_passed = root / "headphone-route-probe-report-passed.json"
+        route_probe_status_wrong_current_route = root / "headphone-route-probe-report-wrong-current-route.json"
         route_probe_status_invalid_json = root / "headphone-route-probe-report-invalid.json"
         route_probe_status_wrong_fixture = root / "headphone-route-probe-report-wrong-fixture.json"
         route_probe_status_missing_benchmark_summary = root / "headphone-route-probe-report-missing-summary.json"
@@ -5695,6 +5787,7 @@ def self_test() -> None:
             preflight_status_unconfirmed,
             {
                 "schema_version": 1,
+                "generated_at_unix": 20,
                 "fixture_kind": EXPECTED_HEADPHONE_PREFLIGHT_FIXTURE_KIND,
                 "measurement_kind": EXPECTED_HEADPHONE_PREFLIGHT_MEASUREMENT_KIND,
                 "release_proof": False,
@@ -5730,6 +5823,7 @@ def self_test() -> None:
             preflight_status_confirmed,
             {
                 "schema_version": 1,
+                "generated_at_unix": 20,
                 "fixture_kind": EXPECTED_HEADPHONE_PREFLIGHT_FIXTURE_KIND,
                 "measurement_kind": EXPECTED_HEADPHONE_PREFLIGHT_MEASUREMENT_KIND,
                 "release_proof": False,
@@ -5942,6 +6036,7 @@ def self_test() -> None:
             route_probe_status_failed,
             {
                 "schema_version": 1,
+                "generated_at_unix": 10,
                 "fixture_kind": EXPECTED_HEADPHONE_ROUTE_PROBE_FIXTURE_KIND,
                 "measurement_kind": EXPECTED_HEADPHONE_ROUTE_PROBE_MEASUREMENT_KIND,
                 "release_proof": False,
@@ -5954,6 +6049,29 @@ def self_test() -> None:
                     "headphone_earpiece_route_probe": {
                         "adapter_id": "unit_route_probe",
                         "summary": route_probe_benchmark_summary,
+                    }
+                },
+            },
+        )
+        wrong_current_route_summary = json.loads(json.dumps(route_probe_benchmark_summary))
+        wrong_current_route_summary["device_info"]["measurement_input_device"]["requested_device"] = 9
+        _write_json(
+            route_probe_status_wrong_current_route,
+            {
+                "schema_version": 1,
+                "generated_at_unix": 30,
+                "fixture_kind": EXPECTED_HEADPHONE_ROUTE_PROBE_FIXTURE_KIND,
+                "measurement_kind": EXPECTED_HEADPHONE_ROUTE_PROBE_MEASUREMENT_KIND,
+                "release_proof": False,
+                "summary": {
+                    "passed": False,
+                    "quality_gates": [{"name": "unit_route_probe_failed", "passed": False}],
+                    "release_proof": False,
+                },
+                "benchmarks": {
+                    "headphone_earpiece_route_probe": {
+                        "adapter_id": "unit_route_probe",
+                        "summary": wrong_current_route_summary,
                     }
                 },
             },
@@ -5974,6 +6092,7 @@ def self_test() -> None:
             route_probe_status_passed,
             {
                 "schema_version": 1,
+                "generated_at_unix": 10,
                 "fixture_kind": EXPECTED_HEADPHONE_ROUTE_PROBE_FIXTURE_KIND,
                 "measurement_kind": EXPECTED_HEADPHONE_ROUTE_PROBE_MEASUREMENT_KIND,
                 "release_proof": False,
@@ -6740,6 +6859,42 @@ def self_test() -> None:
             raise AssertionError("expected failed route probe handoff to include blocking reasons")
         if "Suggested same-route gain retry" not in failed_route_probe_markdown or "--playback-gain-db -12" not in failed_route_probe_markdown:
             raise AssertionError("expected quiet route probe handoff to include a cautious -12 dB retry command")
+        stale_route_probe_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_preflight_report=preflight_status_unconfirmed,
+            headphone_route_probe_report=route_probe_status_failed,
+        )
+        stale_route_probe_handoff = stale_route_probe_report.get("operator_handoff", {}).get("headphone_route_probe_status", {})
+        if not (
+            isinstance(stale_route_probe_handoff, dict)
+            and stale_route_probe_handoff.get("freshness_status") == "STALE"
+            and stale_route_probe_handoff.get("recommended_commands") == {}
+        ):
+            raise AssertionError("stale route probe handoff must be marked stale and suppress retry commands")
+        stale_route_probe_markdown = render_markdown_report(stale_route_probe_report)
+        if "Freshness: **STALE**" not in stale_route_probe_markdown or "route probe predates the current preflight" not in stale_route_probe_markdown:
+            raise AssertionError("stale route probe Markdown must include a freshness warning")
+        if "Suggested same-route gain retry" in stale_route_probe_markdown or "--playback-gain-db -12" in stale_route_probe_markdown:
+            raise AssertionError("stale route probe Markdown must not render same-route retry commands")
+        unrelated_route_probe_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_preflight_report=preflight_status_unconfirmed,
+            headphone_route_probe_report=route_probe_status_wrong_current_route,
+        )
+        unrelated_route_probe_handoff = unrelated_route_probe_report.get("operator_handoff", {}).get("headphone_route_probe_status", {})
+        if not (
+            isinstance(unrelated_route_probe_handoff, dict)
+            and unrelated_route_probe_handoff.get("freshness_status") == "UNRELATED"
+            and unrelated_route_probe_handoff.get("recommended_commands") == {}
+        ):
+            raise AssertionError("wrong-route probe handoff must be marked unrelated and suppress retry commands")
+        unrelated_route_probe_markdown = render_markdown_report(unrelated_route_probe_report)
+        if "Freshness: **UNRELATED**" not in unrelated_route_probe_markdown or "not in the current preflight candidate list" not in unrelated_route_probe_markdown:
+            raise AssertionError("wrong-route probe Markdown must include a freshness warning")
+        if "Suggested same-route gain retry" in unrelated_route_probe_markdown or "--playback-gain-db -12" in unrelated_route_probe_markdown:
+            raise AssertionError("wrong-route probe Markdown must not render same-route retry commands")
         passed_route_probe_report = build_report(
             release_results,
             prototype_results,

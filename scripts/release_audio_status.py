@@ -136,13 +136,40 @@ def _route_metric_summary(name: str, metric: dict[str, Any]) -> str:
     return f"{name}: " + (", ".join(fields) if fields else "no metrics")
 
 
+def _route_probe_stale_reason(report: dict[str, Any]) -> str:
+    handoff = _as_dict(report.get("operator_handoff"))
+    preflight = _as_dict(handoff.get("headphone_preflight_status"))
+    probe = _as_dict(handoff.get("headphone_route_probe_status"))
+    freshness_status = str(probe.get("freshness_status", "")).strip()
+    if freshness_status and freshness_status != "CURRENT":
+        issues = [str(item) for item in _as_list(probe.get("freshness_issues"))]
+        details = "; ".join(issues) if issues else "route probe freshness is unknown"
+        return f"{freshness_status}: {details}"
+    preflight_generated = preflight.get("generated_at_unix")
+    probe_generated = probe.get("generated_at_unix")
+    if (
+        isinstance(preflight_generated, int)
+        and isinstance(probe_generated, int)
+        and preflight_generated > 0
+        and probe_generated > 0
+        and probe_generated < preflight_generated
+    ):
+        return "STALE: route probe predates the current preflight"
+    return ""
+
+
 def _route_probe_lines(report: dict[str, Any]) -> list[str]:
     handoff = _as_dict(report.get("operator_handoff"))
     probe = _as_dict(handoff.get("headphone_route_probe_status"))
     if not probe:
         return []
 
-    lines = [f"Status: {probe.get('status', 'unknown')}"]
+    stale_reason = _route_probe_stale_reason(report)
+    status = str(probe.get("status", "unknown"))
+    if stale_reason:
+        freshness_label = stale_reason.split(":", 1)[0]
+        status = f"{freshness_label}-TRIAGE ({stale_reason})"
+    lines = [f"Status: {status}"]
     route = _as_dict(probe.get("device_route"))
     if route:
         lines.append(
@@ -161,6 +188,8 @@ def _route_probe_lines(report: dict[str, Any]) -> list[str]:
     if reasons:
         lines.append(f"Blocking reasons: {', '.join(reasons)}")
     actions = [str(item) for item in _as_list(probe.get("next_actions"))]
+    if stale_reason:
+        actions.insert(0, "rerun python scripts/run_test_category.py route-triage before trusting these device IDs")
     if actions:
         lines.append(f"Next: {actions[0]}")
     path = str(probe.get("path", "")).strip()
@@ -202,6 +231,7 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
     missing = [str(item) for item in _as_list(dropbox_state.get("missing_recordings"))]
     probe = _as_dict(handoff.get("headphone_route_probe_status"))
     route = _as_dict(probe.get("device_route"))
+    stale_reason = _route_probe_stale_reason(report)
 
     lines = [
         "# Physical Audio Test Checklist",
@@ -226,9 +256,13 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
                 "",
                 "## Current Route Triage",
                 "",
-                f"- Probe status: `{probe.get('status', 'unknown')}`",
+                f"- Probe status: `{(stale_reason.split(':', 1)[0] + '-TRIAGE') if stale_reason else probe.get('status', 'unknown')}`",
             ]
         )
+        if stale_reason:
+            lines.append(
+                f"- Probe freshness: {stale_reason}; rerun `python scripts/run_test_category.py route-triage` before trusting these device IDs."
+            )
         if route:
             lines.extend(
                 [
@@ -500,6 +534,7 @@ def self_test() -> int:
             },
             "headphone_preflight_status": {
                 "status": "NEEDS-PHYSICAL-INPUT-CONFIRMATION",
+                "generated_at_unix": 1,
                 "recommended_path": "guided_capture_possible_after_physical_input_confirmation",
                 "candidate_route_triple_count": 4,
                 "capture_ready_route_triple_count": 1,
@@ -509,6 +544,7 @@ def self_test() -> int:
             },
             "headphone_route_probe_status": {
                 "status": "FAIL-TRIAGE",
+                "generated_at_unix": 2,
                 "path": "artifacts/audio_eval/runs/headphone-earpiece-route-probe/headphone-route-probe-report.json",
                 "device_route": {
                     "measurement_input": {
@@ -579,12 +615,18 @@ def self_test() -> int:
     triage_report["operator_handoff"]["headphone_preflight_status"].update(
         {
             "status": "TRIAGE-ONLY",
+            "generated_at_unix": 3,
             "recommended_path": "route_probe_triage_only_manual_listener_ear_capture_required",
             "capture_ready_route_triple_count": 0,
         }
     )
     triage_rendered = render_status(triage_report, gate_returncode=1)
-    for text in ("Current host route is triage-only", "real listener-ear mic"):
+    for text in (
+        "Current host route is triage-only",
+        "real listener-ear mic",
+        "STALE-TRIAGE",
+        "rerun python scripts/run_test_category.py route-triage",
+    ):
         if text not in triage_rendered:
             raise AssertionError(f"missing triage next-action text: {text}")
 
@@ -604,6 +646,10 @@ def self_test() -> int:
     ):
         if text not in checklist:
             raise AssertionError(f"missing checklist text: {text}")
+    stale_checklist = render_operator_checklist(triage_report)
+    for text in ("Probe status: `STALE-TRIAGE`", "Probe freshness:"):
+        if text not in stale_checklist:
+            raise AssertionError(f"missing stale checklist text: {text}")
 
     passed_report: dict[str, Any] = {
         "summary": {
