@@ -105,6 +105,7 @@ Common categories:
 | `evidence-kit` | Manual listener-ear recording kit/dropbox | Creates/checks the folder for the three release WAVs. |
 | `recording-status` | Listener-ear WAV readiness | Use after adding the three manual recordings. |
 | `reference-playback-dry-run` | Validate manual reference playback routing | Requires source/headphone output env vars; plays no audio. |
+| `recording-session-dry-run` | Rehearse a manual recording session | Prepares the kit, validates playback routing, and prints status without audio. |
 | `reference-playback` | Play manual references for an external recorder | Explicit hardware action; not release evidence. |
 | `release-evidence` | One-command listener-ear evidence handoff | Prepare/import/check the kit, then print release status. |
 | `release-evidence-score` | Score complete listener-ear evidence | Requires real WAVs and concrete hardware labels. |
@@ -165,6 +166,7 @@ To verify and then play the manual references through explicit outputs for an ex
 $env:LANGUAGE_SOURCE_OUTPUT_DEVICE = "REPLACE_WITH_SOURCE_OUTPUT_ID"
 $env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = "REPLACE_WITH_HEADPHONE_OUTPUT_ID"
 python scripts/run_test_category.py reference-playback-dry-run
+python scripts/run_test_category.py recording-session-dry-run
 python scripts/run_test_category.py reference-playback
 ```
 
