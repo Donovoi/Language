@@ -90,6 +90,7 @@ Common categories:
 | `core` | Repository contract, Rust, gateway, and app checks | Uses `make check` or the Windows wrapper. |
 | `audio-fixtures` | Disposable Docker audio fixtures | Capture, translation, playback, fallback TTS. |
 | `hardware` | Host audio discovery and listener-ear planning | Run deliberately when testing devices. |
+| `evidence-kit` | Manual listener-ear recording kit/dropbox | Creates/checks the folder for the three release WAVs. |
 | `release` | Strict release-gate status | Expected to fail until physical evidence is present. |
 | `all` | Automated non-interactive suites | Excludes hardware, release, optional model downloads, and artifact-dependent voice checks. |
 
@@ -114,6 +115,12 @@ pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -P
 A laptop built-in mic and speakers are useful for route triage. Release evidence still needs real
 listener-ear recordings: open-ear source, isolated source, and translated headphone playback from the
 same listener-ear position. See `docs/development/headphone-isolation-release-runbook.md`.
+
+Prepare the manual recording kit and dropbox:
+
+```powershell
+pwsh -NoProfile -File scripts/dev_container.ps1 test-category evidence-kit
+```
 
 ## Release Gate
 
