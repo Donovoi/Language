@@ -89,7 +89,8 @@ Use `release-progress` after pushes when you need reproducible milestone percent
 Use `python3 scripts/release_audio_status.py --full-commands` when you need the detailed hardware
 command list in the terminal.
 On Windows, `core` defaults to `services\gateway\.venv\Scripts\python.exe` to avoid unsupported
-global Python versions; override it with `LANGUAGE_CORE_PYTHON` when needed.
+global Python versions; override it with `LANGUAGE_CORE_PYTHON` when needed. Flutter is resolved from
+`LANGUAGE_FLUTTER`, `FLUTTER`, PATH, or the portable `C:\tmp\flutter\bin\flutter.bat` SDK.
 
 ## Low-Level Commands
 

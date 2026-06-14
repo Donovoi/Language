@@ -109,6 +109,9 @@ Detailed test categories and the old command matrix live in
 `docs/testing/test-categories.md`. Disposable environment details live in
 `docs/development/disposable-test-environments.md`.
 
+On Windows, `core` can use a portable Flutter SDK at `C:\tmp\flutter\bin\flutter.bat`, or set
+`LANGUAGE_FLUTTER` to another Flutter executable.
+
 ## Audio Hardware
 
 For host audio on Windows, Docker is the wrong boundary because Bluetooth, WASAPI, USB, and built-in
