@@ -94,6 +94,7 @@ Common categories:
 | `hardware` | Host audio discovery and listener-ear planning | Run deliberately when testing devices. |
 | `evidence-kit` | Manual listener-ear recording kit/dropbox | Creates/checks the folder for the three release WAVs. |
 | `recording-status` | Listener-ear WAV readiness | Use after adding the three manual recordings. |
+| `release-evidence` | One-command listener-ear evidence handoff | Prepare/import/check the kit, then print release status. |
 | `release-status` | Concise release blocker summary | Low-token next-action handoff; exits zero by default. |
 | `release` | Strict release-gate status | Expected to fail until physical evidence is present. |
 | `all` | Automated non-interactive suites | Excludes hardware, release, optional model downloads, and artifact-dependent voice checks. |
@@ -120,15 +121,16 @@ A laptop built-in mic and speakers are useful for route triage. Release evidence
 listener-ear recordings: open-ear source, isolated source, and translated headphone playback from the
 same listener-ear position. See `docs/development/headphone-isolation-release-runbook.md`.
 
-Prepare the manual recording kit and dropbox:
+Prepare/check the manual recording kit, import any complete dropbox WAVs, and print release status:
+
+```powershell
+pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-evidence
+```
+
+The focused commands remain available when you only want one part:
 
 ```powershell
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category evidence-kit
-```
-
-After copying the three WAVs into the dropbox, check readiness:
-
-```powershell
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category recording-status
 ```
 
