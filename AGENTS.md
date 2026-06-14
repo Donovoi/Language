@@ -15,6 +15,19 @@ Use the existing pattern:
 Before handing off a non-trivial code change, run the smallest relevant disposable check. If a check
 cannot run in the current environment, say exactly which target failed and why.
 
+## Token Budget
+
+Keep agent runs token-light by default.
+
+- Prefer `python scripts/run_test_category.py <category>` for long validation; the runner writes full
+  logs to `artifacts/test-categories/` by default.
+- Use `--dry-run` before unfamiliar categories and `--continue-on-failure` for broad sweeps.
+- Reference full logs and JSON reports by path under `artifacts/` instead of pasting them into chat.
+- Use targeted searches, JSON projections, and bounded tails instead of dumping whole files.
+- Keep the README concise; move command matrices and lab runbooks into `docs/`.
+- Treat Headroom or similar compression tools as optional infrastructure until they are pinned and
+  evaluated in a disposable environment.
+
 ## Research-Gated Audio Decisions
 
 For live audio capture, diarization, separation, language ID, speech translation, voice clone/TTS,

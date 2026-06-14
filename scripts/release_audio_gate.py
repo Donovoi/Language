@@ -312,6 +312,15 @@ def _string_or_empty(value: Any) -> str:
     return str(value)
 
 
+def _markdown_inline(value: Any, *, max_len: int = 4096) -> str:
+    text = _string_or_empty(value)
+    text = " ".join(text.replace("\r", " ").replace("\n", " ").split())
+    text = text.replace("`", "'")
+    if len(text) > max_len:
+        return text[: max_len - 3].rstrip() + "..."
+    return text
+
+
 def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
@@ -2570,6 +2579,58 @@ def _collection_plan_recommended_commands(commands: Any) -> dict[str, str]:
     return parsed_commands
 
 
+def _collection_plan_recording_paths(value: Any) -> dict[str, str]:
+    paths = value if isinstance(value, dict) else {}
+    return {
+        "source_open_ear_recording": _string_or_empty(paths.get("source_open_ear_recording")),
+        "source_isolated_ear_recording": _string_or_empty(paths.get("source_isolated_ear_recording")),
+        "translated_headphone_recording": _string_or_empty(paths.get("translated_headphone_recording")),
+    }
+
+
+def _collection_plan_dropbox_state(value: Any) -> dict[str, Any]:
+    state = value if isinstance(value, dict) else {}
+    return {
+        "all_recordings_present": _literal_true(state.get("all_recordings_present")),
+        "allow_overwrite": _literal_true(state.get("allow_overwrite")),
+        "auto_import_ready": _literal_true(state.get("auto_import_ready")),
+        "blocked_reason": _string_or_empty(state.get("blocked_reason")),
+        "existing_target_recordings": _limited_string_list(state.get("existing_target_recordings"), limit=3),
+        "missing_recordings": _limited_string_list(state.get("missing_recordings"), limit=3),
+        "target_recording_paths": _collection_plan_recording_paths(state.get("target_recording_paths")),
+    }
+
+
+def _collection_plan_dropbox_handoff(payload: dict[str, Any], summary: dict[str, Any]) -> dict[str, Any]:
+    raw_dropbox = payload.get("raw_recording_dropbox", {})
+    raw_dropbox = raw_dropbox if isinstance(raw_dropbox, dict) else {}
+    current_state = payload.get("dropbox_import_state", {})
+    before_state = payload.get("dropbox_import_state_before_import", {})
+    current_state = current_state if isinstance(current_state, dict) else {}
+    before_state = before_state if isinstance(before_state, dict) else {}
+    if not raw_dropbox and not current_state and not before_state:
+        return {}
+    return {
+        "path": _string_or_empty(raw_dropbox.get("path")),
+        "readme_path": _string_or_empty(raw_dropbox.get("readme_path")),
+        "release_evidence": False,
+        "release_proof": False,
+        "expected_recordings": _collection_plan_recording_paths(raw_dropbox.get("expected_recordings")),
+        "state_before_import": _collection_plan_dropbox_state(before_state),
+        "state": _collection_plan_dropbox_state(current_state),
+        "summary": {
+            "dropbox_auto_import_dry_run": _literal_true(summary.get("dropbox_auto_import_dry_run")),
+            "dropbox_auto_import_plan_succeeded": _literal_true(
+                summary.get("dropbox_auto_import_plan_succeeded")
+            ),
+            "dropbox_auto_import_ready": _literal_true(summary.get("dropbox_auto_import_ready")),
+            "dropbox_auto_import_succeeded": _literal_true(summary.get("dropbox_auto_import_succeeded")),
+            "dropbox_auto_import_used": _literal_true(summary.get("dropbox_auto_import_used")),
+            "import_result": summary.get("import_result") if isinstance(summary.get("import_result"), int) else None,
+        },
+    }
+
+
 def load_headphone_collection_plan_handoff(path: Path | None) -> dict[str, Any] | None:
     if path is None:
         return None
@@ -2631,6 +2692,7 @@ def load_headphone_collection_plan_handoff(path: Path | None) -> dict[str, Any] 
     labels_specific = _literal_true(summary.get("manual_score_labels_specific"))
     commands = _collection_plan_recommended_commands(payload.get("recommended_commands"))
     next_actions = _limited_string_list(payload.get("next_actions"), limit=6)
+    dropbox_handoff = _collection_plan_dropbox_handoff(payload, summary)
 
     if identity_issues:
         status = "INVALID"
@@ -2640,6 +2702,7 @@ def load_headphone_collection_plan_handoff(path: Path | None) -> dict[str, Any] 
         )
         commands = {}
         next_actions = ["regenerate the collection plan with collect-headphone-evidence"]
+        dropbox_handoff = {}
     elif score_attempted and score_result_int == 0:
         next_step = "Rerun the release gate and confirm the scored listener-ear report passes."
     elif manual_score_ready:
@@ -2671,6 +2734,8 @@ def load_headphone_collection_plan_handoff(path: Path | None) -> dict[str, Any] 
             "recommended_commands": commands,
         }
     )
+    if dropbox_handoff:
+        handoff["raw_recording_dropbox"] = dropbox_handoff
     return handoff
 
 
@@ -3530,6 +3595,36 @@ def headphone_collection_plan_handoff_lines(collection_plan: dict[str, Any] | No
             f"- Issues: {summary.get('issue_count', 0)}",
         ]
     )
+    raw_dropbox = collection_plan.get("raw_recording_dropbox", {})
+    raw_dropbox = raw_dropbox if isinstance(raw_dropbox, dict) else {}
+    if raw_dropbox:
+        dropbox_summary = raw_dropbox.get("summary", {})
+        dropbox_summary = dropbox_summary if isinstance(dropbox_summary, dict) else {}
+        dropbox_state = raw_dropbox.get("state", {})
+        dropbox_state = dropbox_state if isinstance(dropbox_state, dict) else {}
+        expected_recordings = raw_dropbox.get("expected_recordings", {})
+        expected_recordings = expected_recordings if isinstance(expected_recordings, dict) else {}
+        missing_recordings = _limited_string_list(dropbox_state.get("missing_recordings"), limit=3)
+        existing_targets = _limited_string_list(dropbox_state.get("existing_target_recordings"), limit=3)
+        lines.extend(
+            [
+                f"- Raw recording dropbox: `{_markdown_inline(raw_dropbox.get('path', ''))}`",
+                f"- Dropbox instructions: `{_markdown_inline(raw_dropbox.get('readme_path', ''))}`",
+                f"- Source open-ear WAV: `{_markdown_inline(expected_recordings.get('source_open_ear_recording', ''))}`",
+                f"- Source isolated-ear WAV: `{_markdown_inline(expected_recordings.get('source_isolated_ear_recording', ''))}`",
+                f"- Translated headphone WAV: `{_markdown_inline(expected_recordings.get('translated_headphone_recording', ''))}`",
+                f"- Auto-import ready at start/used/dry-run/plan/wrote: "
+                f"{bool(dropbox_summary.get('dropbox_auto_import_ready'))}/"
+                f"{bool(dropbox_summary.get('dropbox_auto_import_used'))}/"
+                f"{bool(dropbox_summary.get('dropbox_auto_import_dry_run'))}/"
+                f"{bool(dropbox_summary.get('dropbox_auto_import_plan_succeeded'))}/"
+                f"{bool(dropbox_summary.get('dropbox_auto_import_succeeded'))}",
+                f"- Auto-import ready now: {bool(dropbox_state.get('auto_import_ready'))}",
+                f"- Auto-import blocked reason now: `{_markdown_inline(dropbox_state.get('blocked_reason', ''))}`",
+                f"- Missing dropbox recordings: {', '.join(missing_recordings) or 'none'}",
+                f"- Existing target recordings: {', '.join(existing_targets) or 'none'}",
+            ]
+        )
     next_actions = collection_plan.get("next_actions", [])
     if isinstance(next_actions, list) and next_actions:
         lines.append(f"- Next actions: {'; '.join(str(action) for action in next_actions[:3])}")
@@ -5417,12 +5512,14 @@ def self_test() -> None:
             next_actions: list[str] | None = None,
             manifest_path: str | None = None,
             score_result_value: Any = None,
+            dropbox_payload_marker: str = "",
         ) -> None:
             plan_next_actions = next_actions or [
                 "collect or import the three listener-ear WAV recordings",
                 "replace placeholder headphone, fixture, and measurement microphone labels",
             ]
             plan_score_result = score_result if score_result_value is None else score_result_value
+            marker_prefix = f"{dropbox_payload_marker}/" if dropbox_payload_marker else ""
             _write_json(
                 path,
                 {
@@ -5441,6 +5538,12 @@ def self_test() -> None:
                         "manual_recordings_ready_for_score_input": recordings_ready,
                         "manual_score_labels_specific": labels_specific,
                         "manual_score_ready": score_ready,
+                        "dropbox_auto_import_dry_run": False,
+                        "dropbox_auto_import_plan_succeeded": False,
+                        "dropbox_auto_import_ready": False,
+                        "dropbox_auto_import_succeeded": False,
+                        "dropbox_auto_import_used": False,
+                        "import_result": None,
                         "release_proof": release_proof,
                         "score_attempted": score_attempted,
                         "score_result": plan_score_result,
@@ -5451,6 +5554,57 @@ def self_test() -> None:
                         "specific headphone, listener-ear microphone, and fixture labels must be supplied before scoring",
                     ],
                     "next_actions": plan_next_actions,
+                    "raw_recording_dropbox": {
+                        "path": f"{marker_prefix}raw-listener-ear-recordings",
+                        "readme_path": f"{marker_prefix}raw-listener-ear-recordings/listener-ear-recording-dropbox.md",
+                        "release_evidence": False,
+                        "release_proof": False,
+                        "expected_recordings": {
+                            "source_open_ear_recording": (
+                                f"{marker_prefix}raw-listener-ear-recordings/source-open-ear-recording.wav"
+                            ),
+                            "source_isolated_ear_recording": (
+                                f"{marker_prefix}raw-listener-ear-recordings/source-isolated-ear-recording.wav"
+                            ),
+                            "translated_headphone_recording": (
+                                f"{marker_prefix}raw-listener-ear-recordings/translated-headphone-recording.wav"
+                            ),
+                        },
+                    },
+                    "dropbox_import_state_before_import": {
+                        "all_recordings_present": False,
+                        "allow_overwrite": False,
+                        "auto_import_ready": False,
+                        "blocked_reason": "dropbox_recordings_missing",
+                        "existing_target_recordings": [],
+                        "missing_recordings": [
+                            "source_open_ear_recording",
+                            "source_isolated_ear_recording",
+                            "translated_headphone_recording",
+                        ],
+                        "target_recording_paths": {
+                            "source_open_ear_recording": f"{marker_prefix}source-open-ear-recording.wav",
+                            "source_isolated_ear_recording": f"{marker_prefix}source-isolated-ear-recording.wav",
+                            "translated_headphone_recording": f"{marker_prefix}translated-headphone-recording.wav",
+                        },
+                    },
+                    "dropbox_import_state": {
+                        "all_recordings_present": False,
+                        "allow_overwrite": False,
+                        "auto_import_ready": False,
+                        "blocked_reason": "dropbox_recordings_missing",
+                        "existing_target_recordings": [],
+                        "missing_recordings": [
+                            "source_open_ear_recording",
+                            "source_isolated_ear_recording",
+                            "translated_headphone_recording",
+                        ],
+                        "target_recording_paths": {
+                            "source_open_ear_recording": f"{marker_prefix}source-open-ear-recording.wav",
+                            "source_isolated_ear_recording": f"{marker_prefix}source-isolated-ear-recording.wav",
+                            "translated_headphone_recording": f"{marker_prefix}translated-headphone-recording.wav",
+                        },
+                    },
                     "recommended_commands": collection_commands,
                 },
             )
@@ -5480,6 +5634,7 @@ def self_test() -> None:
             next_actions=["PAYLOAD_CONTROLLED_NEXT_ACTION_DO_NOT_RENDER"],
             manifest_path="PAYLOAD_CONTROLLED_MANIFEST_PATH_DO_NOT_RENDER",
             score_result_value="PAYLOAD_CONTROLLED_SCORE_RESULT_DO_NOT_RENDER",
+            dropbox_payload_marker="PAYLOAD_CONTROLLED_DROPBOX_DO_NOT_RENDER",
         )
         preflight_candidate = {
             "rank": 1,
@@ -6236,6 +6391,12 @@ def self_test() -> None:
             or "-Action play-manual" not in not_ready_collection_plan_markdown
         ):
             raise AssertionError("expected not-ready collection plan to surface the play-references command")
+        if (
+            "Raw recording dropbox" not in not_ready_collection_plan_markdown
+            or "dropbox_recordings_missing" not in not_ready_collection_plan_markdown
+            or "source_open_ear_recording" not in not_ready_collection_plan_markdown
+        ):
+            raise AssertionError("expected not-ready collection plan to surface dropbox auto-import state")
         collection_plan_handoff = not_ready_collection_plan_report.get("operator_handoff", {}).get(
             "headphone_collection_plan_status",
             {},
@@ -6246,6 +6407,14 @@ def self_test() -> None:
             or collection_plan_handoff.get("release_proof") is not False
         ):
             raise AssertionError("collection plan handoff must remain explicitly non-evidentiary")
+        collection_dropbox_handoff = collection_plan_handoff.get("raw_recording_dropbox", {})
+        if (
+            not isinstance(collection_dropbox_handoff, dict)
+            or collection_dropbox_handoff.get("release_evidence") is not False
+            or collection_dropbox_handoff.get("release_proof") is not False
+            or collection_dropbox_handoff.get("state", {}).get("blocked_reason") != "dropbox_recordings_missing"
+        ):
+            raise AssertionError("collection plan handoff should expose bounded non-evidentiary dropbox state")
         score_ready_collection_plan_report = build_report(
             release_results,
             prototype_results,
@@ -6295,6 +6464,8 @@ def self_test() -> None:
             raise AssertionError("invalid collection plan Markdown must not render payload-controlled paths")
         if "PAYLOAD_CONTROLLED_SCORE_RESULT_DO_NOT_RENDER" in wrong_release_collection_plan_markdown:
             raise AssertionError("invalid collection plan Markdown must not render payload-controlled score results")
+        if "PAYLOAD_CONTROLLED_DROPBOX_DO_NOT_RENDER" in wrong_release_collection_plan_markdown:
+            raise AssertionError("invalid collection plan Markdown must not render payload-controlled dropbox fields")
         if "regenerate the collection plan with collect-headphone-evidence" not in wrong_release_collection_plan_markdown:
             raise AssertionError("invalid collection plan Markdown should render fixed regeneration guidance")
         missing_preflight_report = build_report(
