@@ -21,6 +21,7 @@ __pycache__/
 .coverage
 htmlcov/
 .venv-audio-local/
+.venv-audio-contract/
 
 # Local runtime state
 .env

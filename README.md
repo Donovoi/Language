@@ -116,6 +116,11 @@ Detailed test categories and the old command matrix live in
 `docs/testing/test-categories.md`. Disposable environment details live in
 `docs/development/disposable-test-environments.md`.
 
+The `contracts` category creates `.venv-audio-contract/` for fixture contract dependencies
+(`numpy`, `scipy`, `soundfile`). The first run may need PyPI access or a warm pip cache; later runs
+reuse the pinned local venv. Set `LANGUAGE_AUDIO_CONTRACT_PYTHON` only when you need to pin the base
+interpreter.
+
 On Windows, `core` can use a portable Flutter SDK at `C:\tmp\flutter\bin\flutter.bat`, or set
 `LANGUAGE_FLUTTER` to another Flutter executable.
 

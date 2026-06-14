@@ -77,6 +77,11 @@ STEPS: dict[str, Step] = {
         description="gateway auth smoke harness contract self-test",
         local_args=("{python}", "scripts/smoke_gateway_auth.py", "--self-test"),
     ),
+    "audio-contract-runner-self-test": Step(
+        name="audio-contract-runner-self-test",
+        description="managed audio contract virtualenv runner self-test",
+        local_args=("{python}", "scripts/run_audio_contract.py", "--self-test"),
+    ),
     "release-audio-status": Step(
         name="release-audio-status",
         description="compact release gate blocker, next-action summary, and physical-audio checklist",
@@ -143,27 +148,52 @@ STEPS: dict[str, Step] = {
     "fixture-live-capture-contract": Step(
         name="fixture-live-capture-contract",
         description="fixture live-capture benchmark contract self-test",
-        local_args=("{python}", "scripts/benchmark_live_capture_fixture.py", "--self-test"),
+        local_args=(
+            "{python}",
+            "scripts/run_audio_contract.py",
+            "scripts/benchmark_live_capture_fixture.py",
+            "--self-test",
+        ),
     ),
     "fixture-playback-suppression-contract": Step(
         name="fixture-playback-suppression-contract",
         description="fixture playback/suppression benchmark contract self-test",
-        local_args=("{python}", "scripts/benchmark_playback_suppression_fixture.py", "--self-test"),
+        local_args=(
+            "{python}",
+            "scripts/run_audio_contract.py",
+            "scripts/benchmark_playback_suppression_fixture.py",
+            "--self-test",
+        ),
     ),
     "fallback-tts-contract": Step(
         name="fallback-tts-contract",
         description="fallback TTS report contract self-test",
-        local_args=("{python}", "scripts/benchmark_fallback_tts_fixture.py", "--self-test"),
+        local_args=(
+            "{python}",
+            "scripts/run_audio_contract.py",
+            "scripts/benchmark_fallback_tts_fixture.py",
+            "--self-test",
+        ),
     ),
     "same-voice-candidate-contract": Step(
         name="same-voice-candidate-contract",
         description="same-voice candidate validator contract self-test",
-        local_args=("{python}", "scripts/benchmark_same_voice_candidate_fixture.py", "--self-test"),
+        local_args=(
+            "{python}",
+            "scripts/run_audio_contract.py",
+            "scripts/benchmark_same_voice_candidate_fixture.py",
+            "--self-test",
+        ),
     ),
     "speechbrain-voice-similarity-contract": Step(
         name="speechbrain-voice-similarity-contract",
         description="SpeechBrain voice-similarity report contract self-test",
-        local_args=("{python}", "scripts/run_speechbrain_voice_similarity_fixture.py", "--self-test"),
+        local_args=(
+            "{python}",
+            "scripts/run_audio_contract.py",
+            "scripts/run_speechbrain_voice_similarity_fixture.py",
+            "--self-test",
+        ),
     ),
     "core-check": Step(
         name="core-check",
@@ -415,6 +445,7 @@ CATEGORIES: dict[str, Category] = {
             "release-progress-self-test",
             "gateway-package-verifier-self-test",
             "gateway-auth-smoke-self-test",
+            "audio-contract-runner-self-test",
             "headphone-route-triage-handoff-self-test",
             "live-microphone-capture-contract",
             "headphone-isolation-contract",
@@ -430,6 +461,7 @@ CATEGORIES: dict[str, Category] = {
             "release-progress-self-test",
             "gateway-package-verifier-self-test",
             "gateway-auth-smoke-self-test",
+            "audio-contract-runner-self-test",
             "headphone-route-triage-handoff-self-test",
             "live-microphone-capture-contract",
             "headphone-isolation-contract",
