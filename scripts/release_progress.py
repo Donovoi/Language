@@ -66,6 +66,13 @@ def _smoke_local_passed() -> bool:
     )
 
 
+def _gateway_package_smoke_passed() -> bool:
+    return _file_has_text(
+        "artifacts/test-categories/release-artifacts/02-gateway-package-smoke.log",
+        "Packaged gateway smoke check passed",
+    )
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -201,6 +208,7 @@ def build_progress(report: dict[str, Any]) -> dict[str, Any]:
     flutter_path = _resolve_flutter()
     flutter_ready = flutter_path is not None
     smoke_ready = _smoke_local_passed()
+    gateway_package_smoke_ready = _gateway_package_smoke_passed()
     local_artifacts_ready, local_artifacts_evidence = _local_release_artifacts_status()
     auth_tests_ready = _file_has_text("services/gateway/tests/test_gateway.py", "test_read_endpoints_remain_auth_free")
     auth_runtime_ready = _file_has_text("services/gateway/app/auth.py", "require_write_token")
@@ -241,9 +249,15 @@ def build_progress(report: dict[str, Any]) -> dict[str, Any]:
         Milestone(
             "gateway_package_ergonomics",
             "Gateway/package ergonomics",
-            100 if (ROOT / "scripts/verify_gateway_package.py").exists() else 90,
+            100
+            if gateway_package_smoke_ready
+            else 95
+            if (ROOT / "scripts/verify_gateway_package.py").exists()
+            else 90,
             0.10,
-            "gateway package verifier present",
+            "packaged gateway smoke passed"
+            if gateway_package_smoke_ready
+            else "gateway package verifier present; packaged smoke pending",
         ),
         Milestone(
             "auth_internal_beta",

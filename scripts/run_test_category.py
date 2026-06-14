@@ -87,6 +87,11 @@ STEPS: dict[str, Step] = {
         description="build local source bundle and gateway package handoff",
         local_args=("pwsh", "-NoProfile", "-File", "scripts/package_local.ps1"),
     ),
+    "gateway-package-smoke": Step(
+        name="gateway-package-smoke",
+        description="install the built gateway wheel and smoke the packaged CLI server",
+        local_args=("pwsh", "-NoProfile", "-File", "scripts/smoke_gateway_package.ps1"),
+    ),
     "headphone-route-triage-handoff-self-test": Step(
         name="headphone-route-triage-handoff-self-test",
         description="headphone route-triage handoff contract self-test",
@@ -610,12 +615,13 @@ CATEGORIES: dict[str, Category] = {
     ),
     "release-artifacts": Category(
         name="release-artifacts",
-        description="Build clean local source and gateway package artifacts with manifest/checksums.",
-        steps=("local-release-artifacts",),
+        description="Build clean local source/gateway artifacts and smoke the packaged gateway.",
+        steps=("local-release-artifacts", "gateway-package-smoke"),
         notes=(
             "Refuses dirty trees by default because source archives are built from HEAD.",
             "Uses a supported Python >=3.11,<3.14 from -Python, LANGUAGE_PACKAGE_PYTHON, LANGUAGE_PYTHON, PYTHON, bundled runtime, or PATH.",
             "Writes dist/local-release-artifacts/manifest.md and SHA256SUMS.txt.",
+            "Installs the built gateway wheel into a temporary virtualenv and verifies the packaged CLI serves the smoke endpoints.",
         ),
     ),
     "all": Category(
