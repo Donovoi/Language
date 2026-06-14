@@ -62,6 +62,9 @@ DEFAULT_HEADPHONE_MANUAL_STATUS_REPORT = (
 DEFAULT_HEADPHONE_COLLECTION_PLAN_REPORT = (
     DEFAULT_AUDIO_EVAL_DIR / "runs/headphone-earpiece-manual-kit/headphone-evidence-collection-plan.json"
 )
+DEFAULT_HEADPHONE_EVIDENCE_KIT_COMMAND = (
+    "pwsh -NoProfile -File scripts/dev_container.ps1 test-category evidence-kit"
+)
 DEFAULT_PLAYBACK_PROTOTYPE_REPORT = (
     DEFAULT_AUDIO_EVAL_DIR / "runs/fleurs-playback-ducking-suppression/playback-suppression-report.json"
 )
@@ -3552,7 +3555,8 @@ def headphone_collection_plan_handoff_lines(collection_plan: dict[str, Any] | No
             [
                 "- Status: not loaded in this release report.",
                 f"- Default collection plan path: `{DEFAULT_HEADPHONE_COLLECTION_PLAN_REPORT}`",
-                "- Next step: run collect-headphone-evidence to create the current physical evidence handoff.",
+                f"- Simple command: `{DEFAULT_HEADPHONE_EVIDENCE_KIT_COMMAND}`",
+                "- Next step: run the evidence-kit category to create the current physical evidence handoff.",
             ]
         )
         return lines
@@ -3569,6 +3573,7 @@ def headphone_collection_plan_handoff_lines(collection_plan: dict[str, Any] | No
         parse_error = str(collection_plan.get("parse_error", "")).strip()
         if parse_error:
             lines.append(f"- Read error: `{parse_error}`")
+        lines.append(f"- Simple command: `{DEFAULT_HEADPHONE_EVIDENCE_KIT_COMMAND}`")
         lines.append(f"- Next step: {collection_plan.get('next_step', '')}")
         return lines
 
@@ -3576,6 +3581,7 @@ def headphone_collection_plan_handoff_lines(collection_plan: dict[str, Any] | No
     if isinstance(identity_issues, list) and status == "INVALID":
         issue_text = "; ".join(str(issue) for issue in identity_issues[:4])
         lines.append(f"- Identity issues: {issue_text}")
+        lines.append(f"- Simple command: `{DEFAULT_HEADPHONE_EVIDENCE_KIT_COMMAND}`")
         lines.append(f"- Next step: {collection_plan.get('next_step', '')}")
         next_actions = collection_plan.get("next_actions", [])
         if isinstance(next_actions, list) and next_actions:
@@ -3628,6 +3634,7 @@ def headphone_collection_plan_handoff_lines(collection_plan: dict[str, Any] | No
     next_actions = collection_plan.get("next_actions", [])
     if isinstance(next_actions, list) and next_actions:
         lines.append(f"- Next actions: {'; '.join(str(action) for action in next_actions[:3])}")
+    lines.append(f"- Simple command: `{DEFAULT_HEADPHONE_EVIDENCE_KIT_COMMAND}`")
     lines.append(f"- Next step: {collection_plan.get('next_step', '')}")
 
     commands = collection_plan.get("recommended_commands", {})
@@ -6352,6 +6359,7 @@ def self_test() -> None:
         if (
             "Current Headphone Evidence Collection Plan" not in missing_collection_plan_markdown
             or "MISSING" not in missing_collection_plan_markdown
+            or "test-category evidence-kit" not in missing_collection_plan_markdown
         ):
             raise AssertionError("expected missing collection plan to be called out in Markdown")
         parsed_collection_plan_args = parse_args(
@@ -6384,6 +6392,7 @@ def self_test() -> None:
             "NOT-READY" not in not_ready_collection_plan_markdown
             or "not release evidence" not in not_ready_collection_plan_markdown
             or "collect or import" not in not_ready_collection_plan_markdown
+            or "test-category evidence-kit" not in not_ready_collection_plan_markdown
         ):
             raise AssertionError("expected not-ready collection plan to stay non-evidentiary in Markdown")
         if (
@@ -6468,6 +6477,8 @@ def self_test() -> None:
             raise AssertionError("invalid collection plan Markdown must not render payload-controlled dropbox fields")
         if "regenerate the collection plan with collect-headphone-evidence" not in wrong_release_collection_plan_markdown:
             raise AssertionError("invalid collection plan Markdown should render fixed regeneration guidance")
+        if "test-category evidence-kit" not in wrong_release_collection_plan_markdown:
+            raise AssertionError("invalid collection plan Markdown should render the simple evidence-kit command")
         missing_preflight_report = build_report(
             release_results,
             prototype_results,
