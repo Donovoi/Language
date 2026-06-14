@@ -37,6 +37,7 @@ Repository prep for the first internal beta release candidate based on the curre
 - The hard release audio gate now writes a Markdown operator handoff beside the JSON report so release blockers, physical-evidence hardware reminders, and guided/manual collection commands are readable without weakening the machine-checked gate.
 - The release audio handoff now embeds the current headphone/earpiece manual recording status when present, including score-ready state, issue counts, and the exact release-gate rerun command without treating the status as release evidence.
 - The release audio handoff now also embeds the latest headphone/earpiece preflight status when present, including the recommended path, displayed or selected route candidate, next generated command, and physical-input confirmation state as non-evidentiary operator context.
+- The release audio handoff now includes the latest headphone/earpiece route-probe diagnosis when present, including opened devices, route levels, blocking reasons, and next actions while keeping route probes triage-only.
 
 #### Changed
 

@@ -50,6 +50,9 @@ DEFAULT_HEADPHONE_ISOLATION_REPORT = (
 DEFAULT_HEADPHONE_PREFLIGHT_REPORT = (
     DEFAULT_AUDIO_EVAL_DIR / "runs/headphone-earpiece-preflight/headphone-preflight-report.json"
 )
+DEFAULT_HEADPHONE_ROUTE_PROBE_REPORT = (
+    DEFAULT_AUDIO_EVAL_DIR / "runs/headphone-earpiece-route-probe/headphone-route-probe-report.json"
+)
 DEFAULT_HEADPHONE_MANUAL_STATUS_REPORT = (
     DEFAULT_AUDIO_EVAL_DIR / "runs/headphone-earpiece-manual-kit/manual-recording-status.json"
 )
@@ -72,6 +75,8 @@ PROTOTYPE_FIXTURE_KINDS = {
 }
 EXPECTED_HEADPHONE_PREFLIGHT_FIXTURE_KIND = "headphone_earpiece_preflight"
 EXPECTED_HEADPHONE_PREFLIGHT_MEASUREMENT_KIND = "headphone_earpiece_preflight"
+EXPECTED_HEADPHONE_ROUTE_PROBE_FIXTURE_KIND = "headphone_earpiece_route_probe"
+EXPECTED_HEADPHONE_ROUTE_PROBE_MEASUREMENT_KIND = "headphone_earpiece_route_probe_triage"
 
 LIVE_CAPTURE_REQUIRED_GATES = {
     "capture_source_is_microphone",
@@ -301,6 +306,20 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item) for item in value if isinstance(item, str)]
+
+
+def _limited_string_list(value: Any, limit: int = 4) -> list[str]:
+    return _string_list(value)[:limit]
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(parsed):
+        return None
+    return parsed
 
 
 def _quality_gates(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -2723,11 +2742,123 @@ def load_headphone_preflight_status_handoff(path: Path | None) -> dict[str, Any]
     return handoff
 
 
+def _route_probe_device(device_info: dict[str, Any], key: str) -> dict[str, Any]:
+    device = device_info.get(key, {})
+    device = device if isinstance(device, dict) else {}
+    return {
+        "requested_device": _string_or_empty(device.get("requested_device")),
+        "index": _string_or_empty(device.get("index")),
+        "name": _string_or_empty(device.get("name")),
+        "hostapi_name": _string_or_empty(device.get("hostapi_name")),
+    }
+
+
+def _route_probe_metric(summary: dict[str, Any], prefix: str) -> dict[str, Any]:
+    return {
+        "opened": _literal_true(summary.get(f"{prefix}_opened")),
+        "recording_dbfs": _float_or_none(summary.get(f"{prefix}_recording_dbfs")),
+        "reference_confidence": _float_or_none(summary.get(f"{prefix}_reference_confidence")),
+        "reference_correlation": _float_or_none(summary.get(f"{prefix}_reference_correlation")),
+        "reference_distortion_db": _float_or_none(summary.get(f"{prefix}_reference_distortion_db")),
+        "gain_db": _float_or_none(summary.get(f"{prefix}_gain_db")),
+    }
+
+
+def load_headphone_route_probe_status_handoff(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    handoff: dict[str, Any] = {
+        "path": str(path),
+        "present": False,
+        "release_evidence": False,
+    }
+    try:
+        payload = _load_json(path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        handoff.update(
+            {
+                "status": "UNREADABLE",
+                "parse_error": str(exc),
+                "next_step": "Regenerate the headphone/earpiece route probe report.",
+            }
+        )
+        return handoff
+    if payload is None:
+        handoff.update(
+            {
+                "status": "MISSING",
+                "next_step": "Run the generated route_probe_triage_only command after preflight.",
+            }
+        )
+        return handoff
+
+    summary = _summary(payload)
+    benchmarks = payload.get("benchmarks", {})
+    benchmark = benchmarks.get("headphone_earpiece_route_probe", {}) if isinstance(benchmarks, dict) else {}
+    benchmark = benchmark if isinstance(benchmark, dict) else {}
+    probe_summary = benchmark.get("summary", {})
+    probe_summary = probe_summary if isinstance(probe_summary, dict) else {}
+    diagnosis = probe_summary.get("route_failure_diagnosis", {})
+    diagnosis = diagnosis if isinstance(diagnosis, dict) else {}
+    device_info = probe_summary.get("device_info", {})
+    device_info = device_info if isinstance(device_info, dict) else {}
+    identity_issues: list[str] = []
+    if not probe_summary:
+        identity_issues.append("route probe benchmark summary is missing")
+    elif probe_summary.get("measurement_kind") != EXPECTED_HEADPHONE_ROUTE_PROBE_MEASUREMENT_KIND:
+        identity_issues.append("route probe benchmark measurement_kind is invalid")
+    if probe_summary and probe_summary.get("release_proof") is not False:
+        identity_issues.append("route probe benchmark must keep release_proof=false")
+    if payload.get("fixture_kind") != EXPECTED_HEADPHONE_ROUTE_PROBE_FIXTURE_KIND:
+        identity_issues.append("fixture_kind is not headphone route probe")
+    if payload.get("measurement_kind") != EXPECTED_HEADPHONE_ROUTE_PROBE_MEASUREMENT_KIND:
+        identity_issues.append("measurement_kind is not headphone route probe triage")
+    if payload.get("release_proof") is not False or summary.get("release_proof") is not False:
+        identity_issues.append("route probe must keep release_proof=false")
+
+    source_metric = _route_probe_metric(probe_summary, "source_route")
+    headphone_metric = _route_probe_metric(probe_summary, "headphone_route")
+    if identity_issues:
+        status = "INVALID"
+        next_step = "Regenerate route probe; the report identity or release-proof fields are invalid."
+    elif _literal_true(summary.get("passed")):
+        status = "PASS-TRIAGE"
+        next_step = "Use this only as routing diagnostics; final release evidence still needs guided capture or manual listener-ear scoring."
+    else:
+        status = "FAIL-TRIAGE"
+        next_step = "Apply the route diagnosis, then rerun route probe or switch to the manual listener-ear kit."
+
+    handoff.update(
+        {
+            "present": True,
+            "status": status,
+            "next_step": next_step,
+            "release_proof": _literal_true(payload.get("release_proof")),
+            "identity_issues": identity_issues,
+            "sample_rate_hz": _nonnegative_int(probe_summary.get("sample_rate_hz")),
+            "input_channels": _nonnegative_int(probe_summary.get("input_channels")),
+            "output_channels": _nonnegative_int(probe_summary.get("output_channels")),
+            "playback_gain_db": _float_or_none(probe_summary.get("playback_gain_db")),
+            "source_route": source_metric,
+            "headphone_route": headphone_metric,
+            "device_route": {
+                "measurement_input": _route_probe_device(device_info, "measurement_input_device"),
+                "source_output": _route_probe_device(device_info, "source_output_device"),
+                "headphone_output": _route_probe_device(device_info, "headphone_output_device"),
+            },
+            "blocking_reasons": _limited_string_list(diagnosis.get("blocking_reasons"), limit=6),
+            "next_actions": _limited_string_list(diagnosis.get("next_actions"), limit=5),
+        }
+    )
+    return handoff
+
+
 def build_report(
     release_results: list[GateResult],
     prototype_results: list[GateResult],
     headphone_manual_status_report: Path | None = None,
     headphone_preflight_report: Path | None = None,
+    headphone_route_probe_report: Path | None = None,
 ) -> dict[str, Any]:
     blocking_failures = [gate for gate in release_results if not gate.passed and gate.release_blocking]
     report = {
@@ -2761,6 +2892,9 @@ def build_report(
     preflight_status = load_headphone_preflight_status_handoff(headphone_preflight_report)
     if preflight_status is not None:
         operator_handoff["headphone_preflight_status"] = preflight_status
+    route_probe_status = load_headphone_route_probe_status_handoff(headphone_route_probe_report)
+    if route_probe_status is not None:
+        operator_handoff["headphone_route_probe_status"] = route_probe_status
     if operator_handoff:
         report["operator_handoff"] = operator_handoff
     return report
@@ -2934,8 +3068,92 @@ def headphone_preflight_status_handoff_lines(preflight_status: dict[str, Any] | 
     return lines
 
 
+def _format_optional_float(value: Any, suffix: str = "") -> str:
+    parsed = _float_or_none(value)
+    if parsed is None:
+        return "n/a"
+    return f"{parsed:.3f}{suffix}"
+
+
+def headphone_route_probe_status_handoff_lines(route_probe_status: dict[str, Any] | None) -> list[str]:
+    lines = [
+        "",
+        "### Current Headphone Route Probe Status",
+        "",
+        "This route probe is triage only; it is not release evidence.",
+        "",
+    ]
+    if not isinstance(route_probe_status, dict):
+        lines.extend(
+            [
+                "- Status: not loaded in this release report.",
+                f"- Default route-probe path: `{DEFAULT_HEADPHONE_ROUTE_PROBE_REPORT}`",
+                "- Next step: run route_probe_triage_only after preflight to diagnose the host audio route.",
+            ]
+        )
+        return lines
+
+    status = str(route_probe_status.get("status", "UNKNOWN"))
+    lines.append(f"- Status: **{status}**")
+    lines.append(f"- JSON route probe: `{route_probe_status.get('path', '')}`")
+    if not route_probe_status.get("present"):
+        parse_error = str(route_probe_status.get("parse_error", "")).strip()
+        if parse_error:
+            lines.append(f"- Read error: `{parse_error}`")
+        lines.append(f"- Next step: {route_probe_status.get('next_step', '')}")
+        return lines
+
+    device_route = route_probe_status.get("device_route", {})
+    device_route = device_route if isinstance(device_route, dict) else {}
+    measurement_input = device_route.get("measurement_input", {})
+    source_output = device_route.get("source_output", {})
+    headphone_output = device_route.get("headphone_output", {})
+    measurement_input = measurement_input if isinstance(measurement_input, dict) else {}
+    source_output = source_output if isinstance(source_output, dict) else {}
+    headphone_output = headphone_output if isinstance(headphone_output, dict) else {}
+    route = (
+        f"{measurement_input.get('requested_device', '')}:"
+        f"{source_output.get('requested_device', '')}:"
+        f"{headphone_output.get('requested_device', '')}"
+    )
+    source_metric = route_probe_status.get("source_route", {})
+    headphone_metric = route_probe_status.get("headphone_route", {})
+    source_metric = source_metric if isinstance(source_metric, dict) else {}
+    headphone_metric = headphone_metric if isinstance(headphone_metric, dict) else {}
+    lines.extend(
+        [
+            f"- Route: `{route}` at {route_probe_status.get('sample_rate_hz', 0)} Hz, "
+            f"{route_probe_status.get('input_channels', 0)}:{route_probe_status.get('output_channels', 0)} channels",
+            f"- Measurement input: `{measurement_input.get('name', '')}` ({measurement_input.get('hostapi_name', '')})",
+            f"- Source output: `{source_output.get('name', '')}` ({source_output.get('hostapi_name', '')})",
+            f"- Headphone output: `{headphone_output.get('name', '')}` ({headphone_output.get('hostapi_name', '')})",
+            f"- Source route: opened={bool(source_metric.get('opened'))}, "
+            f"level={_format_optional_float(source_metric.get('recording_dbfs'), ' dBFS')}, "
+            f"confidence={_format_optional_float(source_metric.get('reference_confidence'))}, "
+            f"distortion={_format_optional_float(source_metric.get('reference_distortion_db'), ' dB')}",
+            f"- Headphone route: opened={bool(headphone_metric.get('opened'))}, "
+            f"level={_format_optional_float(headphone_metric.get('recording_dbfs'), ' dBFS')}, "
+            f"confidence={_format_optional_float(headphone_metric.get('reference_confidence'))}, "
+            f"distortion={_format_optional_float(headphone_metric.get('reference_distortion_db'), ' dB')}",
+        ]
+    )
+    identity_issues = route_probe_status.get("identity_issues", [])
+    if isinstance(identity_issues, list) and status == "INVALID":
+        issue_text = "; ".join(str(issue) for issue in identity_issues[:4])
+        lines.append(f"- Identity issues: {issue_text}")
+    blocking_reasons = route_probe_status.get("blocking_reasons", [])
+    if isinstance(blocking_reasons, list) and blocking_reasons:
+        lines.append(f"- Blocking reasons: {', '.join(str(reason) for reason in blocking_reasons)}")
+    next_actions = route_probe_status.get("next_actions", [])
+    if isinstance(next_actions, list) and next_actions:
+        lines.append(f"- Suggested next actions: {'; '.join(str(action) for action in next_actions[:3])}")
+    lines.append(f"- Next step: {route_probe_status.get('next_step', '')}")
+    return lines
+
+
 def playback_source_suppression_handoff_lines(
     preflight_status: dict[str, Any] | None = None,
+    route_probe_status: dict[str, Any] | None = None,
     manual_status: dict[str, Any] | None = None,
 ) -> list[str]:
     lines = [
@@ -2978,6 +3196,7 @@ def playback_source_suppression_handoff_lines(
         "```",
     ]
     lines.extend(headphone_preflight_status_handoff_lines(preflight_status))
+    lines.extend(headphone_route_probe_status_handoff_lines(route_probe_status))
     lines.extend(headphone_manual_status_handoff_lines(manual_status))
     return lines
 
@@ -3068,7 +3287,9 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             manual_status = manual_status if isinstance(manual_status, dict) else None
             preflight_status = operator_handoff.get("headphone_preflight_status")
             preflight_status = preflight_status if isinstance(preflight_status, dict) else None
-            lines.extend(playback_source_suppression_handoff_lines(preflight_status, manual_status))
+            route_probe_status = operator_handoff.get("headphone_route_probe_status")
+            route_probe_status = route_probe_status if isinstance(route_probe_status, dict) else None
+            lines.extend(playback_source_suppression_handoff_lines(preflight_status, route_probe_status, manual_status))
             included_playback_collection = True
         else:
             lines.append("- Address each failed release-blocking gate above, then rerun the gate.")
@@ -3820,6 +4041,8 @@ def self_test() -> None:
             raise AssertionError("expected release gate to load the default manual status path")
         if parse_args([]).headphone_preflight_report != DEFAULT_HEADPHONE_PREFLIGHT_REPORT:
             raise AssertionError("expected release gate to load the default headphone preflight path")
+        if parse_args([]).headphone_route_probe_report != DEFAULT_HEADPHONE_ROUTE_PROBE_REPORT:
+            raise AssertionError("expected release gate to load the default headphone route probe path")
         if _specific_measurement_label("REPLACE_WITH_MIC_MODEL_AND_POSITION"):
             raise AssertionError("REPLACE_WITH labels must be rejected as placeholder measurement labels")
         stub = root / "stub.json"
@@ -3874,6 +4097,12 @@ def self_test() -> None:
         preflight_status_malformed_candidate = root / "headphone-preflight-report-malformed-candidate.json"
         preflight_status_wrong_fixture = root / "headphone-preflight-report-wrong-fixture.json"
         preflight_status_missing_capture_command = root / "headphone-preflight-report-missing-capture-command.json"
+        missing_route_probe_status = root / "missing-route-probe-report.json"
+        route_probe_status_failed = root / "headphone-route-probe-report-failed.json"
+        route_probe_status_passed = root / "headphone-route-probe-report-passed.json"
+        route_probe_status_invalid_json = root / "headphone-route-probe-report-invalid.json"
+        route_probe_status_wrong_fixture = root / "headphone-route-probe-report-wrong-fixture.json"
+        route_probe_status_missing_benchmark_summary = root / "headphone-route-probe-report-missing-summary.json"
 
         _write_json(stub, _report(True))
         _write_json(failing, _report(False))
@@ -4449,6 +4678,139 @@ def self_test() -> None:
                 },
             },
         )
+        route_probe_benchmark_summary = {
+            "device_info": {
+                "measurement_input_device": {
+                    "hostapi_name": "MME",
+                    "name": "Unit Microphone Array",
+                    "requested_device": 1,
+                },
+                "source_output_device": {
+                    "hostapi_name": "MME",
+                    "name": "Unit Source Output",
+                    "requested_device": 6,
+                },
+                "headphone_output_device": {
+                    "hostapi_name": "MME",
+                    "name": "Unit Headphones",
+                    "requested_device": 4,
+                },
+            },
+            "headphone_route_gain_db": -64.0,
+            "headphone_route_opened": True,
+            "headphone_route_recording_dbfs": -38.5,
+            "headphone_route_reference_confidence": 0.001,
+            "headphone_route_reference_correlation": 0.001,
+            "headphone_route_reference_distortion_db": 58.0,
+            "input_channels": 1,
+            "measurement_kind": EXPECTED_HEADPHONE_ROUTE_PROBE_MEASUREMENT_KIND,
+            "output_channels": 2,
+            "playback_gain_db": -18.0,
+            "release_proof": False,
+            "route_failure_diagnosis": {
+                "blocking_reasons": [
+                    "source:recording_too_quiet",
+                    "headphone:reference_not_detected",
+                    "headphone:reference_distorted",
+                ],
+                "next_actions": [
+                    "move the measurement mic closer or raise playback gain without clipping",
+                    "disable Windows audio enhancements, noise suppression, AGC, and echo processing",
+                    "try an alternate host API route for the same physical devices",
+                ],
+            },
+            "sample_rate_hz": 48000,
+            "source_route_gain_db": -110.0,
+            "source_route_opened": True,
+            "source_route_recording_dbfs": -76.0,
+            "source_route_reference_confidence": 0.001,
+            "source_route_reference_correlation": -0.001,
+            "source_route_reference_distortion_db": 66.0,
+        }
+        _write_json(
+            route_probe_status_failed,
+            {
+                "schema_version": 1,
+                "fixture_kind": EXPECTED_HEADPHONE_ROUTE_PROBE_FIXTURE_KIND,
+                "measurement_kind": EXPECTED_HEADPHONE_ROUTE_PROBE_MEASUREMENT_KIND,
+                "release_proof": False,
+                "summary": {
+                    "passed": False,
+                    "quality_gates": [{"name": "unit_route_probe_failed", "passed": False}],
+                    "release_proof": False,
+                },
+                "benchmarks": {
+                    "headphone_earpiece_route_probe": {
+                        "adapter_id": "unit_route_probe",
+                        "summary": route_probe_benchmark_summary,
+                    }
+                },
+            },
+        )
+        passing_route_probe_summary = dict(route_probe_benchmark_summary)
+        passing_route_probe_summary.update(
+            {
+                "headphone_route_recording_dbfs": -24.0,
+                "headphone_route_reference_confidence": 0.9,
+                "headphone_route_reference_distortion_db": 5.0,
+                "route_failure_diagnosis": {"blocking_reasons": [], "next_actions": []},
+                "source_route_recording_dbfs": -20.0,
+                "source_route_reference_confidence": 0.85,
+                "source_route_reference_distortion_db": 6.0,
+            }
+        )
+        _write_json(
+            route_probe_status_passed,
+            {
+                "schema_version": 1,
+                "fixture_kind": EXPECTED_HEADPHONE_ROUTE_PROBE_FIXTURE_KIND,
+                "measurement_kind": EXPECTED_HEADPHONE_ROUTE_PROBE_MEASUREMENT_KIND,
+                "release_proof": False,
+                "summary": {
+                    "passed": True,
+                    "quality_gates": [{"name": "unit_route_probe_passed", "passed": True}],
+                    "release_proof": False,
+                },
+                "benchmarks": {
+                    "headphone_earpiece_route_probe": {
+                        "adapter_id": "unit_route_probe",
+                        "summary": passing_route_probe_summary,
+                    }
+                },
+            },
+        )
+        route_probe_status_invalid_json.write_text("{", encoding="utf-8")
+        _write_json(
+            route_probe_status_wrong_fixture,
+            {
+                "schema_version": 1,
+                "fixture_kind": "forged_route_probe",
+                "measurement_kind": EXPECTED_HEADPHONE_ROUTE_PROBE_MEASUREMENT_KIND,
+                "release_proof": False,
+                "summary": {"passed": True, "release_proof": False},
+                "benchmarks": {
+                    "headphone_earpiece_route_probe": {
+                        "adapter_id": "unit_route_probe",
+                        "summary": passing_route_probe_summary,
+                    }
+                },
+            },
+        )
+        _write_json(
+            route_probe_status_missing_benchmark_summary,
+            {
+                "schema_version": 1,
+                "fixture_kind": EXPECTED_HEADPHONE_ROUTE_PROBE_FIXTURE_KIND,
+                "measurement_kind": EXPECTED_HEADPHONE_ROUTE_PROBE_MEASUREMENT_KIND,
+                "release_proof": False,
+                "summary": {"passed": True, "release_proof": False},
+                "benchmarks": {
+                    "headphone_earpiece_route_probe": {
+                        "adapter_id": "unit_route_probe",
+                    }
+                },
+            },
+        )
 
         complete_args = argparse.Namespace(
             live_capture_report=capture,
@@ -4900,6 +5262,78 @@ def self_test() -> None:
             raise AssertionError("expected report JSON to keep both manual and preflight handoffs")
         if combined_handoff_report["summary"] != report["summary"]:
             raise AssertionError("combined operator handoffs must not change release gate summary")
+        missing_route_probe_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_route_probe_report=missing_route_probe_status,
+        )
+        if missing_route_probe_report["summary"] != report["summary"]:
+            raise AssertionError("route probe handoff must not change release gate summary")
+        missing_route_probe_markdown = render_markdown_report(missing_route_probe_report)
+        if (
+            "Current Headphone Route Probe Status" not in missing_route_probe_markdown
+            or "MISSING" not in missing_route_probe_markdown
+        ):
+            raise AssertionError("expected missing route probe status to be called out in Markdown")
+        invalid_route_probe_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_route_probe_report=route_probe_status_invalid_json,
+        )
+        invalid_route_probe_markdown = render_markdown_report(invalid_route_probe_report)
+        if "UNREADABLE" not in invalid_route_probe_markdown:
+            raise AssertionError("expected invalid route probe JSON to render as unreadable")
+        failed_route_probe_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_route_probe_report=route_probe_status_failed,
+        )
+        if failed_route_probe_report["release_blocking_gates"] != report["release_blocking_gates"]:
+            raise AssertionError("route probe handoff must not change release-blocking gates")
+        failed_route_probe_markdown = render_markdown_report(failed_route_probe_report)
+        if "FAIL-TRIAGE" not in failed_route_probe_markdown or "not release evidence" not in failed_route_probe_markdown:
+            raise AssertionError("expected failed route probe to stay non-evidentiary in Markdown")
+        if "source:recording_too_quiet" not in failed_route_probe_markdown or "headphone:reference_distorted" not in failed_route_probe_markdown:
+            raise AssertionError("expected failed route probe handoff to include blocking reasons")
+        passed_route_probe_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_route_probe_report=route_probe_status_passed,
+        )
+        passed_route_probe_markdown = render_markdown_report(passed_route_probe_report)
+        if "PASS-TRIAGE" not in passed_route_probe_markdown or "not release evidence" not in passed_route_probe_markdown:
+            raise AssertionError("expected passing route probe to remain triage-only")
+        wrong_route_probe_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_route_probe_report=route_probe_status_wrong_fixture,
+        )
+        wrong_route_probe_markdown = render_markdown_report(wrong_route_probe_report)
+        if "INVALID" not in wrong_route_probe_markdown or "fixture_kind is not headphone route probe" not in wrong_route_probe_markdown:
+            raise AssertionError("wrong route probe fixture kind must render invalid")
+        missing_benchmark_summary_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_route_probe_report=route_probe_status_missing_benchmark_summary,
+        )
+        missing_benchmark_summary_markdown = render_markdown_report(missing_benchmark_summary_report)
+        if "PASS-TRIAGE" in missing_benchmark_summary_markdown or "route probe benchmark summary is missing" not in missing_benchmark_summary_markdown:
+            raise AssertionError("route probe with missing benchmark summary must render invalid")
+        combined_all_handoff_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_manual_status_report=manual_status_not_ready,
+            headphone_preflight_report=preflight_status_unconfirmed,
+            headphone_route_probe_report=route_probe_status_failed,
+        )
+        combined_all_handoff = combined_all_handoff_report.get("operator_handoff", {})
+        if not (
+            isinstance(combined_all_handoff, dict)
+            and "headphone_manual_status" in combined_all_handoff
+            and "headphone_preflight_status" in combined_all_handoff
+            and "headphone_route_probe_status" in combined_all_handoff
+        ):
+            raise AssertionError("expected report JSON to keep manual, preflight, and route probe handoffs")
         not_ready_report = build_report(
             release_results,
             prototype_results,
@@ -4959,6 +5393,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--room-suppression-report", type=Path, default=DEFAULT_ROOM_SUPPRESSION_REPORT)
     parser.add_argument("--headphone-isolation-report", type=Path, default=DEFAULT_HEADPHONE_ISOLATION_REPORT)
     parser.add_argument("--headphone-preflight-report", type=Path, default=DEFAULT_HEADPHONE_PREFLIGHT_REPORT)
+    parser.add_argument("--headphone-route-probe-report", type=Path, default=DEFAULT_HEADPHONE_ROUTE_PROBE_REPORT)
     parser.add_argument("--headphone-manual-status-report", type=Path, default=DEFAULT_HEADPHONE_MANUAL_STATUS_REPORT)
     parser.add_argument("--playback-prototype-report", type=Path, default=DEFAULT_PLAYBACK_PROTOTYPE_REPORT)
     parser.add_argument("--capture-prototype-report", type=Path, default=DEFAULT_CAPTURE_PROTOTYPE_REPORT)
@@ -4978,6 +5413,7 @@ def main(argv: list[str] | None = None) -> int:
         prototype_results,
         headphone_manual_status_report=args.headphone_manual_status_report,
         headphone_preflight_report=args.headphone_preflight_report,
+        headphone_route_probe_report=args.headphone_route_probe_report,
     )
     write_report(report, args.report)
     write_markdown_report(report, args.markdown_report)
