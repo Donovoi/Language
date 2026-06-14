@@ -407,6 +407,21 @@ CATEGORIES: dict[str, Category] = {
             "The printed command plays/records a short probe and remains release_proof=false.",
         ),
     ),
+    "physical-audio-handoff": Category(
+        name="physical-audio-handoff",
+        description="One-command host-audio route, manual kit, and release checklist handoff.",
+        steps=(
+            "headphone-local-preflight",
+            "headphone-route-triage-handoff",
+            "headphone-isolation-collect-evidence",
+            "headphone-isolation-check-manual",
+            "release-audio-status",
+        ),
+        notes=(
+            "Does not play probe audio, record audio, or score placeholder labels.",
+            "Use before a hardware session to refresh the checklist and raw WAV dropbox.",
+        ),
+    ),
     "evidence-kit": Category(
         name="evidence-kit",
         description="Prepare/check the manual listener-ear recording kit and raw WAV dropbox.",
