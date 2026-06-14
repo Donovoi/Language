@@ -30,6 +30,7 @@ class Step:
     name: str
     description: str
     local_args: tuple[str, ...] = ()
+    powershell_args: tuple[str, ...] = ()
     target: str = ""
     target_args: tuple[str, ...] = ()
     make_env: dict[str, str] = field(default_factory=dict)
@@ -150,6 +151,15 @@ STEPS: dict[str, Step] = {
     "core-check": Step(
         name="core-check",
         description="repo contract, Rust, gateway, and Flutter/core checks",
+        powershell_args=(
+            "pwsh",
+            "-NoProfile",
+            "-File",
+            "scripts/check_local.ps1",
+            "-UseExistingGatewayVenv",
+            "-Python",
+            "{env:LANGUAGE_CORE_PYTHON:services\\gateway\\.venv\\Scripts\\python.exe}",
+        ),
         target="check",
     ),
     "audio-eval-build": Step(
@@ -594,10 +604,14 @@ def command_for_step(step: Step, runner: str) -> tuple[list[str], dict[str, str]
     if step.is_local:
         return expand_arg_templates(step.local_args), {}
     if not step.target:
-        raise ValueError(f"step {step.name} has no local_args or target")
+        if runner == "powershell" and step.powershell_args:
+            return expand_arg_templates(step.powershell_args), {}
+        raise ValueError(f"step {step.name} has no local_args, powershell_args, or target")
     if runner == "make":
         return ["make", step.target], dict(step.make_env)
     if runner == "powershell":
+        if step.powershell_args:
+            return expand_arg_templates(step.powershell_args), {}
         return [
             "pwsh",
             "-NoProfile",

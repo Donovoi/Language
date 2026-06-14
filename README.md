@@ -91,7 +91,7 @@ Common categories:
 | --- | --- | --- |
 | `quick` | Fast local contract sanity checks | No Docker, model downloads, or hardware access. |
 | `contracts` | Audio/report contract self-tests | Still local and hardware-free. |
-| `core` | Repository contract, Rust, gateway, and app checks | Uses `make check` or the Windows wrapper. |
+| `core` | Repository contract, Rust, gateway, and app checks | Uses `make check` or `scripts/check_local.ps1`. |
 | `audio-fixtures` | Disposable Docker audio fixtures | Capture, translation, playback, fallback TTS. |
 | `hardware` | Host audio discovery and listener-ear planning | Run deliberately when testing devices. |
 | `route-triage` | Host headphone route preflight and probe handoff | Prints the probe command; does not run it. |
