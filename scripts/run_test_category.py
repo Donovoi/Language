@@ -53,6 +53,16 @@ STEPS: dict[str, Step] = {
         description="release gate parser/report contract self-test",
         local_args=("{python}", "scripts/release_audio_gate.py", "--self-test"),
     ),
+    "release-audio-status-self-test": Step(
+        name="release-audio-status-self-test",
+        description="compact release status summary contract self-test",
+        local_args=("{python}", "scripts/release_audio_status.py", "--self-test"),
+    ),
+    "release-audio-status": Step(
+        name="release-audio-status",
+        description="compact release gate blocker and next-action summary",
+        local_args=("{python}", "scripts/release_audio_status.py"),
+    ),
     "live-microphone-capture-contract": Step(
         name="live-microphone-capture-contract",
         description="live microphone artifact/scorer contract self-test",
@@ -258,6 +268,7 @@ CATEGORIES: dict[str, Category] = {
         description="Fast local sanity checks; no Docker, no model download, no hardware access.",
         steps=(
             "release-audio-gate-self-test",
+            "release-audio-status-self-test",
             "live-microphone-capture-contract",
             "headphone-isolation-contract",
             "real-room-playback-contract",
@@ -268,6 +279,7 @@ CATEGORIES: dict[str, Category] = {
         description="All local audio/report contract self-tests; no Docker or physical hardware.",
         steps=(
             "release-audio-gate-self-test",
+            "release-audio-status-self-test",
             "live-microphone-capture-contract",
             "headphone-isolation-contract",
             "real-room-playback-contract",
@@ -367,6 +379,15 @@ CATEGORIES: dict[str, Category] = {
         name="release",
         description="Strict release gate status. A nonzero exit means release evidence is still missing or failing.",
         steps=("release-audio-gate",),
+    ),
+    "release-status": Category(
+        name="release-status",
+        description="Compact release status and next-action handoff. Exits zero unless the wrapper fails.",
+        steps=("release-audio-status",),
+        notes=(
+            "Use release for the strict nonzero release gate.",
+            "Use release-status in low-token agent handoffs.",
+        ),
     ),
     "all": Category(
         name="all",
