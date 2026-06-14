@@ -103,6 +103,9 @@ def _preflight_lines(report: dict[str, Any]) -> list[str]:
         f"external_inputs={int(preflight.get('likely_external_input_count', 0) or 0)}",
     ]
     lines.append("Routes: " + ", ".join(route_counts))
+    candidate_summary = _preflight_candidate_summary(preflight)
+    if candidate_summary:
+        lines.append(f"Suggested current route: {candidate_summary}")
     next_step = str(preflight.get("next_step", "")).strip()
     if next_step:
         lines.append(f"Next: {next_step}")
@@ -110,6 +113,38 @@ def _preflight_lines(report: dict[str, Any]) -> list[str]:
     if path:
         lines.append(f"Report: {_repo_relative(path)}")
     return lines
+
+
+def _preflight_candidate_device_label(candidate: dict[str, Any], role: str) -> str:
+    if role == "input":
+        index_key = "input_device"
+        name_key = "input_name"
+        hostapi_key = "input_hostapi_name"
+    elif role == "source":
+        index_key = "source_output_device"
+        name_key = "source_name"
+        hostapi_key = "source_hostapi_name"
+    else:
+        index_key = "headphone_output_device"
+        name_key = "headphone_name"
+        hostapi_key = "headphone_hostapi_name"
+
+    name = str(candidate.get(name_key, "")).strip() or "unknown"
+    index = str(candidate.get(index_key, "")).strip()
+    hostapi = str(candidate.get(hostapi_key, "")).strip()
+    details = [value for value in (f"index={index}" if index else "", hostapi) if value]
+    return f"{name} ({', '.join(details)})" if details else name
+
+
+def _preflight_candidate_summary(preflight: dict[str, Any]) -> str:
+    candidate = _as_dict(preflight.get("selected_candidate")) or _as_dict(preflight.get("displayed_candidate"))
+    if not candidate:
+        return ""
+    return (
+        f"input={_preflight_candidate_device_label(candidate, 'input')}; "
+        f"source={_preflight_candidate_device_label(candidate, 'source')}; "
+        f"headphone={_preflight_candidate_device_label(candidate, 'headphone')}"
+    )
 
 
 def _route_device_label(device: dict[str, Any]) -> str:
@@ -236,6 +271,8 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
     probe = _as_dict(handoff.get("headphone_route_probe_status"))
     route = _as_dict(probe.get("device_route"))
     stale_reason = _route_probe_stale_reason(report)
+    preflight = _as_dict(handoff.get("headphone_preflight_status"))
+    preflight_candidate_summary = _preflight_candidate_summary(preflight)
 
     lines = [
         "# Physical Audio Test Checklist",
@@ -271,6 +308,11 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
                 f"- Probe status: `{(stale_reason.split(':', 1)[0] + '-TRIAGE') if stale_reason else probe.get('status', 'unknown')}`",
             ]
         )
+        if preflight_candidate_summary:
+            lines.append(f"- Fresh preflight candidate: {preflight_candidate_summary}")
+            lines.append(
+                "- Use `python scripts/run_test_category.py route-triage` to refresh this candidate before route diagnostics."
+            )
         if stale_reason:
             lines.append(
                 f"- Probe freshness: {stale_reason}; rerun `python scripts/run_test_category.py route-triage` before trusting these device IDs."
@@ -557,6 +599,17 @@ def self_test() -> int:
                 "likely_external_input_count": 0,
                 "next_step": "Confirm a listener-ear input or use manual recordings.",
                 "markdown_path": "artifacts/audio_eval/runs/preflight/headphone-preflight-report.md",
+                "displayed_candidate": {
+                    "input_device": "11",
+                    "input_name": "Input (SoundWire Microphone)",
+                    "input_hostapi_name": "Windows WDM-KS",
+                    "source_output_device": "12",
+                    "source_name": "Output 1 (SoundWire Speaker)",
+                    "source_hostapi_name": "Windows WDM-KS",
+                    "headphone_output_device": "10",
+                    "headphone_name": "Headphones ()",
+                    "headphone_hostapi_name": "Windows WDM-KS",
+                },
             },
             "headphone_route_probe_status": {
                 "status": "FAIL-TRIAGE",
@@ -614,6 +667,8 @@ def self_test() -> int:
         "Host audio preflight:",
         "NEEDS-PHYSICAL-INPUT-CONFIRMATION",
         "capture_ready=1",
+        "Suggested current route:",
+        "Input (SoundWire Microphone)",
         "Route probe:",
         "FAIL-TRIAGE",
         "source:reference_not_detected",
@@ -667,6 +722,8 @@ def self_test() -> int:
         f"- Manual recording status: `{expected_manual_status}`",
         f"- Score report target: `{expected_score_report}`",
         "python scripts/run_test_category.py route-triage",
+        "Fresh preflight candidate:",
+        "Output 1 (SoundWire Speaker)",
         "python scripts/run_test_category.py release-evidence-score",
         "route probes and virtual labs stay `release_proof=false`",
     ):
