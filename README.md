@@ -92,6 +92,7 @@ Common categories:
 | `core` | Repository contract, Rust, gateway, and app checks | Uses `make check` or the Windows wrapper. |
 | `audio-fixtures` | Disposable Docker audio fixtures | Capture, translation, playback, fallback TTS. |
 | `hardware` | Host audio discovery and listener-ear planning | Run deliberately when testing devices. |
+| `route-triage` | Host headphone route preflight and probe handoff | Prints the probe command; does not run it. |
 | `evidence-kit` | Manual listener-ear recording kit/dropbox | Creates/checks the folder for the three release WAVs. |
 | `recording-status` | Listener-ear WAV readiness | Use after adding the three manual recordings. |
 | `release-evidence` | One-command listener-ear evidence handoff | Prepare/import/check the kit, then print release status. |
@@ -122,6 +123,12 @@ to point it at a specific interpreter.
 A laptop built-in mic and speakers are useful for route triage. Release evidence still needs real
 listener-ear recordings: open-ear source, isolated source, and translated headphone playback from the
 same listener-ear position. See `docs/development/headphone-isolation-release-runbook.md`.
+
+To refresh preflight and print a deliberate non-release route probe command:
+
+```powershell
+python scripts/run_test_category.py route-triage
+```
 
 Prepare/check the manual recording kit, import any complete dropbox WAVs, and print release status:
 

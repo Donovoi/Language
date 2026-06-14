@@ -33,6 +33,7 @@ Use `--dry-run` to inspect the command plan. By default, full output goes to
 | `voice-candidates` | Same-voice candidate validation plus optional SpeechBrain ASV scoring. | Generating candidate audio. Requires candidate artifacts. |
 | `optional-models` | Pyannote, Sortformer, Whisper, WeSep, and causal bridge baselines. | Hardware capture. Some steps need `HF_TOKEN` and accepted model terms. |
 | `hardware` | Host device listing, listener-ear route preflight, and virtual listener-ear lab. | Release proof. Run physical capture/score commands from the runbook when ready. |
+| `route-triage` | Refresh host headphone preflight and print the deliberate route-probe command. | The printed command is not run automatically; if run, it plays/records audio and remains non-release triage. |
 | `evidence-kit` | Manual listener-ear recording kit, readiness check, and raw WAV dropbox. | Audio playback/recording. Put the three exported WAVs in the dropbox, then rerun. |
 | `recording-status` | Readiness check for the three manual listener-ear WAVs. | Playback, recording, scoring, or release proof. |
 | `release-evidence` | Prepare/import/check the manual listener-ear kit, then print compact release status. | Audio playback/recording, placeholder-label scoring, or release proof. |
@@ -64,6 +65,7 @@ Before release review:
 
 ```bash
 python3 scripts/run_test_category.py all --continue-on-failure
+python3 scripts/run_test_category.py route-triage
 python3 scripts/run_test_category.py release-evidence
 python3 scripts/run_test_category.py release
 ```
