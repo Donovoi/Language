@@ -63,6 +63,7 @@ python3 scripts/run_test_category.py quick
 python3 scripts/run_test_category.py list
 python3 scripts/run_test_category.py release-status
 python3 scripts/run_test_category.py release-progress
+python3 scripts/run_test_category.py smoke-local
 python3 scripts/run_test_category.py all
 ```
 
@@ -73,6 +74,7 @@ pwsh -NoProfile -File scripts/dev_container.ps1 test-category quick
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category list
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-status
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-progress
+pwsh -NoProfile -File scripts/dev_container.ps1 test-category smoke-local
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category all
 ```
 
@@ -92,6 +94,7 @@ Common categories:
 | `quick` | Fast local contract sanity checks | No Docker, model downloads, or hardware access. |
 | `contracts` | Audio/report contract self-tests | Still local and hardware-free. |
 | `core` | Repository contract, Rust, gateway, and app checks | Uses `make check` or `scripts/check_local.ps1`. |
+| `smoke-local` | Local gateway smoke baseline | Verifies health, session, and SSE demo endpoints. |
 | `audio-fixtures` | Disposable Docker audio fixtures | Capture, translation, playback, fallback TTS. |
 | `hardware` | Host audio discovery and listener-ear planning | Run deliberately when testing devices. |
 | `route-triage` | Host headphone route preflight and probe handoff | Prints the probe command; does not run it. |

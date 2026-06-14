@@ -7,6 +7,7 @@ python3 scripts/run_test_category.py list
 python3 scripts/run_test_category.py quick
 python3 scripts/run_test_category.py release-status
 python3 scripts/run_test_category.py release-progress
+python3 scripts/run_test_category.py smoke-local
 python3 scripts/run_test_category.py all
 ```
 
@@ -17,6 +18,7 @@ pwsh -NoProfile -File scripts/dev_container.ps1 test-category list
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category quick
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-status
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-progress
+pwsh -NoProfile -File scripts/dev_container.ps1 test-category smoke-local
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category all
 ```
 
@@ -31,6 +33,7 @@ Use `--dry-run` to inspect the command plan. By default, full output goes to
 | `quick` | Local contract sanity checks for release-gate, live-capture, headphone isolation, and real-room playback reports. | Docker, model downloads, hardware capture, release gate. |
 | `contracts` | All local audio/report contract self-tests. | Docker, model downloads, hardware capture, release gate. |
 | `core` | The repository core check path: `make check` on Make runners or `scripts/check_local.ps1` on PowerShell. | Audio model profiles and physical audio evidence. |
+| `smoke-local` | Local gateway smoke baseline for `/health`, `/v1/session`, and deterministic SSE. | Flutter UI, audio fixtures, or physical release proof. |
 | `audio-fixtures` | Disposable Docker audio fixtures for deterministic overlap, real-speech smoke, crowd-noise fixture, translation, capture replay, playback/suppression fixture, and fallback TTS. | Hardware capture, optional large model baselines, release gate. |
 | `voice-candidates` | Same-voice candidate validation plus optional SpeechBrain ASV scoring. | Generating candidate audio. Requires candidate artifacts. |
 | `optional-models` | Pyannote, Sortformer, Whisper, WeSep, and causal bridge baselines. | Hardware capture. Some steps need `HF_TOKEN` and accepted model terms. |
@@ -86,6 +89,7 @@ Use `release-evidence-score` after the WAVs are present and these environment va
 labels: `LANGUAGE_HEADPHONE_DEVICE_LABEL`, `LANGUAGE_ISOLATION_FIXTURE_LABEL`, and
 `LANGUAGE_MEASUREMENT_MICROPHONE_LABEL`.
 Use `release-progress` after pushes when you need reproducible milestone percentages.
+Use `smoke-local` to produce the log artifact that backs the release smoke progress estimate.
 Use `python3 scripts/release_audio_status.py --full-commands` when you need the detailed hardware
 command list in the terminal.
 On Windows, `core` defaults to `services\gateway\.venv\Scripts\python.exe` to avoid unsupported

@@ -165,6 +165,11 @@ STEPS: dict[str, Step] = {
         ),
         target="check",
     ),
+    "smoke-local-demo": Step(
+        name="smoke-local-demo",
+        description="local gateway demo smoke for health/session/SSE",
+        local_args=("pwsh", "-NoProfile", "-File", "scripts/smoke_local_demo.ps1"),
+    ),
     "audio-eval-build": Step(
         name="audio-eval-build",
         description="build the disposable audio-eval Docker image",
@@ -401,6 +406,15 @@ CATEGORIES: dict[str, Category] = {
         ),
         notes=("May download small public datasets the first time it runs.",),
     ),
+    "smoke-local": Category(
+        name="smoke-local",
+        description="Fast local gateway demo smoke for health, session, and SSE baseline.",
+        steps=("smoke-local-demo",),
+        notes=(
+            "Starts a temporary gateway if the configured port is free.",
+            "Use GATEWAY_PORT when 8000 is already occupied.",
+        ),
+    ),
     "voice-candidates": Category(
         name="voice-candidates",
         description="Validate generated same-voice candidate artifacts and optional ASV scoring.",
@@ -538,8 +552,8 @@ CATEGORIES: dict[str, Category] = {
     ),
     "all": Category(
         name="all",
-        description="All automated non-interactive suites: quick, core, and Docker audio fixtures.",
-        includes=("quick", "core", "audio-fixtures"),
+        description="All automated non-interactive suites: quick, core, local smoke, and Docker audio fixtures.",
+        includes=("quick", "core", "smoke-local", "audio-fixtures"),
         notes=(
             "Excludes hardware, release, optional-models, and artifact-dependent voice-candidates.",
             "Run those categories explicitly when you have devices, tokens, or candidate artifacts ready.",

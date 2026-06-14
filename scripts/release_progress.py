@@ -49,6 +49,13 @@ def _file_has_text(path: str, text: str) -> bool:
     return candidate.exists() and text in candidate.read_text(encoding="utf-8", errors="replace")
 
 
+def _smoke_local_passed() -> bool:
+    return _file_has_text(
+        "artifacts/test-categories/smoke-local/01-smoke-local-demo.log",
+        "Local demo smoke check passed",
+    )
+
+
 def _run_release_gate() -> dict[str, Any]:
     result = subprocess.run(
         [sys.executable, str(RELEASE_GATE_SCRIPT), "--json"],
@@ -111,6 +118,7 @@ def build_progress(report: dict[str, Any]) -> dict[str, Any]:
     checklist_ready = (ROOT / "artifacts/release/physical-audio-checklist.md").exists()
     flutter_path = _resolve_flutter()
     flutter_ready = flutter_path is not None
+    smoke_ready = _smoke_local_passed()
     auth_tests_ready = _file_has_text("services/gateway/tests/test_gateway.py", "test_read_endpoints_remain_auth_free")
     auth_runtime_ready = _file_has_text("services/gateway/app/auth.py", "require_write_token")
     category_runner_ready = _file_has_text("scripts/run_test_category.py", "physical-audio-handoff")
@@ -127,9 +135,17 @@ def build_progress(report: dict[str, Any]) -> dict[str, Any]:
         Milestone(
             "release_smoke_artifacts",
             "Release smoke + artifact readiness",
-            100 if release_reports_exist and checklist_ready and flutter_ready else 95 if release_reports_exist and checklist_ready else 90,
+            100
+            if release_reports_exist and checklist_ready and flutter_ready and smoke_ready
+            else 98
+            if release_reports_exist and checklist_ready and flutter_ready
+            else 95
+            if release_reports_exist and checklist_ready
+            else 90,
             0.12,
-            f"release reports, physical checklist, and Flutter host are ready ({flutter_path})"
+            f"release reports, physical checklist, Flutter host, and local smoke are ready ({flutter_path})"
+            if release_reports_exist and checklist_ready and flutter_ready and smoke_ready
+            else f"release reports, physical checklist, and Flutter host are ready; local smoke category has not passed ({flutter_path})"
             if release_reports_exist and checklist_ready and flutter_ready
             else "release reports/checklist exist; Flutter is not on PATH for local app validation"
             if release_reports_exist and checklist_ready
