@@ -325,6 +325,33 @@ def _detailed_recommended_commands(report: dict[str, Any]) -> list[str]:
     return rendered
 
 
+def _preflight_next_actions(report: dict[str, Any]) -> list[str]:
+    handoff = _as_dict(report.get("operator_handoff"))
+    preflight = _as_dict(handoff.get("headphone_preflight_status"))
+    if not preflight:
+        return ["Run: python scripts/run_test_category.py route-triage"]
+
+    status = str(preflight.get("status", "")).strip()
+    if status == "READY-FOR-GUIDED-CAPTURE":
+        return [
+            "Run: python scripts/run_test_category.py guided-capture --dry-run",
+            "Run: python scripts/run_test_category.py guided-capture",
+        ]
+    if status == "NEEDS-PHYSICAL-INPUT-CONFIRMATION":
+        return [
+            "For host capture, place a real listener-ear input, rerun the generated selected-route preflight, then dry-run guided-capture.",
+            "If you cannot confirm a listener-ear input, use the manual recorder WAV path below.",
+        ]
+    if status == "TRIAGE-ONLY":
+        return [
+            "Current host route is triage-only; use the printed probe command only for diagnostics.",
+            "For release evidence, connect a real listener-ear mic or use the manual recorder WAV path below.",
+        ]
+    if status in {"MISSING", "UNREADABLE"}:
+        return ["Run: python scripts/run_test_category.py route-triage"]
+    return []
+
+
 def _compact_next_actions(report: dict[str, Any]) -> list[str]:
     handoff = _as_dict(report.get("operator_handoff"))
     manual = _as_dict(handoff.get("headphone_manual_status"))
@@ -334,19 +361,20 @@ def _compact_next_actions(report: dict[str, Any]) -> list[str]:
     dropbox_path = str(dropbox.get("path", "")).strip()
     missing = [str(item) for item in _as_list(dropbox_state.get("missing_recordings"))]
     status = str(manual.get("status", "")).strip()
+    preflight_actions = _preflight_next_actions(report)
 
     if status == "SCORE-READY":
         return [
-            "Run: python scripts/run_test_category.py release-evidence",
+            "Run: python scripts/run_test_category.py release-evidence-score",
             "Run: python scripts/run_test_category.py release",
         ]
     if status == "FILES-READY-LABELS-PENDING":
         return [
             "Replace REPLACE_WITH_* labels with concrete hardware/fixture labels.",
-            "Run: python scripts/run_test_category.py release-evidence",
+            "Run: python scripts/run_test_category.py release-evidence-score",
         ]
 
-    actions = ["Run: python scripts/run_test_category.py release-evidence"]
+    actions = [*preflight_actions, "Run: python scripts/run_test_category.py release-evidence"]
     if dropbox_path and missing:
         missing_text = ", ".join(missing)
         actions.append(f"Record/export missing WAVs into {_repo_relative(dropbox_path)}: {missing_text}")
@@ -537,6 +565,8 @@ def self_test() -> int:
         "Route probe:",
         "FAIL-TRIAGE",
         "source:reference_not_detected",
+        "generated selected-route preflight",
+        "manual recorder WAV path",
         "Detractor check:",
     ]
     for text in required:
@@ -544,6 +574,19 @@ def self_test() -> int:
             raise AssertionError(f"missing rendered text: {text}")
     if "prepare command" in rendered or "release command" in rendered:
         raise AssertionError("compact status should not render detailed hardware commands")
+
+    triage_report = json.loads(json.dumps(failed_report))
+    triage_report["operator_handoff"]["headphone_preflight_status"].update(
+        {
+            "status": "TRIAGE-ONLY",
+            "recommended_path": "route_probe_triage_only_manual_listener_ear_capture_required",
+            "capture_ready_route_triple_count": 0,
+        }
+    )
+    triage_rendered = render_status(triage_report, gate_returncode=1)
+    for text in ("Current host route is triage-only", "real listener-ear mic"):
+        if text not in triage_rendered:
+            raise AssertionError(f"missing triage next-action text: {text}")
 
     detailed = render_status(failed_report, gate_returncode=1, full_commands=True)
     for text in ("Next commands:", "prepare command", "release command"):
