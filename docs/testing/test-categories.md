@@ -34,6 +34,7 @@ Use `--dry-run` to inspect the command plan. By default, full output goes to
 | `optional-models` | Pyannote, Sortformer, Whisper, WeSep, and causal bridge baselines. | Hardware capture. Some steps need `HF_TOKEN` and accepted model terms. |
 | `hardware` | Host device listing, listener-ear route preflight, and virtual listener-ear lab. | Release proof. Run physical capture/score commands from the runbook when ready. |
 | `route-triage` | Refresh host headphone preflight and print the deliberate route-probe command. | The printed command is not run automatically; if run, it plays/records audio and remains non-release triage. |
+| `physical-audio-handoff` | Refresh route triage, prepare/check the manual kit, and write the physical-audio checklist. | Audio playback/recording, scoring, or release proof. |
 | `evidence-kit` | Manual listener-ear recording kit, readiness check, and raw WAV dropbox. | Audio playback/recording. Put the three exported WAVs in the dropbox, then rerun. |
 | `recording-status` | Readiness check for the three manual listener-ear WAVs. | Playback, recording, scoring, or release proof. |
 | `release-evidence` | Prepare/import/check the manual listener-ear kit, then print compact release status. | Audio playback/recording, placeholder-label scoring, or release proof. |
@@ -65,8 +66,7 @@ Before release review:
 
 ```bash
 python3 scripts/run_test_category.py all --continue-on-failure
-python3 scripts/run_test_category.py route-triage
-python3 scripts/run_test_category.py release-evidence
+python3 scripts/run_test_category.py physical-audio-handoff
 python3 scripts/run_test_category.py release
 ```
 
@@ -74,6 +74,8 @@ The `release` category is allowed to fail when the operator handoff says physica
 missing. Do not treat fixture-only passes as source-suppression release proof.
 Use `release-status` first when you only need the current blocker and the next commands without a
 large JSON or Markdown handoff.
+Use `physical-audio-handoff` before a hardware session when you want route triage, the manual kit,
+readiness status, and `artifacts/release/physical-audio-checklist.md` refreshed together.
 Use `release-evidence` when you want the listener-ear kit prepared, current WAV dropbox imported if
 complete, readiness checked, and the compact status printed in one pass.
 Use `python3 scripts/release_audio_status.py --full-commands` when you need the detailed hardware

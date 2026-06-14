@@ -93,6 +93,7 @@ Common categories:
 | `audio-fixtures` | Disposable Docker audio fixtures | Capture, translation, playback, fallback TTS. |
 | `hardware` | Host audio discovery and listener-ear planning | Run deliberately when testing devices. |
 | `route-triage` | Host headphone route preflight and probe handoff | Prints the probe command; does not run it. |
+| `physical-audio-handoff` | Current host route, manual kit, and checklist | Best first command before a hardware session. |
 | `evidence-kit` | Manual listener-ear recording kit/dropbox | Creates/checks the folder for the three release WAVs. |
 | `recording-status` | Listener-ear WAV readiness | Use after adding the three manual recordings. |
 | `release-evidence` | One-command listener-ear evidence handoff | Prepare/import/check the kit, then print release status. |
@@ -128,6 +129,13 @@ To refresh preflight and print a deliberate non-release route probe command:
 
 ```powershell
 python scripts/run_test_category.py route-triage
+```
+
+Before a physical recording session, refresh route triage, prepare/check the kit, and write the
+current checklist:
+
+```powershell
+python scripts/run_test_category.py physical-audio-handoff
 ```
 
 Prepare/check the manual recording kit, import any complete dropbox WAVs, and print release status:
