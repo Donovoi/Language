@@ -68,6 +68,34 @@ STEPS: dict[str, Step] = {
         description="compact release gate blocker and next-action summary",
         local_args=("{python}", "scripts/release_audio_status.py"),
     ),
+    "headphone-route-triage-handoff-self-test": Step(
+        name="headphone-route-triage-handoff-self-test",
+        description="headphone route-triage handoff contract self-test",
+        local_args=("{python}", "scripts/headphone_route_triage_handoff.py", "--self-test"),
+    ),
+    "headphone-local-preflight": Step(
+        name="headphone-local-preflight",
+        description="host-local no-audio headphone route preflight",
+        local_args=(
+            "pwsh",
+            "-NoProfile",
+            "-File",
+            "scripts/headphone_isolation_local.ps1",
+            "-Action",
+            "preflight",
+            "--sample-rate-hz",
+            "48000",
+            "--input-channels",
+            "1",
+            "--output-channels",
+            "2",
+        ),
+    ),
+    "headphone-route-triage-handoff": Step(
+        name="headphone-route-triage-handoff",
+        description="print the deliberate non-release route-probe command from preflight",
+        local_args=("{python}", "scripts/headphone_route_triage_handoff.py"),
+    ),
     "live-microphone-capture-contract": Step(
         name="live-microphone-capture-contract",
         description="live microphone artifact/scorer contract self-test",
@@ -275,6 +303,7 @@ CATEGORIES: dict[str, Category] = {
             "release-audio-gate-self-test",
             "release-audio-status-self-test",
             "gateway-package-verifier-self-test",
+            "headphone-route-triage-handoff-self-test",
             "live-microphone-capture-contract",
             "headphone-isolation-contract",
             "real-room-playback-contract",
@@ -287,6 +316,7 @@ CATEGORIES: dict[str, Category] = {
             "release-audio-gate-self-test",
             "release-audio-status-self-test",
             "gateway-package-verifier-self-test",
+            "headphone-route-triage-handoff-self-test",
             "live-microphone-capture-contract",
             "headphone-isolation-contract",
             "real-room-playback-contract",
@@ -363,6 +393,18 @@ CATEGORIES: dict[str, Category] = {
         notes=(
             "Preflight does not play or record audio.",
             "Physical release evidence still requires real listener-ear WAVs.",
+        ),
+    ),
+    "route-triage": Category(
+        name="route-triage",
+        description="Refresh host headphone preflight and print a deliberate non-release route probe.",
+        steps=(
+            "headphone-local-preflight",
+            "headphone-route-triage-handoff",
+        ),
+        notes=(
+            "Does not run the printed probe command automatically.",
+            "The printed command plays/records a short probe and remains release_proof=false.",
         ),
     ),
     "evidence-kit": Category(

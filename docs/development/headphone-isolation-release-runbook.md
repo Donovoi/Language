@@ -160,6 +160,12 @@ When a sweep or probe fails, use the diagnosis before changing hardware:
 Sweep uncertain routes first. This command is expected to produce a triage report; it is not release
 evidence, and `--score-warning-only` is acceptable here because the goal is to preserve diagnostics:
 
+To refresh preflight and print the current safest route-probe command without playing audio:
+
+```powershell
+python scripts/run_test_category.py route-triage
+```
+
 ```powershell
 $env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action sweep-routes -Python $env:LANGUAGE_PYTHON --triple 17:14:16 --sample-rate-hz 48000 --channel-config 1:2 --playback-gain-db -18 --score-warning-only
