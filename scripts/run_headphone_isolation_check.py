@@ -4593,9 +4593,27 @@ def render_manual_collection_markdown(plan: dict[str, Any]) -> str:
     lines.extend(
         [
             "",
+            "## Recommended Category Path",
+            "",
+            "Use these repo-level categories for the normal release-evidence flow. They keep logs under `artifacts/test-categories/` and avoid lower-level Python path setup.",
+            "",
+            "```powershell",
+            "python scripts/run_test_category.py release-evidence",
+            "```",
+            "",
+            "After the three listener-ear WAVs are in the raw dropbox, set concrete labels and score:",
+            "",
+            "```powershell",
+            "$env:LANGUAGE_HEADPHONE_DEVICE_LABEL = \"REPLACE_WITH_HEADPHONE_MODEL\"",
+            "$env:LANGUAGE_ISOLATION_FIXTURE_LABEL = \"REPLACE_WITH_EARCUP_AND_MIC_POSITION\"",
+            "$env:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL = \"REPLACE_WITH_MIC_MODEL_AND_POSITION\"",
+            "python scripts/run_test_category.py release-evidence-score",
+            "python scripts/run_test_category.py release",
+            "```",
+            "",
             "## Commands",
             "",
-            "Set concrete labels once, then run the relevant commands below:",
+            "Low-level commands are included for manual overrides and route debugging:",
             "",
             "```powershell",
             "$env:LANGUAGE_PYTHON = \"C:\\Path\\To\\python.exe\"",
@@ -6065,12 +6083,21 @@ def self_test() -> int:
             expected_path = str(expected_path)
             if expected_path not in collection_markdown or expected_path not in raw_dropbox_markdown:
                 raise RuntimeError(f"dropbox markdown should show the full concrete path for {key}")
+        recommended_index = collection_markdown.find("## Recommended Category Path")
+        commands_index = collection_markdown.find("## Commands")
+        if recommended_index < 0 or commands_index < 0 or recommended_index > commands_index:
+            raise RuntimeError("collection plan should show category-runner path before low-level commands")
         for expected_text in (
             "Headphone/Earpiece Evidence Collection Plan",
             "built-in laptop mic is not listener-ear proof",
             "Playback Route Suggestion",
             "Raw Recording Dropbox",
             "Auto-import ready",
+            "Recommended Category Path",
+            "python scripts/run_test_category.py release-evidence",
+            "python scripts/run_test_category.py release-evidence-score",
+            "python scripts/run_test_category.py release",
+            "Low-level commands are included for manual overrides",
             "play_references",
             "import_recordings",
             "release_audio_gate.py --json",
