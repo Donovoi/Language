@@ -158,6 +158,7 @@ make headphone-isolation-list-devices
 HEADPHONE_ISOLATION_PREFLIGHT_ARGS='--sample-rate-hz 48000 --input-channels 1 --output-channels 2' make headphone-isolation-preflight
 HEADPHONE_ISOLATION_SWEEP_ROUTES_ARGS='--triple LISTENER_EAR_INPUT:SOURCE_SPEAKER_OUTPUT:HEADPHONE_OUTPUT --sample-rate-hz 48000 --channel-config 1:2 --score-warning-only' make headphone-isolation-sweep-routes
 HEADPHONE_ISOLATION_PROBE_ROUTE_ARGS='--measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --sample-rate-hz 48000 --input-channels 1 --output-channels 2' make headphone-isolation-probe-route
+HEADPHONE_ISOLATION_COLLECT_EVIDENCE_ARGS='--sample-rate-hz 48000 --playback-gain-db -18' make headphone-isolation-collect-evidence
 HEADPHONE_ISOLATION_PREPARE_MANUAL_ARGS='--sample-rate-hz 48000 --playback-gain-db -18' make headphone-isolation-prepare-manual
 HEADPHONE_ISOLATION_IMPORT_MANUAL_ARGS='--source-open-ear-recording RAW_SOURCE_OPEN.wav --source-isolated-ear-recording RAW_SOURCE_ISOLATED.wav --translated-headphone-recording RAW_TRANSLATED.wav --allow-downmix' make headphone-isolation-import-manual
 HEADPHONE_ISOLATION_CHECK_MANUAL_ARGS='--score-warning-only' make headphone-isolation-check-manual
@@ -321,11 +322,16 @@ If you let `sweep-routes` try multiple sample rates or channel configs, copy the
 `summary.failure_summary` and each attempt's `diagnosis` before changing hardware; `gate:*` entries
 flag route-gate failures, `recording_too_quiet` means fix gain/placement first, and a loud route with
 `reference_not_detected` usually means Windows processing, route mismatch, or poor mic placement.
-If Bluetooth or Windows routing blocks guided capture, use `headphone-isolation-prepare-manual`
-instead. It writes `source-reference.wav`, `translated-playback-reference.wav`, and
-`manual-recording-manifest.json` plus a human-readable `manual-recording-checklist.md` under
-`artifacts/audio_eval/runs/headphone-earpiece-manual-kit/`; record the three expected listener-ear
-WAVs named in that manifest/checklist with a phone/USB mic. The optional
+If Bluetooth or Windows routing blocks guided capture, use `headphone-isolation-collect-evidence`
+as the one-command manual handoff. It prepares the manual kit, checks current recording readiness,
+optionally imports raw recorder WAVs when paths are supplied, and writes
+`headphone-evidence-collection-plan.json` plus `.md` under
+`artifacts/audio_eval/runs/headphone-earpiece-manual-kit/`. The wrapper remains
+`release_proof=false`; only the scored listener-ear report can satisfy the release gate.
+Under the hood, `headphone-isolation-prepare-manual` writes `source-reference.wav`,
+`translated-playback-reference.wav`, and `manual-recording-manifest.json` plus a human-readable
+`manual-recording-checklist.md`; record the three expected listener-ear WAVs named in that
+manifest/checklist with a phone/USB mic. The optional
 `headphone-isolation-play-manual` helper can play the exact manifest references through the source
 and headphone outputs while the external recorder is rolling; it requires explicit output devices
 unless you deliberately pass `--output-device` or `--allow-default-output`. Its

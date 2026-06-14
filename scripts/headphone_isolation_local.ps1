@@ -1,6 +1,6 @@
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("self-test", "list-devices", "preflight", "sweep-routes", "probe-route", "virtual-lab", "prepare-manual", "check-manual", "play-manual", "import-manual", "score-manual", "capture", "score")]
+    [ValidateSet("self-test", "list-devices", "preflight", "sweep-routes", "probe-route", "virtual-lab", "prepare-manual", "collect-headphone-evidence", "check-manual", "play-manual", "import-manual", "score-manual", "capture", "score")]
     [string]$Action = "self-test",
     [string]$Python = $(if ($env:PYTHON) { $env:PYTHON } else { "python" }),
     [string]$Venv = "",
@@ -129,6 +129,7 @@ function Get-RequiredPackages {
 
     $soundDeviceActions = @(
         "capture",
+        "collect-headphone-evidence",
         "list-devices",
         "play-manual",
         "preflight",

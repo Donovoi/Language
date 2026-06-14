@@ -41,6 +41,7 @@ Repository prep for the first internal beta release candidate based on the curre
 - Quiet headphone/earpiece route-probe failures now print a copy/pasteable same-route retry command in the release handoff so operators can test a cautious 6 dB gain increase without weakening release evidence gates.
 - Real-room route probes now emit structured blocking reasons/next actions, and the release handoff can summarize the current laptop mic/speaker route-probe diagnosis without treating it as release evidence.
 - Real-room route-probe scoring now records aligned-overlap fraction and rejects tiny edge alignments or stale reports missing that field, preventing wide lag windows from making distorted routes look artificially good.
+- `collect-headphone-evidence` now wraps manual headphone/earpiece kit prep, optional raw WAV import, readiness checks, score handoff, and release-gate commands into one non-evidentiary collection plan for the remaining source-suppression release blocker.
 
 #### Changed
 

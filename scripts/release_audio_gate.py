@@ -3018,13 +3018,14 @@ def _room_route_probe_derived_diagnosis(summary: dict[str, Any]) -> dict[str, An
         if diagnosis_reasons or diagnosis_actions:
             reasons = diagnosis_reasons
             actions = diagnosis_actions
-            overlap = _float_or_none(summary.get("route_probe_alignment_overlap_fraction"))
-            if overlap is None:
-                add_reason("alignment_overlap_missing")
-                add_action("regenerate the route probe with the current scorer so aligned-overlap is recorded")
-            elif overlap < 0.75:
-                add_reason("alignment_overlap_too_small")
-                add_action("keep enough recorded/reference overlap; do not trust wide-lag edge matches as route evidence")
+            if "stream_open_error" not in reasons and not _string_or_empty(summary.get("error")):
+                overlap = _float_or_none(summary.get("route_probe_alignment_overlap_fraction"))
+                if overlap is None:
+                    add_reason("alignment_overlap_missing")
+                    add_action("regenerate the route probe with the current scorer so aligned-overlap is recorded")
+                elif overlap < 0.75:
+                    add_reason("alignment_overlap_too_small")
+                    add_action("keep enough recorded/reference overlap; do not trust wide-lag edge matches as route evidence")
             return {"blocking_reasons": reasons, "next_actions": actions}
 
     error = _string_or_empty(summary.get("error"))
@@ -4703,6 +4704,7 @@ def self_test() -> None:
         room_route_probe_status_passed = root / "room-route-probe-report-passed.json"
         room_route_probe_status_tiny_overlap = root / "room-route-probe-report-tiny-overlap.json"
         room_route_probe_status_missing_overlap = root / "room-route-probe-report-missing-overlap.json"
+        room_route_probe_status_stream_error = root / "room-route-probe-report-stream-error.json"
         room_route_probe_status_quiet_clipped = root / "room-route-probe-report-quiet-clipped.json"
         room_route_probe_status_wrong_fixture = root / "room-route-probe-report-wrong-fixture.json"
         room_route_probe_status_wrong_nested_release = root / "room-route-probe-report-wrong-nested-release.json"
@@ -5010,6 +5012,22 @@ def self_test() -> None:
                 "route_probe_reference_confidence": 0.50,
                 "route_probe_reference_distortion_db": 8.0,
             },
+        )
+        _write_room_route_probe_status_report(
+            room_route_probe_status_stream_error,
+            summary_overrides={
+                "all_artifact_hashes_present": False,
+                "device_path_identity_recorded": False,
+                "error": "Error opening Stream: Illegal combination of I/O devices",
+                "route_failure_diagnosis": {
+                    "blocking_reasons": ["stream_open_error"],
+                    "next_actions": [
+                        "try a different PortAudio host API or explicit input/output device pair",
+                        "verify the selected output is unmuted and not reserved by another application",
+                    ],
+                },
+            },
+            omit_summary_keys={"route_probe_alignment_overlap_fraction"},
         )
         _write_room_route_probe_status_report(
             room_route_probe_status_quiet_clipped,
@@ -5982,6 +6000,16 @@ def self_test() -> None:
             raise AssertionError("expected missing-overlap real-room route probe handoff to request regeneration")
         if "overlap=n/a" not in missing_overlap_room_route_probe_markdown:
             raise AssertionError("expected missing-overlap real-room route probe metric to render as n/a")
+        stream_error_room_route_probe_report = build_report(
+            release_results,
+            prototype_results,
+            room_route_probe_report=room_route_probe_status_stream_error,
+        )
+        stream_error_room_route_probe_markdown = render_markdown_report(stream_error_room_route_probe_report)
+        if "stream_open_error" not in stream_error_room_route_probe_markdown:
+            raise AssertionError("expected stream-open real-room route probe to render stream_open_error")
+        if "alignment_overlap_missing" in stream_error_room_route_probe_markdown:
+            raise AssertionError("stream-open real-room route probe must not add overlap-missing diagnosis")
         quiet_clipped_room_route_probe_report = build_report(
             release_results,
             prototype_results,

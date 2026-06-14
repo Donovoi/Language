@@ -37,6 +37,8 @@ DEFAULT_MANUAL_STATUS_MARKDOWN = "manual-recording-status.md"
 DEFAULT_MANUAL_CHECKLIST = "manual-recording-checklist.md"
 DEFAULT_MANUAL_PLAYBACK_LOG = "manual-playback-log.json"
 DEFAULT_MANUAL_IMPORT_LOG = "manual-import-log.json"
+DEFAULT_MANUAL_COLLECTION_PLAN = "headphone-evidence-collection-plan.json"
+DEFAULT_MANUAL_COLLECTION_MARKDOWN = "headphone-evidence-collection-plan.md"
 DEFAULT_ADAPTER_ID = "listener_headphone_earpiece_isolation_measurement_v1"
 DEFAULT_PREFLIGHT_ADAPTER_ID = "listener_headphone_earpiece_preflight_v1"
 DEFAULT_ROUTE_PROBE_ADAPTER_ID = "listener_headphone_earpiece_route_probe_v1"
@@ -4077,6 +4079,349 @@ def score_manual_recordings(args: argparse.Namespace) -> int:
     return score(score_args)
 
 
+def manual_collection_import_requested(args: argparse.Namespace) -> bool:
+    return any(
+        getattr(args, field, None) is not None
+        for field in (
+            "source_open_ear_recording",
+            "source_isolated_ear_recording",
+            "translated_headphone_recording",
+        )
+    )
+
+
+def manual_collection_import_ready(args: argparse.Namespace) -> bool:
+    return all(
+        getattr(args, field, None) is not None
+        for field in (
+            "source_open_ear_recording",
+            "source_isolated_ear_recording",
+            "translated_headphone_recording",
+        )
+    )
+
+
+def manual_collection_commands(
+    *,
+    args: argparse.Namespace,
+    manifest_path: Path,
+    score_report_path: Path,
+) -> dict[str, str]:
+    base = "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1"
+    python = "-Python $env:LANGUAGE_PYTHON"
+    manifest_arg = _powershell_quote(manifest_path)
+    score_report_arg = _powershell_quote(score_report_path)
+    source_route = getattr(args, "source_output_device", None) or "SOURCE_SPEAKER_OUTPUT"
+    headphone_route = getattr(args, "headphone_output_device", None) or "HEADPHONE_OUTPUT"
+    source_open = getattr(args, "source_open_ear_recording", None) or "RAW_SOURCE_OPEN.wav"
+    source_isolated = getattr(args, "source_isolated_ear_recording", None) or "RAW_SOURCE_ISOLATED.wav"
+    translated = getattr(args, "translated_headphone_recording", None) or "RAW_TRANSLATED.wav"
+    return {
+        "prepare": (
+            f"{base} -Action prepare-manual {python} "
+            f"--sample-rate-hz {int(args.sample_rate_hz)} --playback-gain-db {float(args.playback_gain_db):g}"
+        ),
+        "play_references": (
+            f"{base} -Action play-manual {python} --manifest {manifest_arg} "
+            f"--source-output-device {powershell_quote_arg(source_route)} "
+            f"--headphone-output-device {powershell_quote_arg(headphone_route)}"
+        ),
+        "import_recordings": (
+            f"{base} -Action import-manual {python} --manifest {manifest_arg} "
+            f"--source-open-ear-recording {powershell_quote_arg(source_open)} "
+            f"--source-isolated-ear-recording {powershell_quote_arg(source_isolated)} "
+            f"--translated-headphone-recording {powershell_quote_arg(translated)} --allow-downmix"
+        ),
+        "check_recordings": (
+            f"{base} -Action check-manual {python} --manifest {manifest_arg} "
+            "--headphone-device-label $headphoneLabel "
+            "--isolation-fixture-label $fixtureLabel "
+            "--measurement-microphone-label $microphoneLabel"
+        ),
+        "score_recordings": (
+            f"{base} -Action score-manual {python} --manifest {manifest_arg} "
+            "--headphone-device-label $headphoneLabel "
+            "--isolation-fixture-label $fixtureLabel "
+            "--measurement-microphone-label $microphoneLabel"
+        ),
+        "release_gate": f"python scripts/release_audio_gate.py --json --headphone-isolation-report {score_report_arg}",
+    }
+
+
+def render_manual_collection_markdown(plan: dict[str, Any]) -> str:
+    summary = plan.get("summary", {})
+    summary = summary if isinstance(summary, dict) else {}
+    commands = plan.get("recommended_commands", {})
+    commands = commands if isinstance(commands, dict) else {}
+    issues = [str(issue) for issue in plan.get("issues", []) if str(issue).strip()]
+    next_actions = [str(action) for action in plan.get("next_actions", []) if str(action).strip()]
+    lines = [
+        "# Headphone/Earpiece Evidence Collection Plan",
+        "",
+        "This plan is operator guidance. It is not release evidence.",
+        "Only a scored listener-ear `headphone-isolation-report.json` with real WAV artifacts can satisfy the release gate.",
+        "",
+        "## Current State",
+        "",
+        f"- Status: **{summary.get('status', 'UNKNOWN')}**",
+        f"- Manual manifest: `{plan.get('manifest_path', '')}`",
+        f"- Manual status report: `{plan.get('manual_status_report_path', '')}`",
+        f"- Score report target: `{plan.get('score_report_path', '')}`",
+        f"- Release proof: `{plan.get('release_proof')}`",
+        f"- Recordings ready: `{summary.get('manual_recordings_ready_for_score_input')}`",
+        f"- Score labels ready: `{summary.get('manual_score_labels_specific')}`",
+        f"- Score run attempted: `{summary.get('score_attempted')}`",
+        "",
+        "## Hardware Instructions",
+        "",
+        "1. Use laptop speakers or another non-headphone speaker as the original source output.",
+        "2. Use the WH-1000XM6 or another headphone/earpiece as the translated playback output.",
+        "3. Place a real measurement recorder at the listener-ear position. A phone recorder or USB mic is acceptable; the built-in laptop mic is not listener-ear proof.",
+        "4. Record three separate mono WAV takes: source open-ear, source isolated-ear, and translated headphone playback.",
+        "5. Keep the measurement mic position fixed between open-ear and isolated-ear source takes, except for sealing the headphone/earpiece over it.",
+        "",
+        "## Issues",
+        "",
+    ]
+    lines.extend([f"- {issue}" for issue in issues] or ["- None"])
+    lines.extend(["", "## Next Actions", ""])
+    lines.extend([f"- {action}" for action in next_actions] or ["- None"])
+    lines.extend(
+        [
+            "",
+            "## Commands",
+            "",
+            "Set concrete labels once, then run the relevant commands below:",
+            "",
+            "```powershell",
+            "$env:LANGUAGE_PYTHON = \"C:\\Path\\To\\python.exe\"",
+            "$headphoneLabel = \"REPLACE_WITH_HEADPHONE_MODEL\"",
+            "$fixtureLabel = \"REPLACE_WITH_EARCUP_AND_MIC_POSITION\"",
+            "$microphoneLabel = \"REPLACE_WITH_MIC_MODEL_AND_POSITION\"",
+            "```",
+            "",
+        ]
+    )
+    for name in (
+        "prepare",
+        "play_references",
+        "import_recordings",
+        "check_recordings",
+        "score_recordings",
+        "release_gate",
+    ):
+        command = str(commands.get(name, "")).strip()
+        if not command:
+            continue
+        lines.extend([f"### {name}", "", "```powershell", command, "```", ""])
+    lines.extend(
+        [
+            "## Detractor Note",
+            "",
+            str(plan.get("detractor_loop", {}).get("strongest_objection", "")),
+            "",
+            str(plan.get("detractor_loop", {}).get("verdict", "")),
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def write_manual_collection_plan(plan: dict[str, Any], json_path: Path, markdown_path: Path) -> None:
+    json_path.parent.mkdir(parents=True, exist_ok=True)
+    json_path.write_text(json.dumps(json_safe(plan), indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    markdown_path.parent.mkdir(parents=True, exist_ok=True)
+    markdown_path.write_text(render_manual_collection_markdown(plan), encoding="utf-8")
+
+
+def collect_headphone_evidence(args: argparse.Namespace) -> int:
+    run_dir = Path(args.output_dir) / "runs" / args.run_id
+    manifest_path = (
+        Path(args.manifest)
+        if bool(args.skip_prepare) and args.manifest
+        else run_dir / "manual-recording-manifest.json"
+    )
+    status_report_path = Path(args.status_report) if args.status_report else manifest_path.parent / DEFAULT_MANUAL_STATUS_REPORT
+    plan_path = Path(args.plan_report) if args.plan_report else manifest_path.parent / DEFAULT_MANUAL_COLLECTION_PLAN
+    markdown_path = (
+        Path(args.markdown_report)
+        if args.markdown_report
+        else manifest_path.parent / DEFAULT_MANUAL_COLLECTION_MARKDOWN
+    )
+    score_report_path = Path(args.output_dir) / "runs" / args.score_run_id / "headphone-isolation-report.json"
+    step_results: list[dict[str, Any]] = []
+    issues: list[str] = []
+    next_actions: list[str] = []
+    score_result: int | None = None
+    if args.manifest and not bool(args.skip_prepare):
+        issues.append("--manifest is only used with --skip-prepare; prepared kit uses the run-id manifest path")
+
+    def add_step(name: str, result: int | None, detail: str = "") -> None:
+        step_results.append({"detail": detail, "name": name, "result": result})
+
+    if not bool(args.skip_prepare):
+        prepare_result = prepare_manual_kit(
+            argparse.Namespace(
+                adapter_id=args.adapter_id,
+                gap_s=args.gap_s,
+                lead_s=args.lead_s,
+                max_peak_dbfs=args.max_peak_dbfs,
+                max_reference_duration_s=args.max_reference_duration_s,
+                min_measurement_duration_s=args.min_measurement_duration_s,
+                output_dir=Path(args.output_dir),
+                playback_gain_db=args.playback_gain_db,
+                run_id=args.run_id,
+                sample_rate_hz=args.sample_rate_hz,
+                score_run_id=args.score_run_id,
+                source_reference=args.source_reference,
+                tail_s=args.tail_s,
+                translated_playback_reference=args.translated_playback_reference,
+                tts_report=args.tts_report,
+            )
+        )
+        add_step("prepare_manual_kit", prepare_result, str(manifest_path))
+        if prepare_result != 0:
+            issues.append("manual kit preparation failed")
+    elif not manifest_path.exists():
+        issues.append(f"manual manifest is missing: {manifest_path}")
+        add_step("prepare_manual_kit", None, "skipped and manifest missing")
+    else:
+        add_step("prepare_manual_kit", None, "skipped")
+
+    import_requested = manual_collection_import_requested(args)
+    if import_requested and not manual_collection_import_ready(args):
+        issues.append("all three raw listener-ear recording paths are required before import")
+        add_step("import_manual_recordings", 1, "incomplete raw recording path set")
+    elif import_requested and not issues:
+        import_result = import_manual_recordings(
+            argparse.Namespace(
+                allow_downmix=args.allow_downmix,
+                allow_overwrite=args.allow_overwrite,
+                dry_run=args.dry_run_import,
+                headphone_device_label=args.headphone_device_label,
+                isolation_fixture_label=args.isolation_fixture_label,
+                log=args.import_log,
+                manifest=manifest_path,
+                measurement_microphone_label=args.measurement_microphone_label,
+                skip_check=False,
+                source_isolated_ear_recording=args.source_isolated_ear_recording,
+                source_open_ear_recording=args.source_open_ear_recording,
+                status_report=status_report_path,
+                translated_headphone_recording=args.translated_headphone_recording,
+            )
+        )
+        add_step("import_manual_recordings", import_result, str(status_report_path))
+        if import_result != 0:
+            issues.append("manual recording import failed")
+    else:
+        add_step("import_manual_recordings", None, "not requested")
+
+    check_result = check_manual_recordings(
+        argparse.Namespace(
+            headphone_device_label=args.headphone_device_label,
+            isolation_fixture_label=args.isolation_fixture_label,
+            json=False,
+            manifest=manifest_path,
+            markdown_report=status_report_path.with_suffix(".md"),
+            measurement_microphone_label=args.measurement_microphone_label,
+            report=status_report_path,
+            score_warning_only=True,
+        )
+    )
+    add_step("check_manual_recordings", check_result, str(status_report_path))
+    status_report: dict[str, Any] = {}
+    if status_report_path.exists():
+        loaded = json.loads(status_report_path.read_text(encoding="utf-8"))
+        if isinstance(loaded, dict):
+            status_report = loaded
+    status_summary = status_report.get("summary", {})
+    status_summary = status_summary if isinstance(status_summary, dict) else {}
+    status_issues = [
+        str(issue)
+        for issue in status_report.get("issues", [])
+        if str(issue).strip()
+    ]
+    status_name = manual_recording_status_name(status_summary)
+    if status_name == "NOT-READY":
+        next_actions.append("collect or import the three listener-ear WAV recordings")
+    if not bool(status_summary.get("manual_score_labels_specific")):
+        next_actions.append("replace placeholder headphone, fixture, and measurement microphone labels")
+    score_ready = bool(status_summary.get("manual_score_ready"))
+    if bool(args.score_if_ready) and score_ready:
+        score_result = score_manual_recordings(
+            argparse.Namespace(
+                adapter_id=DEFAULT_ADAPTER_ID,
+                headphone_device_label=args.headphone_device_label,
+                isolation_fixture_label=args.isolation_fixture_label,
+                manifest=manifest_path,
+                max_alignment_lag_ms=args.max_alignment_lag_ms,
+                max_translated_distortion_db=args.max_translated_distortion_db,
+                measurement_microphone_label=args.measurement_microphone_label,
+                min_measurement_duration_s=args.min_measurement_duration_s,
+                min_source_isolation_db=args.min_source_isolation_db,
+                min_source_open_correlation=args.min_source_open_correlation,
+                min_source_open_dbfs=args.min_source_open_dbfs,
+                min_translated_correlation=args.min_translated_correlation,
+                min_translated_dbfs=args.min_translated_dbfs,
+                output_dir=args.output_dir,
+                procedure_note=args.procedure_note,
+                run_id=args.score_run_id,
+                score_warning_only=False,
+                status_report=status_report_path,
+            )
+        )
+        add_step("score_manual_recordings", score_result, str(score_report_path))
+        if score_result != 0:
+            issues.append("manual recording score failed")
+    elif bool(args.score_if_ready):
+        add_step("score_manual_recordings", None, "not ready")
+        next_actions.append("rerun collect-headphone-evidence with --score-if-ready after status is SCORE-READY")
+    else:
+        add_step("score_manual_recordings", None, "not requested")
+        if score_ready:
+            next_actions.append("run score-manual or rerun collect-headphone-evidence with --score-if-ready")
+
+    commands = manual_collection_commands(args=args, manifest_path=manifest_path, score_report_path=score_report_path)
+    plan = {
+        "schema_version": 1,
+        "generated_at_unix": int(time.time()),
+        "fixture_kind": "headphone_earpiece_evidence_collection_plan",
+        "measurement_kind": "headphone_earpiece_evidence_collection_plan",
+        "release_proof": False,
+        "manifest_path": str(manifest_path),
+        "manual_status_report_path": str(status_report_path),
+        "score_report_path": str(score_report_path),
+        "summary": {
+            "import_requested": import_requested,
+            "manual_recordings_ready_for_score_input": status_summary.get("manual_recordings_ready_for_score_input"),
+            "manual_score_labels_specific": status_summary.get("manual_score_labels_specific"),
+            "manual_score_ready": score_ready,
+            "release_proof": False,
+            "score_attempted": score_result is not None,
+            "score_result": score_result,
+            "status": status_name,
+        },
+        "issues": issues + status_issues,
+        "next_actions": next_actions,
+        "recommended_commands": commands,
+        "step_results": step_results,
+        "detractor_loop": {
+            "strongest_objection": (
+                "This wrapper only organizes operator workflow. It does not prove listener-ear placement, "
+                "headphone seal, source isolation, or translated fidelity until the scored WAV report passes."
+            ),
+            "verdict": "Keep release_proof=false; only score-manual can produce release-gated evidence.",
+        },
+    }
+    write_manual_collection_plan(plan, plan_path, markdown_path)
+    print(f"headphone/earpiece evidence collection {status_name}: score_ready={score_ready}")
+    print(f"wrote collection plan to {plan_path}")
+    print(f"wrote collection handoff to {markdown_path}")
+    if score_result is not None:
+        return score_result
+    return 0 if not issues else 1
+
+
 def read_manual_import_wav(
     path: Path,
     *,
@@ -5160,6 +5505,71 @@ def self_test() -> int:
             raise RuntimeError("manual recording status Markdown should point back to the recording checklist")
         if "import-manual" not in missing_manual_markdown:
             raise RuntimeError("manual recording status Markdown should include the import-manual recovery path")
+        collection_result = collect_headphone_evidence(
+            argparse.Namespace(
+                adapter_id=DEFAULT_MANUAL_KIT_ADAPTER_ID,
+                allow_downmix=True,
+                allow_overwrite=False,
+                dry_run_import=False,
+                gap_s=DEFAULT_GAP_S,
+                headphone_device_label=None,
+                headphone_output_device="unit-headphone-output",
+                import_log=None,
+                isolation_fixture_label=None,
+                lead_s=0.1,
+                manifest=manual_manifest_path,
+                markdown_report=manual_manifest_path.parent / "collection-plan.md",
+                max_alignment_lag_ms=DEFAULT_MAX_ALIGNMENT_LAG_MS,
+                max_peak_dbfs=DEFAULT_MAX_PEAK_DBFS,
+                max_reference_duration_s=0.0,
+                max_translated_distortion_db=DEFAULT_MAX_TRANSLATED_DISTORTION_DB,
+                measurement_microphone_label=None,
+                min_measurement_duration_s=DEFAULT_MIN_MEASUREMENT_DURATION_S,
+                min_source_isolation_db=DEFAULT_MIN_SOURCE_ISOLATION_DB,
+                min_source_open_correlation=DEFAULT_MIN_SOURCE_OPEN_CORRELATION,
+                min_source_open_dbfs=DEFAULT_MIN_SOURCE_OPEN_DBFS,
+                min_translated_correlation=DEFAULT_MIN_TRANSLATED_CORRELATION,
+                min_translated_dbfs=DEFAULT_MIN_TRANSLATED_DBFS,
+                output_dir=root / "manual-kit-out",
+                plan_report=manual_manifest_path.parent / "collection-plan.json",
+                playback_gain_db=DEFAULT_PLAYBACK_GAIN_DB,
+                procedure_note="unit external listener-ear manual recording",
+                run_id="unit-manual-kit",
+                sample_rate_hz=sample_rate_hz,
+                score_if_ready=True,
+                score_run_id=DEFAULT_RUN_ID,
+                score_warning_only=False,
+                skip_prepare=True,
+                source_isolated_ear_recording=None,
+                source_open_ear_recording=None,
+                source_output_device="unit-source-output",
+                source_reference=source_path,
+                status_report=manual_manifest_path.parent / "manual-recording-status-collection.json",
+                tail_s=0.1,
+                translated_headphone_recording=None,
+                translated_playback_reference=translated_path,
+                tts_report=DEFAULT_TTS_REPORT,
+            )
+        )
+        if collection_result != 0:
+            raise RuntimeError("collect-headphone-evidence should return 0 while handing off missing recordings")
+        collection_plan = json.loads((manual_manifest_path.parent / "collection-plan.json").read_text(encoding="utf-8"))
+        if collection_plan.get("release_proof") is not False:
+            raise RuntimeError("collection plan must not set release_proof")
+        if collection_plan.get("summary", {}).get("status") != "NOT-READY":
+            raise RuntimeError("collection plan should report NOT-READY before listener-ear recordings exist")
+        if collection_plan.get("summary", {}).get("score_attempted") is not False:
+            raise RuntimeError("collection plan must not score before manual status is ready")
+        collection_markdown = (manual_manifest_path.parent / "collection-plan.md").read_text(encoding="utf-8")
+        for expected_text in (
+            "Headphone/Earpiece Evidence Collection Plan",
+            "built-in laptop mic is not listener-ear proof",
+            "play_references",
+            "import_recordings",
+            "release_audio_gate.py --json",
+        ):
+            if expected_text not in collection_markdown:
+                raise RuntimeError(f"collection plan markdown missing {expected_text!r}")
         missing_score_manual_result = score_manual_recordings(
             argparse.Namespace(
                 adapter_id=DEFAULT_ADAPTER_ID,
@@ -6422,6 +6832,71 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=DEFAULT_MIN_MEASUREMENT_DURATION_S,
     )
+    collect_parser = subparsers.add_parser(
+        "collect-headphone-evidence",
+        help="prepare, import/check, and hand off manual headphone listener-ear evidence collection",
+    )
+    collect_parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    collect_parser.add_argument("--run-id", default=DEFAULT_MANUAL_KIT_RUN_ID)
+    collect_parser.add_argument("--score-run-id", default=DEFAULT_RUN_ID)
+    collect_parser.add_argument("--adapter-id", default=DEFAULT_MANUAL_KIT_ADAPTER_ID)
+    collect_parser.add_argument("--tts-report", type=Path, default=DEFAULT_TTS_REPORT)
+    collect_parser.add_argument("--source-reference", type=Path)
+    collect_parser.add_argument("--translated-playback-reference", type=Path)
+    collect_parser.add_argument("--sample-rate-hz", type=int, default=DEFAULT_SAMPLE_RATE_HZ)
+    collect_parser.add_argument("--gap-s", type=float, default=DEFAULT_GAP_S)
+    collect_parser.add_argument("--lead-s", type=float, default=DEFAULT_LEAD_S)
+    collect_parser.add_argument("--tail-s", type=float, default=DEFAULT_TAIL_S)
+    collect_parser.add_argument("--playback-gain-db", type=float, default=DEFAULT_PLAYBACK_GAIN_DB)
+    collect_parser.add_argument("--max-peak-dbfs", type=float, default=DEFAULT_MAX_PEAK_DBFS)
+    collect_parser.add_argument("--max-reference-duration-s", type=float, default=8.0)
+    collect_parser.add_argument(
+        "--min-measurement-duration-s",
+        type=float,
+        default=DEFAULT_MIN_MEASUREMENT_DURATION_S,
+    )
+    collect_parser.add_argument("--manifest", type=Path)
+    collect_parser.add_argument("--status-report", type=Path)
+    collect_parser.add_argument("--plan-report", type=Path)
+    collect_parser.add_argument("--markdown-report", type=Path)
+    collect_parser.add_argument("--skip-prepare", action="store_true")
+    collect_parser.add_argument("--source-output-device")
+    collect_parser.add_argument("--headphone-output-device")
+    collect_parser.add_argument("--source-open-ear-recording", type=Path)
+    collect_parser.add_argument("--source-isolated-ear-recording", type=Path)
+    collect_parser.add_argument("--translated-headphone-recording", type=Path)
+    collect_parser.add_argument("--allow-downmix", action="store_true")
+    collect_parser.add_argument("--allow-overwrite", action="store_true")
+    collect_parser.add_argument("--dry-run-import", action="store_true")
+    collect_parser.add_argument("--import-log", type=Path)
+    collect_parser.add_argument("--headphone-device-label")
+    collect_parser.add_argument("--isolation-fixture-label")
+    collect_parser.add_argument("--measurement-microphone-label")
+    collect_parser.add_argument("--score-if-ready", action="store_true")
+    collect_parser.add_argument("--procedure-note", default="external listener-ear manual recording")
+    collect_parser.add_argument("--min-source-open-dbfs", type=float, default=DEFAULT_MIN_SOURCE_OPEN_DBFS)
+    collect_parser.add_argument("--min-translated-dbfs", type=float, default=DEFAULT_MIN_TRANSLATED_DBFS)
+    collect_parser.add_argument(
+        "--min-source-open-correlation",
+        type=float,
+        default=DEFAULT_MIN_SOURCE_OPEN_CORRELATION,
+    )
+    collect_parser.add_argument(
+        "--min-translated-correlation",
+        type=float,
+        default=DEFAULT_MIN_TRANSLATED_CORRELATION,
+    )
+    collect_parser.add_argument(
+        "--min-source-isolation-db",
+        type=float,
+        default=DEFAULT_MIN_SOURCE_ISOLATION_DB,
+    )
+    collect_parser.add_argument(
+        "--max-translated-distortion-db",
+        type=float,
+        default=DEFAULT_MAX_TRANSLATED_DISTORTION_DB,
+    )
+    collect_parser.add_argument("--max-alignment-lag-ms", type=float, default=DEFAULT_MAX_ALIGNMENT_LAG_MS)
     check_manual_parser = subparsers.add_parser(
         "check-manual",
         help="check whether manual listener-ear recordings are ready to pass into score",
@@ -6759,6 +7234,8 @@ def main(argv: list[str] | None = None) -> int:
         return score(args)
     if args.command == "prepare-manual":
         return prepare_manual_kit(args)
+    if args.command == "collect-headphone-evidence":
+        return collect_headphone_evidence(args)
     if args.command == "check-manual":
         return check_manual_recordings(args)
     if args.command == "play-manual":
