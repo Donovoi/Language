@@ -180,6 +180,8 @@ jobs:
             echo "Expected exactly one wheel in dist/, found ${#wheels[@]}" >&2
             exit 1
           fi
+          python -m pip install "${wheels[0]}"
+          python ../../scripts/verify_gateway_package.py --installed --wheel "${wheels[0]}" --sdist "${sdists[0]}"
           cp "${sdists[0]}" /tmp/release-artifacts/language-gateway-${{ needs.release-metadata.outputs.version }}.tar.gz
           cp "${wheels[0]}" /tmp/release-artifacts/
       - uses: actions/upload-artifact@v4.6.2
