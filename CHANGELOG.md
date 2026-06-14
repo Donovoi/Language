@@ -45,6 +45,7 @@ Repository prep for the first internal beta release candidate based on the curre
 - The release audio handoff now embeds the current headphone/earpiece evidence collection plan when present, including readiness, next actions, and the next physical-recording command while keeping it non-evidentiary.
 - `collect-headphone-evidence` can now read the latest headphone/earpiece preflight report to fill concrete source/headphone output devices in the non-evidentiary `play-manual` command.
 - `collect-headphone-evidence` now creates a raw listener-ear recording dropbox with exact WAV filenames and import commands so phone/USB recorder exports have a concrete landing path.
+- `collect-headphone-evidence` now auto-imports the three raw listener-ear WAVs when they are present in the dropbox, while refusing implicit overwrites and keeping the wrapper non-evidentiary.
 
 #### Changed
 

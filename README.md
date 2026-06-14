@@ -324,7 +324,8 @@ flag route-gate failures, `recording_too_quiet` means fix gain/placement first, 
 `reference_not_detected` usually means Windows processing, route mismatch, or poor mic placement.
 If Bluetooth or Windows routing blocks guided capture, use `headphone-isolation-collect-evidence`
 as the one-command manual handoff. It prepares the manual kit, checks current recording readiness,
-optionally imports raw recorder WAVs when paths are supplied, and writes
+optionally imports raw recorder WAVs when paths are supplied or when all three dropbox WAVs are
+present, and writes
 `headphone-evidence-collection-plan.json` plus `.md` under
 `artifacts/audio_eval/runs/headphone-earpiece-manual-kit/`. The wrapper remains
 `release_proof=false`; only the scored listener-ear report can satisfy the release gate. The release
@@ -333,7 +334,9 @@ present. If a headphone/earpiece preflight report exists, the collection plan us
 and headphone outputs to make the `play-manual` command concrete; pass `--preflight-report` to use a
 specific report or pass explicit `--source-output-device`/`--headphone-output-device` values to
 override it. It also creates a `raw-listener-ear-recordings/` dropbox with exact WAV filenames and
-an import command that points at those paths.
+an import command that points at those paths. After exporting the three WAVs into that folder,
+rerun `headphone-isolation-collect-evidence` to import them automatically; existing manifest target
+recordings are not overwritten unless `--allow-overwrite` is explicit.
 Under the hood, `headphone-isolation-prepare-manual` writes `source-reference.wav`,
 `translated-playback-reference.wav`, and `manual-recording-manifest.json` plus a human-readable
 `manual-recording-checklist.md`; record the three expected listener-ear WAVs named in that
@@ -344,6 +347,7 @@ unless you deliberately pass `--output-device` or `--allow-default-output`. Its
 `manual-playback-log.json` is `release_proof=false` and is not release evidence. Export the
 recordings as 16-bit PCM WAV at the kit sample rate, trim pre-roll so playback starts within
 500 ms of recording start, then either place them at the manifest's expected filenames or run
+`headphone-isolation-collect-evidence` again with the files in the dropbox, or run
 `headphone-isolation-import-manual` with the three raw recorder WAV paths. The importer can
 explicitly downmix stereo WAV exports with `--allow-downmix`, writes `manual-import-log.json` with
 `release_proof=false`, rejects reference clones/duplicate takes, and does not do loudness
