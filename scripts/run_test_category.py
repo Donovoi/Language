@@ -82,6 +82,11 @@ STEPS: dict[str, Step] = {
         description="evidence-linked milestone completion estimate",
         local_args=("{python}", "scripts/release_progress.py"),
     ),
+    "local-release-artifacts": Step(
+        name="local-release-artifacts",
+        description="build local source bundle and gateway package handoff",
+        local_args=("pwsh", "-NoProfile", "-File", "scripts/package_local.ps1"),
+    ),
     "headphone-route-triage-handoff-self-test": Step(
         name="headphone-route-triage-handoff-self-test",
         description="headphone route-triage handoff contract self-test",
@@ -601,6 +606,16 @@ CATEGORIES: dict[str, Category] = {
         notes=(
             "Use after each push to keep milestone percentages reproducible.",
             "The hard release gate remains authoritative for pass/fail.",
+        ),
+    ),
+    "release-artifacts": Category(
+        name="release-artifacts",
+        description="Build clean local source and gateway package artifacts with manifest/checksums.",
+        steps=("local-release-artifacts",),
+        notes=(
+            "Refuses dirty trees by default because source archives are built from HEAD.",
+            "Uses a supported Python >=3.11,<3.14 from -Python, LANGUAGE_PACKAGE_PYTHON, LANGUAGE_PYTHON, PYTHON, bundled runtime, or PATH.",
+            "Writes dist/local-release-artifacts/manifest.md and SHA256SUMS.txt.",
         ),
     ),
     "all": Category(
