@@ -62,6 +62,66 @@ def _file_has_text(path: str, text: str) -> bool:
     return candidate.exists() and text in candidate.read_text(encoding="utf-8", errors="replace")
 
 
+def _file_has_all_text(path: str, required: tuple[str, ...]) -> bool:
+    candidate = ROOT / path
+    if not candidate.exists():
+        return False
+    content = candidate.read_text(encoding="utf-8", errors="replace")
+    return all(text in content for text in required)
+
+
+def _token_discipline_status_from_flags(
+    *,
+    doc_ready: bool,
+    agent_handoff_ready: bool,
+    runner_ready: bool,
+) -> tuple[int, str]:
+    if doc_ready and agent_handoff_ready and runner_ready:
+        return (
+            98,
+            "conversation-token guide, agent handoff rules, and quiet runner wiring are present; live usage remains operator-enforced",
+        )
+    if doc_ready and runner_ready:
+        return 96, "conversation-token guide and quiet runner are present; agent handoff rules incomplete"
+    if doc_ready:
+        return 92, "conversation-token guide present; quiet handoff enforcement incomplete"
+    return 85, "token budget guide missing"
+
+
+def _token_discipline_status() -> tuple[int, str]:
+    doc_ready = _file_has_all_text(
+        "docs/development/token-budget.md",
+        (
+            "Codex/OpenAI conversation tokens used while developing the product.",
+            "Product API tokens used later by Language itself.",
+            "Treat the first one as the default concern in agent handoffs.",
+            "Use it, if adopted, as development-agent context compression",
+            "Until that eval exists, the supported repo-level token control is the category runner",
+        ),
+    )
+    agent_handoff_ready = _file_has_all_text(
+        "AGENTS.md",
+        (
+            "Keep agent runs token-light by default.",
+            "logs to `artifacts/test-categories/` by default.",
+            "Reference full logs and JSON reports by path under `artifacts/`",
+            "Treat Headroom or similar compression tools as optional infrastructure",
+        ),
+    )
+    runner_ready = _file_has_all_text(
+        "scripts/run_test_category.py",
+        (
+            "Use release-status in low-token agent handoffs.",
+            "Output: quiet; full logs under",
+        ),
+    )
+    return _token_discipline_status_from_flags(
+        doc_ready=doc_ready,
+        agent_handoff_ready=agent_handoff_ready,
+        runner_ready=runner_ready,
+    )
+
+
 def _smoke_local_passed() -> bool:
     return _file_has_text(
         "artifacts/test-categories/smoke-local/01-smoke-local-demo.log",
@@ -249,7 +309,7 @@ def build_progress(report: dict[str, Any]) -> dict[str, Any]:
         auth_runtime_ready=auth_runtime_ready,
     )
     category_runner_ready = _file_has_text("scripts/run_test_category.py", "physical-audio-handoff")
-    token_doc_ready = (ROOT / "docs/development/token-budget.md").exists()
+    token_percent, token_evidence = _token_discipline_status()
 
     milestones = [
         Milestone(
@@ -327,9 +387,9 @@ def build_progress(report: dict[str, Any]) -> dict[str, Any]:
         Milestone(
             "token_discipline",
             "Token discipline",
-            97 if token_doc_ready else 85,
+            token_percent,
             0.06,
-            "token budget guide present",
+            token_evidence,
         ),
     ]
     total = round(sum(item.percent * item.weight for item in milestones))
@@ -384,6 +444,7 @@ def self_test() -> int:
     required = [
         "Release progress estimate:",
         "Playback/source suppression evidence",
+        "conversation-token guide, agent handoff rules, and quiet runner wiring are present",
         "Total release goal:",
         "release gate remains authoritative",
     ]
@@ -392,6 +453,23 @@ def self_test() -> int:
             raise AssertionError(f"missing progress text: {text}")
     if not 0 <= int(progress["total_percent"]) <= 100:
         raise AssertionError("total percent out of range")
+    expected_token_cases = [
+        ((True, True, True), 98),
+        ((True, False, True), 96),
+        ((True, False, False), 92),
+        ((False, True, True), 85),
+    ]
+    for (doc_ready, agent_ready, runner_ready), expected_percent in expected_token_cases:
+        actual_percent, _ = _token_discipline_status_from_flags(
+            doc_ready=doc_ready,
+            agent_handoff_ready=agent_ready,
+            runner_ready=runner_ready,
+        )
+        if actual_percent != expected_percent:
+            raise AssertionError(
+                "unexpected token discipline percent for "
+                f"doc={doc_ready}, agent={agent_ready}, runner={runner_ready}: {actual_percent}"
+            )
     print("release progress self-test PASS")
     return 0
 
