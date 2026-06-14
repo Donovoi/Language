@@ -74,6 +74,8 @@ Use `release-status` first when you only need the current blocker and the next c
 large JSON or Markdown handoff.
 Use `release-evidence` when you want the listener-ear kit prepared, current WAV dropbox imported if
 complete, readiness checked, and the compact status printed in one pass.
+Use `python3 scripts/release_audio_status.py --full-commands` when you need the detailed hardware
+command list in the terminal.
 
 ## Low-Level Commands
 
