@@ -2,6 +2,9 @@ param(
     [string]$GatewayHost = $(if ($env:GATEWAY_HOST) { $env:GATEWAY_HOST } else { "127.0.0.1" }),
     [int]$GatewayPort = $(if ($env:GATEWAY_PORT) { [int]$env:GATEWAY_PORT } else { 8000 }),
     [string]$GatewayPython = $(if ($env:GATEWAY_PYTHON) { $env:GATEWAY_PYTHON } else { "" }),
+    [string]$GatewayCommand = "",
+    [string]$GatewayWorkingDirectory = "",
+    [switch]$RequireStartedGateway,
     [int]$RequestTimeoutSeconds = $(if ($env:REQUEST_TIMEOUT_SECONDS) { [int]$env:REQUEST_TIMEOUT_SECONDS } else { 3 }),
     [int]$StartTimeoutSeconds = $(if ($env:SMOKE_START_TIMEOUT_SECONDS) { [int]$env:SMOKE_START_TIMEOUT_SECONDS } else { 20 })
 )
@@ -11,6 +14,25 @@ $ErrorActionPreference = "Stop"
 function Resolve-RepoRoot {
     $scriptDir = Split-Path -Parent $PSCommandPath
     return (Resolve-Path (Join-Path $scriptDir "..")).Path
+}
+
+function Resolve-Executable {
+    param([string]$Candidate, [string]$Label)
+
+    if ([string]::IsNullOrWhiteSpace($Candidate)) {
+        throw "$Label executable was not provided."
+    }
+
+    if (Test-Path -LiteralPath $Candidate -PathType Leaf) {
+        return (Resolve-Path -LiteralPath $Candidate).Path
+    }
+
+    $command = Get-Command $Candidate -ErrorAction SilentlyContinue
+    if ($command) {
+        return $command.Source
+    }
+
+    throw "$Label executable '$Candidate' was not found."
 }
 
 function Resolve-GatewayPython {
@@ -155,29 +177,50 @@ function Parse-SseEvents {
 
 $repoRoot = Resolve-RepoRoot
 $gatewayDir = Join-Path $repoRoot "services\gateway"
-$gatewayPythonPath = Resolve-GatewayPython -RepoRoot $repoRoot -Candidate $GatewayPython
+$gatewayPythonPath = ""
+$gatewayCommandPath = ""
+if ([string]::IsNullOrWhiteSpace($GatewayCommand)) {
+    $gatewayPythonPath = Resolve-GatewayPython -RepoRoot $repoRoot -Candidate $GatewayPython
+} else {
+    $gatewayCommandPath = Resolve-Executable -Candidate $GatewayCommand -Label "Gateway command"
+}
 $baseUrl = "http://${GatewayHost}:${GatewayPort}"
 $startedGateway = $false
 $gatewayProcess = $null
 $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("language-smoke-" + [guid]::NewGuid().ToString())
 $stdoutLog = Join-Path $tmpDir "gateway.stdout.log"
 $stderrLog = Join-Path $tmpDir "gateway.stderr.log"
+$gatewayWorkingDir = if ([string]::IsNullOrWhiteSpace($GatewayWorkingDirectory)) { $tmpDir } else { (Resolve-Path -LiteralPath $GatewayWorkingDirectory).Path }
 
 New-Item -ItemType Directory -Path $tmpDir | Out-Null
 
 try {
     if (Test-GatewayHealth -BaseUrl $baseUrl -TimeoutSeconds $RequestTimeoutSeconds) {
+        if ($RequireStartedGateway.IsPresent) {
+            throw "Gateway already running at $baseUrl; choose another port for a start-required smoke."
+        }
         Write-Host "Reusing existing gateway at $baseUrl"
     } else {
         Write-Host "Starting a temporary gateway at $baseUrl"
-        $gatewayProcess = Start-Process `
-            -FilePath $gatewayPythonPath `
-            -ArgumentList @("-m", "uvicorn", "app.main:app", "--host", $GatewayHost, "--port", "$GatewayPort", "--log-level", "warning") `
-            -WorkingDirectory $gatewayDir `
-            -RedirectStandardOutput $stdoutLog `
-            -RedirectStandardError $stderrLog `
-            -WindowStyle Hidden `
-            -PassThru
+        if ([string]::IsNullOrWhiteSpace($gatewayCommandPath)) {
+            $gatewayProcess = Start-Process `
+                -FilePath $gatewayPythonPath `
+                -ArgumentList @("-m", "uvicorn", "app.main:app", "--host", $GatewayHost, "--port", "$GatewayPort", "--log-level", "warning") `
+                -WorkingDirectory $gatewayDir `
+                -RedirectStandardOutput $stdoutLog `
+                -RedirectStandardError $stderrLog `
+                -WindowStyle Hidden `
+                -PassThru
+        } else {
+            $gatewayProcess = Start-Process `
+                -FilePath $gatewayCommandPath `
+                -ArgumentList @("--host", $GatewayHost, "--port", "$GatewayPort", "--log-level", "warning") `
+                -WorkingDirectory $gatewayWorkingDir `
+                -RedirectStandardOutput $stdoutLog `
+                -RedirectStandardError $stderrLog `
+                -WindowStyle Hidden `
+                -PassThru
+        }
         $startedGateway = $true
 
         $deadline = (Get-Date).AddSeconds($StartTimeoutSeconds)

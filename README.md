@@ -108,7 +108,7 @@ Common categories:
 | `release-evidence-score` | Score complete listener-ear evidence | Requires real WAVs and concrete hardware labels. |
 | `release-status` | Concise release blocker summary | Low-token next-action handoff; exits zero by default. |
 | `release-progress` | Milestone percentages | Evidence-linked estimate for push summaries. |
-| `release-artifacts` | Local source/gateway release handoff | Builds clean artifacts plus manifest/checksums under `dist/local-release-artifacts/`. |
+| `release-artifacts` | Local source/gateway release handoff | Builds clean artifacts, checksums them, then smokes the packaged gateway wheel. |
 | `release` | Strict release-gate status | Expected to fail until physical evidence is present. |
 | `all` | Automated non-interactive suites | Excludes hardware, guided capture, release, optional model downloads, and artifact-dependent voice checks. |
 
@@ -175,7 +175,7 @@ $env:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL = "phone WAV recorder at listener-ear
 python scripts/run_test_category.py release-evidence-score
 ```
 
-Build local source and gateway package artifacts from a clean tree:
+Build local source and gateway package artifacts from a clean tree, then smoke the packaged gateway:
 
 ```powershell
 python scripts/run_test_category.py release-artifacts
