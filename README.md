@@ -62,6 +62,7 @@ files by default; pass `--verbose` only when you want live logs in the terminal.
 python3 scripts/run_test_category.py quick
 python3 scripts/run_test_category.py list
 python3 scripts/run_test_category.py release-status
+python3 scripts/run_test_category.py release-progress
 python3 scripts/run_test_category.py all
 ```
 
@@ -71,6 +72,7 @@ Windows:
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category quick
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category list
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-status
+pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-progress
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category all
 ```
 
@@ -99,6 +101,7 @@ Common categories:
 | `release-evidence` | One-command listener-ear evidence handoff | Prepare/import/check the kit, then print release status. |
 | `release-evidence-score` | Score complete listener-ear evidence | Requires real WAVs and concrete hardware labels. |
 | `release-status` | Concise release blocker summary | Low-token next-action handoff; exits zero by default. |
+| `release-progress` | Milestone percentages | Evidence-linked estimate for push summaries. |
 | `release` | Strict release-gate status | Expected to fail until physical evidence is present. |
 | `all` | Automated non-interactive suites | Excludes hardware, release, optional model downloads, and artifact-dependent voice checks. |
 
@@ -180,6 +183,12 @@ handoff.
 
 Use `python3 scripts/release_audio_status.py --full-commands` when you need the full hardware
 command list in the terminal.
+
+Use this for the milestone percentages reported after pushes:
+
+```bash
+python3 scripts/run_test_category.py release-progress
+```
 
 It writes:
 

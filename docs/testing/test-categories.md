@@ -6,6 +6,7 @@ Use `scripts/run_test_category.py` when you do not know which low-level target t
 python3 scripts/run_test_category.py list
 python3 scripts/run_test_category.py quick
 python3 scripts/run_test_category.py release-status
+python3 scripts/run_test_category.py release-progress
 python3 scripts/run_test_category.py all
 ```
 
@@ -15,6 +16,7 @@ Windows:
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category list
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category quick
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-status
+pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-progress
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category all
 ```
 
@@ -40,6 +42,7 @@ Use `--dry-run` to inspect the command plan. By default, full output goes to
 | `release-evidence` | Prepare/import/check the manual listener-ear kit, then print compact release status. | Audio playback/recording, placeholder-label scoring, or release proof. |
 | `release-evidence-score` | Import/check and score complete listener-ear evidence when WAVs and concrete labels are ready. | Audio playback/recording. Placeholder labels keep scoring blocked. |
 | `release-status` | Compact release-gate blocker and next-action handoff. | Exits zero by default; use `release` for strict failure semantics. |
+| `release-progress` | Evidence-linked milestone percentages and total completion estimate. | Pass/fail release authority still lives in the strict `release` category. |
 | `release` | Strict audio release gate. | Evidence generation. Expected to fail until required artifacts are present. |
 | `all` | `quick`, `core`, and `audio-fixtures`. | Hardware, release, optional model downloads, and artifact-dependent voice candidate scoring. |
 
@@ -82,6 +85,7 @@ complete, readiness checked, and the compact status printed in one pass.
 Use `release-evidence-score` after the WAVs are present and these environment variables hold concrete
 labels: `LANGUAGE_HEADPHONE_DEVICE_LABEL`, `LANGUAGE_ISOLATION_FIXTURE_LABEL`, and
 `LANGUAGE_MEASUREMENT_MICROPHONE_LABEL`.
+Use `release-progress` after pushes when you need reproducible milestone percentages.
 Use `python3 scripts/release_audio_status.py --full-commands` when you need the detailed hardware
 command list in the terminal.
 
