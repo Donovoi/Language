@@ -356,7 +356,9 @@ Any candidate from the sweep must be rerun with the full `check` command and the
 `scripts/release_audio_gate.py`. The gate writes both `artifacts/release/audio-gate-report.json`
 and the operator-readable `artifacts/release/audio-gate-report.md`; use the Markdown for blocker
 handoff and physical-evidence command hints, but treat the JSON as the authoritative pass/fail
-evidence.
+evidence. When `manual-recording-status.json` exists for the default headphone/earpiece manual kit,
+the Markdown handoff summarizes that status and score rerun path as operator context only; it does
+not satisfy the release evidence gate.
 
 The real microphone capture check runs on the host audio stack, not inside Docker:
 
