@@ -710,7 +710,8 @@ runs the readiness doctor, and writes `headphone-evidence-collection-plan.json` 
 hardware instructions and next commands. When a preflight report is available, the collection plan
 uses its best source/headphone output route only to fill the `play-manual` helper command; explicit
 `--source-output-device` and `--headphone-output-device` arguments still take precedence. The
-collection plan remains `release_proof=false`.
+collection plan also creates `raw-listener-ear-recordings/` with exact filenames for phone/USB
+recorder exports and an import command that points at those paths. It remains `release_proof=false`.
 Underneath it, `headphone-isolation-prepare-manual` creates non-release reference WAVs,
 `manual-recording-manifest.json`, and `manual-recording-checklist.md` for a phone/USB mic/external
 recorder flow. Use `headphone-isolation-score-manual` after collecting real listener-ear, 16-bit PCM

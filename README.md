@@ -332,7 +332,8 @@ audio gate also embeds the latest collection plan as non-evidentiary operator gu
 present. If a headphone/earpiece preflight report exists, the collection plan uses its best source
 and headphone outputs to make the `play-manual` command concrete; pass `--preflight-report` to use a
 specific report or pass explicit `--source-output-device`/`--headphone-output-device` values to
-override it.
+override it. It also creates a `raw-listener-ear-recordings/` dropbox with exact WAV filenames and
+an import command that points at those paths.
 Under the hood, `headphone-isolation-prepare-manual` writes `source-reference.wav`,
 `translated-playback-reference.wav`, and `manual-recording-manifest.json` plus a human-readable
 `manual-recording-checklist.md`; record the three expected listener-ear WAVs named in that
