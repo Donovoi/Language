@@ -382,6 +382,19 @@ CATEGORIES: dict[str, Category] = {
             "Use after placing the open-ear source, isolated source, and translated playback WAVs in the dropbox.",
         ),
     ),
+    "release-evidence": Category(
+        name="release-evidence",
+        description="One-command listener-ear evidence handoff: prepare/import/check, then print release status.",
+        steps=(
+            "headphone-isolation-collect-evidence",
+            "headphone-isolation-check-manual",
+            "release-audio-status",
+        ),
+        notes=(
+            "Does not record audio or score with placeholder labels.",
+            "Use after placing recorder exports in the raw WAV dropbox, or before capture to create the kit.",
+        ),
+    ),
     "release": Category(
         name="release",
         description="Strict release gate status. A nonzero exit means release evidence is still missing or failing.",
