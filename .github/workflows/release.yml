@@ -192,6 +192,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FIELD_APP_API_BASE_URL: ${{ needs.release-metadata.outputs.field_app_api_base_url }}
+      FIELD_APP_AUTH_TOKEN: ${{ secrets.FIELD_APP_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: actions/setup-java@v5.0.0
@@ -207,6 +208,9 @@ jobs:
           extra_build_args=()
           if [ -n "$FIELD_APP_API_BASE_URL" ]; then
             extra_build_args+=(--dart-define=FIELD_APP_API_BASE_URL=$FIELD_APP_API_BASE_URL)
+          fi
+          if [ -n "$FIELD_APP_AUTH_TOKEN" ]; then
+            extra_build_args+=(--dart-define=FIELD_APP_AUTH_TOKEN=$FIELD_APP_AUTH_TOKEN)
           fi
           flutter create . --platforms=android,ios,macos,windows
           rm -f test/widget_test.dart
@@ -226,6 +230,7 @@ jobs:
     runs-on: macos-latest
     env:
       FIELD_APP_API_BASE_URL: ${{ needs.release-metadata.outputs.field_app_api_base_url }}
+      FIELD_APP_AUTH_TOKEN: ${{ secrets.FIELD_APP_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: subosito/flutter-action@v2.23.0
@@ -237,6 +242,9 @@ jobs:
           extra_build_args=()
           if [ -n "$FIELD_APP_API_BASE_URL" ]; then
             extra_build_args+=(--dart-define=FIELD_APP_API_BASE_URL=$FIELD_APP_API_BASE_URL)
+          fi
+          if [ -n "$FIELD_APP_AUTH_TOKEN" ]; then
+            extra_build_args+=(--dart-define=FIELD_APP_AUTH_TOKEN=$FIELD_APP_AUTH_TOKEN)
           fi
           flutter config --enable-ios
           flutter create . --platforms=android,ios,macos,windows
@@ -255,6 +263,7 @@ jobs:
     runs-on: macos-latest
     env:
       FIELD_APP_API_BASE_URL: ${{ needs.release-metadata.outputs.field_app_api_base_url }}
+      FIELD_APP_AUTH_TOKEN: ${{ secrets.FIELD_APP_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: subosito/flutter-action@v2.23.0
@@ -266,6 +275,9 @@ jobs:
           extra_build_args=()
           if [ -n "$FIELD_APP_API_BASE_URL" ]; then
             extra_build_args+=(--dart-define=FIELD_APP_API_BASE_URL=$FIELD_APP_API_BASE_URL)
+          fi
+          if [ -n "$FIELD_APP_AUTH_TOKEN" ]; then
+            extra_build_args+=(--dart-define=FIELD_APP_AUTH_TOKEN=$FIELD_APP_AUTH_TOKEN)
           fi
           flutter config --enable-macos-desktop
           flutter create . --platforms=android,ios,macos,windows
@@ -284,6 +296,7 @@ jobs:
     runs-on: windows-latest
     env:
       FIELD_APP_API_BASE_URL: ${{ needs.release-metadata.outputs.field_app_api_base_url }}
+      FIELD_APP_AUTH_TOKEN: ${{ secrets.FIELD_APP_AUTH_TOKEN }}
     steps:
       - uses: actions/checkout@v6.0.2
       - uses: subosito/flutter-action@v2.23.0
@@ -296,6 +309,9 @@ jobs:
           $extraBuildArgs = @()
           if ($env:FIELD_APP_API_BASE_URL) {
             $extraBuildArgs += "--dart-define=FIELD_APP_API_BASE_URL=$env:FIELD_APP_API_BASE_URL"
+          }
+          if ($env:FIELD_APP_AUTH_TOKEN) {
+            $extraBuildArgs += "--dart-define=FIELD_APP_AUTH_TOKEN=$env:FIELD_APP_AUTH_TOKEN"
           }
           flutter config --enable-windows-desktop
           flutter create . --platforms=android,ios,macos,windows
@@ -332,6 +348,7 @@ jobs:
           RELEASE_CHANNEL: ${{ needs.release-metadata.outputs.channel }}
           SMOKE_RUNBOOK: ${{ needs.release-metadata.outputs.smoke_runbook }}
           FIELD_APP_API_BASE_URL: ${{ needs.release-metadata.outputs.field_app_api_base_url }}
+          FIELD_APP_AUTH_TOKEN_CONFIGURED: ${{ secrets.FIELD_APP_AUTH_TOKEN != '' && 'set' || 'unset' }}
         run: |
           python - <<'PY'
           import hashlib
@@ -363,7 +380,8 @@ jobs:
                   f"- ref: `{os.getenv('GITHUB_REF')}`",
                   f"- smoke runbook: `{os.getenv('SMOKE_RUNBOOK')}`",
                   f"- Flutter FIELD_APP_API_BASE_URL: `{configured_base_url}`",
-                  "- auth note: keep `LANGUAGE_GATEWAY_AUTH_TOKEN` unset for packaged-app smoke tests that need write controls",
+                  f"- Flutter FIELD_APP_AUTH_TOKEN: `{os.getenv('FIELD_APP_AUTH_TOKEN_CONFIGURED')}`",
+                  "- auth note: app-embedded bearer tokens are for controlled internal smoke only; rotate after use",
                   "",
                   "## Files",
                   *artifact_lines,

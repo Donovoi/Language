@@ -31,7 +31,7 @@ Use the guidance in `docs/development/versioning.md` and the checklist in `docs/
 | --- | --- | --- | --- | --- |
 | Source bundle | `make source-bundle` or workflow `source-bundle` job | `dist/language-<version>-source.tar.gz`, `dist/language-<version>-source.zip` | Supported | Easiest way to hand a reviewer the exact candidate source. |
 | Gateway packages | `make gateway-package` or workflow `gateway-package` job | Local build dir: `services/gateway/dist/*.tar.gz`, `services/gateway/dist/*.whl`; local handoff/workflow artifact: `language-gateway-<version>.tar.gz` plus wheel | Packaging verified | The repo does not yet ship a dedicated packaged CLI wrapper; the smoke path still uses a checkout or unpacked source bundle to run the gateway. |
-| Android release app | `make flutter-release-android` or workflow `flutter-android` job | release APK + AAB | **Primary smoke path** | Default Android build targets the emulator/local-host path. Set `FIELD_APP_API_BASE_URL` at workflow-dispatch time for device or hosted-gateway testing. |
+| Android release app | `make flutter-release-android` or workflow `flutter-android` job | release APK + AAB | **Primary smoke path** | Default Android build targets the emulator/local-host path. Set `FIELD_APP_API_BASE_URL` at workflow-dispatch time for device or hosted-gateway testing. Set the `FIELD_APP_AUTH_TOKEN` GitHub secret only for controlled auth-enabled smoke builds. |
 | iOS unsigned app bundle | workflow `flutter-ios` job on `macos-latest` | zipped `Runner.app` | Manual follow-up | Unsigned only; build requires a macOS runner. |
 | macOS app bundle | workflow `flutter-macos` job on `macos-latest` | zipped `.app` bundle | Manual follow-up | Unsigned/unnotarized. |
 | Windows app bundle | workflow `flutter-windows` job on `windows-latest` | zipped runner output | Manual follow-up | Unsigned; no installer is produced yet. |
@@ -116,20 +116,24 @@ make flutter-release-android
 
 Do not document iOS/macOS/Windows release builds as a generic Linux-local path; those require matching hosts or GitHub Actions runners.
 
-## Flutter base-URL injection
+## Flutter runtime injection
 
-The current Flutter client supports build-time base-URL injection with:
+The current Flutter client supports build-time runtime injection with:
 
 - `FIELD_APP_API_BASE_URL`
+- `FIELD_APP_AUTH_TOKEN`
 
-The release workflow now accepts this as an optional `workflow_dispatch` input and forwards it to every Flutter release build.
+The release workflow accepts the base URL as an optional `workflow_dispatch` input and forwards it to
+every Flutter release build. It reads `FIELD_APP_AUTH_TOKEN` from a GitHub secret, not a visible
+workflow input, and forwards it only when the secret is configured.
 
 - Leave it blank for the default local smoke path:
 	- Android emulator uses `http://10.0.2.2:8000`
 	- other platforms use `http://127.0.0.1:8000`
 - Set it explicitly when the candidate should point at a hosted or device-reachable gateway.
-
-The current app does **not** inject a bearer token, so packaged app smoke tests should keep `LANGUAGE_GATEWAY_AUTH_TOKEN` unset when write controls need to work.
+- Leave `FIELD_APP_AUTH_TOKEN` unset when `LANGUAGE_GATEWAY_AUTH_TOKEN` is unset.
+- Set `FIELD_APP_AUTH_TOKEN` only for controlled internal smoke gateways; app-embedded tokens are not
+  production secret storage, so rotate the matching gateway token after the smoke run.
 
 ## Automated release workflow
 
@@ -141,6 +145,7 @@ Run the workflow manually with:
 
 - `channel=internal-beta`
 - optional `field_app_api_base_url=<url>` when the artifacts should point at a non-default gateway
+- optional repository secret `FIELD_APP_AUTH_TOKEN` when the app artifacts need authenticated write controls
 
 That flow:
 
@@ -164,7 +169,7 @@ The currently documented and realistic smoke path is:
 1. run the gateway locally from a checkout or unpacked source bundle
 2. verify `/livez`, `/readyz`, `/v1/session`, and the repo smoke script
 3. install the Android release APK on an emulator (or build with an explicit base URL for another target)
-4. trigger `/v1/mock/live-ingest` from the host side and watch live lane updates in the app
+4. trigger the live-ingest demo from the app and watch live lane updates
 
 ## Deferred release work
 

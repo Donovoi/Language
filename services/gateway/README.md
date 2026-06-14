@@ -33,6 +33,7 @@ That keeps the existing source defaults intact while making host/port changes an
 | `LANGUAGE_GATEWAY_TRANSLATION_TARGET_LANGUAGE` | `en` | translation adapter | Default target language when a speaker update omits `target_language_code`. |
 | `LANGUAGE_GATEWAY_TRANSLATION_TIMEOUT_MS` | `4000` | translation adapter | HTTP timeout for provider requests. |
 | `FIELD_APP_API_BASE_URL` | platform default | Flutter `--dart-define` | Leave unset to keep the built-in fallback (`10.0.2.2:8000` on Android emulator, `127.0.0.1:8000` elsewhere). |
+| `FIELD_APP_AUTH_TOKEN` | unset | Flutter `--dart-define` | Optional bearer token sent by the Flutter app. Use only for internal smoke tokens or controlled test gateways; app-embedded tokens are not production secret storage. |
 
 Edit the repo-root `.env` (copied from `.env.example`) when you want explicit local defaults.
 
@@ -114,6 +115,13 @@ For Flutter, pass the optional base URL override at compile time:
 
 ```bash
 flutter run --dart-define=FIELD_APP_API_BASE_URL=http://127.0.0.1:8000
+```
+
+If the gateway has `LANGUAGE_GATEWAY_AUTH_TOKEN` set for an internal smoke run, pass the matching
+Flutter token at compile time:
+
+```bash
+flutter run --dart-define=FIELD_APP_AUTH_TOKEN=<internal-smoke-token>
 ```
 
 ## Container path

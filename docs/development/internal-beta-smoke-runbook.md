@@ -17,7 +17,7 @@ This path is the primary target because:
 
 - the Android release build defaults to `http://10.0.2.2:8000`, which matches the Android emulator-to-host path
 - the gateway already exposes the required REST, SSE, persistence, and mock-live-ingest behavior
-- the current packaged Flutter app does **not** inject bearer tokens, so write-route smoke tests require `LANGUAGE_GATEWAY_AUTH_TOKEN` to stay unset
+- packaged Flutter app write controls work with gateway auth only when the build was given the matching `FIELD_APP_AUTH_TOKEN`
 
 ## What you need
 
@@ -31,9 +31,10 @@ If you are rebuilding locally instead of using the workflow APK, you also need F
 
 ## Important caveats before you start
 
-- Leave `LANGUAGE_GATEWAY_AUTH_TOKEN` unset for the app-driven smoke test.
+- Leave `LANGUAGE_GATEWAY_AUTH_TOKEN` unset for the lowest-friction app-driven smoke test, or build the app with a matching `FIELD_APP_AUTH_TOKEN`.
 - If you are using the workflow-produced Android APK with no explicit `FIELD_APP_API_BASE_URL`, use an **Android emulator**, not a physical device.
 - For device or hosted-gateway testing, rebuild the artifacts with `FIELD_APP_API_BASE_URL` set in the release workflow dispatch form.
+- For auth-enabled gateway testing, configure the release workflow with the `FIELD_APP_AUTH_TOKEN` GitHub secret before building the app artifact.
 - iOS, macOS, and Windows artifacts are still unsigned/manual-follow-up artifacts; this runbook does not claim they are smoke-verified from this Linux prep pass.
 
 ## 1. Prepare the gateway host
@@ -153,7 +154,7 @@ Capture these details in the internal release note or test handoff:
 - workflow run URL
 - artifact names used
 - whether `FIELD_APP_API_BASE_URL` was injected
-- whether auth was left disabled for the smoke test
+- whether auth was disabled or a matching `FIELD_APP_AUTH_TOKEN` build was used
 - pass/fail notes and any known caveats
 
 ## Current non-goals for this smoke pass
@@ -162,6 +163,6 @@ This runbook does **not** prove:
 
 - signed mobile or desktop distribution
 - physical-device networking by default
-- gateway auth-enabled write controls from the packaged app
+- production-grade mobile secret storage for gateway tokens
 - iOS/macOS/Windows smoke parity from this Linux environment
 - production deployment, secrets, or store submission readiness
