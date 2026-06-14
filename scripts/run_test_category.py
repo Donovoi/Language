@@ -35,6 +35,7 @@ class Step:
     target: str = ""
     target_args: tuple[str, ...] = ()
     make_env: dict[str, str] = field(default_factory=dict)
+    required_env: tuple[str, ...] = ()
 
     @property
     def is_local(self) -> bool:
@@ -339,6 +340,48 @@ STEPS: dict[str, Step] = {
         target_args=("--score-warning-only",),
         make_env={"HEADPHONE_ISOLATION_CHECK_MANUAL_ARGS": "--score-warning-only"},
     ),
+    "headphone-isolation-guided-capture": Step(
+        name="headphone-isolation-guided-capture",
+        description="strict host-guided listener-ear capture and scoring",
+        local_args=(
+            "pwsh",
+            "-NoProfile",
+            "-File",
+            "scripts/headphone_isolation_local.ps1",
+            "-Action",
+            "capture",
+            "--measurement-input-device",
+            "{env:LANGUAGE_MEASUREMENT_INPUT_DEVICE:LISTENER_EAR_INPUT}",
+            "--source-output-device",
+            "{env:LANGUAGE_SOURCE_OUTPUT_DEVICE:SOURCE_SPEAKER_OUTPUT}",
+            "--headphone-output-device",
+            "{env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE:HEADPHONE_OUTPUT}",
+            "--preflight-report",
+            "{env:LANGUAGE_CAPTURE_PREFLIGHT_REPORT:artifacts/audio_eval/runs/headphone-earpiece-preflight/headphone-preflight-report.json}",
+            "--sample-rate-hz",
+            "{env:LANGUAGE_AUDIO_SAMPLE_RATE_HZ:48000}",
+            "--input-channels",
+            "{env:LANGUAGE_AUDIO_INPUT_CHANNELS:1}",
+            "--output-channels",
+            "{env:LANGUAGE_AUDIO_OUTPUT_CHANNELS:2}",
+            "--playback-gain-db",
+            "{env:LANGUAGE_PLAYBACK_GAIN_DB:-18}",
+            "--headphone-device-label",
+            "{env:LANGUAGE_HEADPHONE_DEVICE_LABEL:REPLACE_WITH_HEADPHONE_MODEL}",
+            "--isolation-fixture-label",
+            "{env:LANGUAGE_ISOLATION_FIXTURE_LABEL:REPLACE_WITH_EARCUP_AND_MIC_POSITION}",
+            "--measurement-microphone-label",
+            "{env:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL:REPLACE_WITH_MIC_MODEL_AND_POSITION}",
+        ),
+        required_env=(
+            "LANGUAGE_MEASUREMENT_INPUT_DEVICE",
+            "LANGUAGE_SOURCE_OUTPUT_DEVICE",
+            "LANGUAGE_HEADPHONE_OUTPUT_DEVICE",
+            "LANGUAGE_HEADPHONE_DEVICE_LABEL",
+            "LANGUAGE_ISOLATION_FIXTURE_LABEL",
+            "LANGUAGE_MEASUREMENT_MICROPHONE_LABEL",
+        ),
+    ),
     "release-audio-gate": Step(
         name="release-audio-gate",
         description="strict release gate; fails until required evidence is present",
@@ -470,6 +513,16 @@ CATEGORIES: dict[str, Category] = {
             "The printed command plays/records a short probe and remains release_proof=false.",
         ),
     ),
+    "guided-capture": Category(
+        name="guided-capture",
+        description="Run the strict host-guided listener-ear capture path when devices and labels are ready.",
+        steps=("headphone-isolation-guided-capture",),
+        notes=(
+            "Requires explicit LANGUAGE_* device and label environment variables.",
+            "Requires a physically confirmed selected-route preflight report.",
+            "Plays and records audio; keep it out of unattended runs.",
+        ),
+    ),
     "physical-audio-handoff": Category(
         name="physical-audio-handoff",
         description="One-command host-audio route, manual kit, and release checklist handoff.",
@@ -555,7 +608,7 @@ CATEGORIES: dict[str, Category] = {
         description="All automated non-interactive suites: quick, core, local smoke, and Docker audio fixtures.",
         includes=("quick", "core", "smoke-local", "audio-fixtures"),
         notes=(
-            "Excludes hardware, release, optional-models, and artifact-dependent voice-candidates.",
+            "Excludes hardware, guided-capture, release, optional-models, and artifact-dependent voice-candidates.",
             "Run those categories explicitly when you have devices, tokens, or candidate artifacts ready.",
         ),
     ),
@@ -662,6 +715,10 @@ def format_command(command: Iterable[str], env_delta: dict[str, str]) -> str:
     return f"{env_prefix} {rendered}".strip()
 
 
+def missing_required_env(step: Step) -> list[str]:
+    return [name for name in step.required_env if not os.environ.get(name, "").strip()]
+
+
 def repo_relative(path: Path) -> str:
     try:
         return str(path.resolve().relative_to(ROOT))
@@ -713,6 +770,9 @@ def run_category(args: argparse.Namespace) -> int:
             command, env_delta = command_for_step(step, runner)
             print(f"{index}. {step.name}: {step.description}")
             print(f"   {format_command(command, env_delta)}")
+            missing_env = missing_required_env(step)
+            if missing_env:
+                print(f"   requires env: {', '.join(missing_env)}")
             if args.quiet:
                 log_path = log_dir / f"{index:02d}-{safe_filename(step.name)}.log"
                 print(f"   log: {repo_relative(log_path)}")
@@ -726,6 +786,11 @@ def run_category(args: argparse.Namespace) -> int:
         print("")
         print(f"==> [{index}/{len(steps)}] {step.name}")
         print(format_command(command, env_delta))
+        missing_env = missing_required_env(step)
+        if missing_env:
+            print(f"{step.name} requires environment variables: {', '.join(missing_env)}")
+            print("Use --dry-run to inspect the command template before setting hardware values.")
+            return 2
         if args.quiet:
             log_path = log_dir / f"{index:02d}-{safe_filename(step.name)}.log"
             with log_path.open("w", encoding="utf-8", errors="replace") as log_file:
@@ -787,9 +852,13 @@ def self_test() -> int:
         for runner in ("make", "powershell"):
             for step in steps:
                 command_for_step(step, runner)
-    for excluded in ("hardware", "release", "optional-models", "voice-candidates"):
+    for excluded in ("hardware", "guided-capture", "release", "optional-models", "voice-candidates"):
         if excluded in CATEGORIES["all"].includes:
             raise AssertionError(f"all should not implicitly include {excluded}")
+    for step in STEPS.values():
+        for name in step.required_env:
+            if not re.match(r"^[A-Z][A-Z0-9_]*$", name):
+                raise AssertionError(f"invalid required env name on {step.name}: {name}")
     if not shutil.which("pwsh"):
         print("warning: pwsh not found; dry-run still validates command construction")
     print("test category self-test PASS")

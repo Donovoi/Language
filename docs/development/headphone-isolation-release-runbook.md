@@ -72,6 +72,13 @@ pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight --
 # confirm_physical_input_preflight command. It includes --selected-route.
 ```
 
+The categorized front door keeps the first pass shorter:
+
+```powershell
+python scripts/run_test_category.py route-triage
+python scripts/run_test_category.py guided-capture --dry-run
+```
+
 On the current host snapshot from June 14, 2026, preflight found 39 audio devices and reported
 `guided_capture_possible_after_physical_input_confirmation`, but no likely external listener-ear
 input. Good route-triage candidates were:
@@ -320,6 +327,18 @@ $headphoneLabel = "REPLACE_WITH_HEADPHONE_MODEL"
 $fixtureLabel = "REPLACE_WITH_EARCUP_AND_MIC_POSITION"
 $microphoneLabel = "REPLACE_WITH_MIC_MODEL_AND_POSITION"
 pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action capture -Python $env:LANGUAGE_PYTHON --measurement-input-device LISTENER_EAR_INPUT --source-output-device SOURCE_SPEAKER_OUTPUT --headphone-output-device HEADPHONE_OUTPUT --preflight-report artifacts/audio_eval/runs/headphone-earpiece-preflight/headphone-preflight-report.json --sample-rate-hz 48000 --input-channels 1 --output-channels 2 --playback-gain-db -18 --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel
+```
+
+Or use the guarded category wrapper:
+
+```powershell
+$env:LANGUAGE_MEASUREMENT_INPUT_DEVICE = "LISTENER_EAR_INPUT"
+$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = "SOURCE_SPEAKER_OUTPUT"
+$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = "HEADPHONE_OUTPUT"
+$env:LANGUAGE_HEADPHONE_DEVICE_LABEL = $headphoneLabel
+$env:LANGUAGE_ISOLATION_FIXTURE_LABEL = $fixtureLabel
+$env:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL = $microphoneLabel
+python scripts/run_test_category.py guided-capture
 ```
 
 Then run the release gate:
