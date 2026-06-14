@@ -270,7 +270,8 @@ Then run the manual-recording doctor without warning-only and with the real labe
 scoring. It checks that the kit manifest remains `release_proof=false`, both reference WAVs exist and
 still hash-match the manifest, all five WAVs are mono 16-bit PCM at the kit sample rate, the three
 listener-ear recordings meet the minimum duration, and the score labels are no longer placeholders. It writes
-`artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.json`:
+`artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.json` and
+`manual-recording-status.md`:
 
 ```powershell
 $env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"

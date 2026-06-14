@@ -27,6 +27,7 @@ Repository prep for the first internal beta release candidate based on the curre
 - Explicit `source_suppression_mode` session/event contract field so speaker lanes distinguish unavailable suppression, overlay ducking, headphone isolation, and measured true cancellation instead of inferring claims from a dB value.
 - SpeechBrain ECAPA same-voice candidate scorer with disposable Docker/PowerShell targets, WAV hash revalidation, ASV score gates, and an explicit candidate-evidence-only release boundary.
 - Manual headphone/earpiece release kit now writes `manual-recording-checklist.md` beside the JSON manifest so physical listener-ear take capture has exact filenames, setup notes, and follow-up commands.
+- Manual headphone/earpiece recording doctor now writes `manual-recording-status.md` beside the JSON status so missing WAVs, label placeholders, score-ready state, and next commands are readable during physical evidence collection.
 - Windows-native `scripts/smoke_local_demo.ps1` verifies the local gateway health/session/SSE smoke path without requiring `make`, Bash, or WSL.
 - Windows-native `scripts/check_local.ps1` mirrors the top-level `make check` validation path, enforces the gateway's supported Python range, and labels no-Flutter host runs as partial.
 - Windows-native `scripts/package_local.ps1` builds source bundles and gateway distributions without `make`, refusing dirty-tree release artifacts by default and writing a scope-specific local artifact manifest plus checksums.

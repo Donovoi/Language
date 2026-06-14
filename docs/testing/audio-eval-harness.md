@@ -709,8 +709,9 @@ If recorder exports do not already use the manifest's expected filenames, run
 `manual-import-log.json` with `release_proof=false`, can explicitly downmix stereo WAVs, and rejects
 reference clones, duplicate takes, placeholder labels supplied to import, and implicit overwrites.
 Run `headphone-isolation-check-manual` after recording and before scoring; it writes
-`manual-recording-status.json` and blocks until the manifest, reference hashes, WAV headers, sample
-rate, minimum durations, and non-placeholder score labels are coherent.
+`manual-recording-status.json` plus `manual-recording-status.md`, and blocks until the manifest,
+reference hashes, WAV headers, sample rate, minimum durations, and non-placeholder score labels are
+coherent.
 
 ## Release Audio Evidence Gate
 
