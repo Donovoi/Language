@@ -81,13 +81,14 @@ deliberately want a faster reuse run. The gateway currently supports Python `>=3
 For local source and gateway package artifacts on Windows:
 
 ```powershell
-$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
-pwsh -NoProfile -File scripts/package_local.ps1 -Python $env:LANGUAGE_PYTHON
+pwsh -NoProfile -File scripts/package_local.ps1
 ```
 
-That command refreshes `services/gateway/.venv` and rebuilds `services/gateway/dist/`; use
-`-Action source-bundle` for source archives only. It writes a scope-specific local artifact handoff
-manifest and `SHA256SUMS.txt` under `dist/local-release-artifacts/`.
+That command auto-resolves a supported Python `>=3.11,<3.14`, refreshes
+`services/gateway/.venv`, and rebuilds `services/gateway/dist/`; set `LANGUAGE_PACKAGE_PYTHON` or
+pass `-Python` only when you need an explicit interpreter. Use `-Action source-bundle` for source
+archives only. It writes a scope-specific local artifact handoff manifest and `SHA256SUMS.txt` under
+`dist/local-release-artifacts/`.
 
 For Windows host-audio headphone/earpiece isolation work, use the local wrapper instead of Docker so
 PortAudio can see Bluetooth, WASAPI, USB, and built-in microphone devices directly:

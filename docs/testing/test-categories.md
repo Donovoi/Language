@@ -7,6 +7,7 @@ python3 scripts/run_test_category.py list
 python3 scripts/run_test_category.py quick
 python3 scripts/run_test_category.py release-status
 python3 scripts/run_test_category.py release-progress
+python3 scripts/run_test_category.py release-artifacts
 python3 scripts/run_test_category.py smoke-local
 python3 scripts/run_test_category.py all
 ```
@@ -18,6 +19,7 @@ pwsh -NoProfile -File scripts/dev_container.ps1 test-category list
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category quick
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-status
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-progress
+pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-artifacts
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category smoke-local
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category all
 ```
@@ -47,6 +49,7 @@ Use `--dry-run` to inspect the command plan. By default, full output goes to
 | `release-evidence-score` | Import/check and score complete listener-ear evidence when WAVs and concrete labels are ready. | Audio playback/recording. Placeholder labels keep scoring blocked. |
 | `release-status` | Compact release-gate blocker and next-action handoff. | Exits zero by default; use `release` for strict failure semantics. |
 | `release-progress` | Evidence-linked milestone percentages and total completion estimate. | Pass/fail release authority still lives in the strict `release` category. |
+| `release-artifacts` | Clean local source bundle and gateway package handoff. | Refuses dirty trees; writes manifest/checksums under `dist/local-release-artifacts/`. |
 | `release` | Strict audio release gate. | Evidence generation. Expected to fail until required artifacts are present. |
 | `all` | `quick`, `core`, `smoke-local`, and `audio-fixtures`. | Hardware, guided capture, release, optional model downloads, and artifact-dependent voice candidate scoring. |
 
@@ -94,6 +97,7 @@ labels: `LANGUAGE_HEADPHONE_DEVICE_LABEL`, `LANGUAGE_ISOLATION_FIXTURE_LABEL`, a
 `LANGUAGE_MEASUREMENT_MICROPHONE_LABEL`.
 Use `release-progress` after pushes when you need reproducible milestone percentages.
 Use `smoke-local` to produce the log artifact that backs the release smoke progress estimate.
+Use `release-artifacts` after validation when you need a clean local source/gateway artifact handoff.
 Use `python3 scripts/release_audio_status.py --full-commands` when you need the detailed hardware
 command list in the terminal.
 On Windows, `core` defaults to `services\gateway\.venv\Scripts\python.exe` to avoid unsupported

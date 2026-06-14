@@ -73,12 +73,12 @@ Pass `-SkipFlutter` only to document a partial host run when Flutter is not avai
 validation still requires Flutter checks to pass locally or in `.github/workflows/release.yml`.
 The plain PowerShell command refreshes `services/gateway/.venv` like the Make target; pass
 `-UseExistingGatewayVenv` only for a deliberate fast local reuse run.
-The gateway currently supports Python `>=3.11,<3.14`; pass `-Python <path-to-supported-python>` if
-the host's default `python` is outside that range.
+The gateway currently supports Python `>=3.11,<3.14`; the package script auto-resolves a supported
+interpreter, and `-Python <path-to-supported-python>` remains available as an explicit override.
 To build the local source bundle and gateway packages on Windows without `make`, run:
 
 ```powershell
-pwsh -NoProfile -File scripts/package_local.ps1 -Python <path-to-supported-python>
+pwsh -NoProfile -File scripts/package_local.ps1
 ```
 
 The packaging script refuses a dirty tree by default because the source bundle is built from
@@ -91,6 +91,8 @@ gateway sdists are copied there with the same `language-gateway-<version>.tar.gz
 workflow. This is a subset of the workflow manifest and does not include Flutter artifacts or
 workflow run metadata. If `-AllowDirty` is used, the manifest records `dirty_tree: true` and
 `allow_dirty: true` so the handoff cannot be mistaken for a clean release build.
+For gateway packages, the script needs Python `>=3.11,<3.14` and resolves one from `-Python`,
+`LANGUAGE_PACKAGE_PYTHON`, `LANGUAGE_PYTHON`, `PYTHON`, the bundled Codex runtime, or PATH.
 
 For a release that claims the full realtime audio product goal, add the strict evidence gate after
 the relevant audio-eval reports have been generated:

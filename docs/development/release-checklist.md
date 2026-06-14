@@ -58,7 +58,7 @@ than by inventing a second package version line.
 - [ ] Build the local artifacts that are practical on your host:
 	- `make gateway-package`
 	- `make source-bundle`
-	- Windows without `make`: `pwsh -NoProfile -File scripts/package_local.ps1 -Python <path-to-supported-python>`
+	- Windows without `make`: `pwsh -NoProfile -File scripts/package_local.ps1`
 	- `make flutter-release-android` (only when Flutter + Android SDK are available locally)
 	- confirm the package script verifies the `language-gateway` wheel entry point
 	- For local Windows source/gateway handoff, verify `dist/local-release-artifacts/manifest.md` and

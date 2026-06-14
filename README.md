@@ -63,6 +63,7 @@ python3 scripts/run_test_category.py quick
 python3 scripts/run_test_category.py list
 python3 scripts/run_test_category.py release-status
 python3 scripts/run_test_category.py release-progress
+python3 scripts/run_test_category.py release-artifacts
 python3 scripts/run_test_category.py smoke-local
 python3 scripts/run_test_category.py all
 ```
@@ -74,6 +75,7 @@ pwsh -NoProfile -File scripts/dev_container.ps1 test-category quick
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category list
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-status
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-progress
+pwsh -NoProfile -File scripts/dev_container.ps1 test-category release-artifacts
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category smoke-local
 pwsh -NoProfile -File scripts/dev_container.ps1 test-category all
 ```
@@ -106,6 +108,7 @@ Common categories:
 | `release-evidence-score` | Score complete listener-ear evidence | Requires real WAVs and concrete hardware labels. |
 | `release-status` | Concise release blocker summary | Low-token next-action handoff; exits zero by default. |
 | `release-progress` | Milestone percentages | Evidence-linked estimate for push summaries. |
+| `release-artifacts` | Local source/gateway release handoff | Builds clean artifacts plus manifest/checksums under `dist/local-release-artifacts/`. |
 | `release` | Strict release-gate status | Expected to fail until physical evidence is present. |
 | `all` | Automated non-interactive suites | Excludes hardware, guided capture, release, optional model downloads, and artifact-dependent voice checks. |
 
@@ -170,6 +173,12 @@ $env:LANGUAGE_HEADPHONE_DEVICE_LABEL = "Sony WH-1000XM6"
 $env:LANGUAGE_ISOLATION_FIXTURE_LABEL = "left earcup sealed over phone recorder"
 $env:LANGUAGE_MEASUREMENT_MICROPHONE_LABEL = "phone WAV recorder at listener-ear point"
 python scripts/run_test_category.py release-evidence-score
+```
+
+Build local source and gateway package artifacts from a clean tree:
+
+```powershell
+python scripts/run_test_category.py release-artifacts
 ```
 
 The focused commands remain available when you only want one part:
