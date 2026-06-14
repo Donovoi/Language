@@ -33,6 +33,7 @@ DEFAULT_MANUAL_KIT_RUN_ID = "headphone-earpiece-manual-kit"
 DEFAULT_PREFLIGHT_REPORT = "headphone-preflight-report.json"
 DEFAULT_PREFLIGHT_MARKDOWN = "headphone-preflight-report.md"
 DEFAULT_MANUAL_STATUS_REPORT = "manual-recording-status.json"
+DEFAULT_MANUAL_STATUS_MARKDOWN = "manual-recording-status.md"
 DEFAULT_MANUAL_CHECKLIST = "manual-recording-checklist.md"
 DEFAULT_MANUAL_PLAYBACK_LOG = "manual-playback-log.json"
 DEFAULT_MANUAL_IMPORT_LOG = "manual-import-log.json"
@@ -3636,9 +3637,150 @@ def prepare_manual_kit(args: argparse.Namespace) -> int:
     return 0
 
 
+def manual_recording_status_name(summary: dict[str, Any]) -> str:
+    if bool(summary.get("manual_score_ready")):
+        return "SCORE-READY"
+    if bool(summary.get("manual_recordings_ready_for_score_input")):
+        return "FILES-READY-LABELS-PENDING"
+    return "NOT-READY"
+
+
+def manual_status_check_value(report: dict[str, Any], name: str) -> Any:
+    checks = report.get("checks", [])
+    if not isinstance(checks, list):
+        return None
+    for check in checks:
+        if isinstance(check, dict) and check.get("name") == name:
+            return check.get("value")
+    return None
+
+
+def manual_status_label(report: dict[str, Any], key: str, placeholder: str) -> str:
+    labels = manual_status_check_value(report, "manual_score_labels_specific")
+    if isinstance(labels, dict):
+        item = labels.get(key)
+        if isinstance(item, dict) and bool(item.get("passed")) and specific_label(item.get("value")):
+            return str(item["value"])
+    return placeholder
+
+
+def render_manual_recording_status_markdown(report: dict[str, Any]) -> str:
+    summary = report.get("summary", {})
+    summary = summary if isinstance(summary, dict) else {}
+    status = manual_recording_status_name(summary)
+    manifest_path = Path(str(report.get("manifest_path") or "manual-recording-manifest.json"))
+    manifest_arg = _powershell_quote(manifest_path)
+    score_report_path = Path(
+        str(
+            report.get("score_report_path")
+            or DEFAULT_OUTPUT_DIR / "runs" / DEFAULT_RUN_ID / "headphone-isolation-report.json"
+        )
+    )
+    score_report_arg = _powershell_quote(score_report_path)
+    checklist_path = manifest_path.parent / DEFAULT_MANUAL_CHECKLIST
+    headphone_label = manual_status_label(report, "headphone_device_label", "REPLACE_WITH_HEADPHONE_MODEL")
+    fixture_label = manual_status_label(report, "isolation_fixture_label", "REPLACE_WITH_EARCUP_AND_MIC_POSITION")
+    microphone_label = manual_status_label(report, "measurement_microphone_label", "REPLACE_WITH_MIC_MODEL_AND_POSITION")
+    lines = [
+        "# Manual Headphone/Earpiece Recording Status",
+        "",
+        f"- Status: **{status}**",
+        f"- Manifest: `{manifest_path}`",
+        f"- Release proof: `{report.get('release_proof')}`",
+        f"- Issues: {summary.get('issue_count', 0)}",
+        f"- Warnings: {summary.get('warning_count', 0)}",
+        f"- Recording WAVs ready for score input: `{summary.get('manual_recordings_ready_for_score_input')}`",
+        f"- Score labels specific: `{summary.get('manual_score_labels_specific')}`",
+        "",
+        "## Checks",
+        "",
+    ]
+    for check in report.get("checks", []):
+        if not isinstance(check, dict):
+            continue
+        check_status = "PASS" if check.get("passed") else "FAIL"
+        lines.append(f"- [{check_status}] {check.get('name')}: {check.get('message')}")
+    issues = [str(issue) for issue in report.get("issues", []) if str(issue).strip()]
+    warnings = [str(warning) for warning in report.get("warnings", []) if str(warning).strip()]
+    lines.extend(["", "## Issues", ""])
+    lines.extend([f"- {issue}" for issue in issues] or ["- None"])
+    lines.extend(["", "## Warnings", ""])
+    lines.extend([f"- {warning}" for warning in warnings] or ["- None"])
+    lines.extend(
+        [
+            "",
+            "## Next Actions",
+            "",
+            "- This status report is not release evidence; only the scored `headphone-isolation-report.json` can satisfy the release gate.",
+        ]
+    )
+    if status == "SCORE-READY":
+        lines.extend(
+            [
+                "- Run the scorer with the same labels, then rerun the hard release gate.",
+                "",
+                "```powershell",
+                "$env:LANGUAGE_PYTHON = \"C:\\Path\\To\\python.exe\"",
+                f"$headphoneLabel = {powershell_quote_arg(headphone_label)}",
+                f"$fixtureLabel = {powershell_quote_arg(fixture_label)}",
+                f"$microphoneLabel = {powershell_quote_arg(microphone_label)}",
+                f"pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action score-manual -Python $env:LANGUAGE_PYTHON --manifest {manifest_arg} --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel",
+                f"python scripts/release_audio_gate.py --json --headphone-isolation-report {score_report_arg}",
+                "```",
+            ]
+        )
+    elif status == "FILES-READY-LABELS-PENDING":
+        lines.extend(
+            [
+                "- The WAV files are ready, but scoring still needs specific hardware and fixture labels.",
+                "",
+                "```powershell",
+                "$env:LANGUAGE_PYTHON = \"C:\\Path\\To\\python.exe\"",
+                "$headphoneLabel = \"REPLACE_WITH_HEADPHONE_MODEL\"",
+                "$fixtureLabel = \"REPLACE_WITH_EARCUP_AND_MIC_POSITION\"",
+                "$microphoneLabel = \"REPLACE_WITH_MIC_MODEL_AND_POSITION\"",
+                f"pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action check-manual -Python $env:LANGUAGE_PYTHON --manifest {manifest_arg} --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel",
+                f"pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action score-manual -Python $env:LANGUAGE_PYTHON --manifest {manifest_arg} --headphone-device-label $headphoneLabel --isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel",
+                "```",
+            ]
+        )
+    else:
+        lines.extend(
+            [
+                f"- Follow `{checklist_path}` to collect the three listener-ear recordings.",
+                "- If recorder exports use different filenames, import them into the manifest paths before checking again.",
+                "",
+                "```powershell",
+                "$env:LANGUAGE_PYTHON = \"C:\\Path\\To\\python.exe\"",
+                f"pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action import-manual -Python $env:LANGUAGE_PYTHON --manifest {manifest_arg} --source-open-ear-recording RAW_SOURCE_OPEN.wav --source-isolated-ear-recording RAW_SOURCE_ISOLATED.wav --translated-headphone-recording RAW_TRANSLATED.wav --allow-downmix",
+                f"pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action check-manual -Python $env:LANGUAGE_PYTHON --manifest {manifest_arg} --score-warning-only",
+                "```",
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## Detractor Note",
+            "",
+            str(report.get("detractor_loop", {}).get("strongest_objection", "")),
+            "",
+            str(report.get("detractor_loop", {}).get("verdict", "")),
+            "",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def write_manual_recording_status_markdown(report: dict[str, Any], path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_manual_recording_status_markdown(report), encoding="utf-8")
+
+
 def check_manual_recordings(args: argparse.Namespace) -> int:
     manifest_path = Path(args.manifest)
     report_path = Path(args.report) if args.report else manifest_path.parent / DEFAULT_MANUAL_STATUS_REPORT
+    markdown_report = getattr(args, "markdown_report", None)
+    markdown_path = Path(markdown_report) if markdown_report else report_path.with_suffix(".md")
     checks: list[dict[str, Any]] = []
     warnings: list[str] = []
     issues: list[str] = []
@@ -3822,6 +3964,10 @@ def check_manual_recordings(args: argparse.Namespace) -> int:
         "generated_at_unix": int(time.time()),
         "manifest_path": str(manifest_path),
         "release_proof": False,
+        "score_report_path": str(
+            manifest.get("score_report_path")
+            or DEFAULT_OUTPUT_DIR / "runs" / DEFAULT_RUN_ID / "headphone-isolation-report.json"
+        ),
         "summary": {
             "issue_count": len(issues),
             "manual_recordings_ready_for_score_input": files_ready,
@@ -3851,6 +3997,7 @@ def check_manual_recordings(args: argparse.Namespace) -> int:
     report = json_safe(report)
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n", encoding="utf-8")
+    write_manual_recording_status_markdown(report, markdown_path)
     if args.json:
         print(json.dumps(report, indent=2, sort_keys=True))
     status = "SCORE-READY" if ready else ("FILES-READY-LABELS-PENDING" if files_ready else "NOT-READY")
@@ -3859,6 +4006,7 @@ def check_manual_recordings(args: argparse.Namespace) -> int:
         f"issues={len(issues)}, warnings={len(warnings)}"
     )
     print(f"wrote manual recording status to {report_path}")
+    print(f"wrote manual recording status handoff to {markdown_path}")
     return 0 if ready or args.score_warning_only else 1
 
 
@@ -5003,6 +5151,15 @@ def self_test() -> int:
         )
         if bool(missing_manual_status.get("summary", {}).get("manual_recordings_ready_for_score_input")):
             raise RuntimeError("expected manual recording status to reject missing listener-ear recordings")
+        missing_manual_markdown = (
+            manual_manifest_path.parent / "manual-recording-status-missing.md"
+        ).read_text(encoding="utf-8")
+        if "Status: **NOT-READY**" not in missing_manual_markdown:
+            raise RuntimeError("manual recording status Markdown should show NOT-READY for missing recordings")
+        if "manual-recording-checklist.md" not in missing_manual_markdown:
+            raise RuntimeError("manual recording status Markdown should point back to the recording checklist")
+        if "import-manual" not in missing_manual_markdown:
+            raise RuntimeError("manual recording status Markdown should include the import-manual recovery path")
         missing_score_manual_result = score_manual_recordings(
             argparse.Namespace(
                 adapter_id=DEFAULT_ADAPTER_ID,
@@ -5253,6 +5410,13 @@ def self_test() -> int:
             raise RuntimeError("manual recording status must not be score-ready with placeholder labels")
         if int(placeholder_manual_status.get("summary", {}).get("placeholder_label_count") or 0) <= 0:
             raise RuntimeError("manual recording status should warn about placeholder score-command labels")
+        placeholder_manual_markdown = (
+            manual_manifest_path.parent / "manual-recording-status-ready.md"
+        ).read_text(encoding="utf-8")
+        if "Status: **FILES-READY-LABELS-PENDING**" not in placeholder_manual_markdown:
+            raise RuntimeError("manual recording status Markdown should show labels pending when WAVs are ready")
+        if "REPLACE_WITH_HEADPHONE_MODEL" not in placeholder_manual_markdown:
+            raise RuntimeError("manual recording status Markdown should keep label replacement prompts visible")
         placeholder_score_manual_result = score_manual_recordings(
             argparse.Namespace(
                 adapter_id=DEFAULT_ADAPTER_ID,
@@ -5301,8 +5465,21 @@ def self_test() -> int:
             raise RuntimeError("expected manual recording status to mark valid listener-ear recordings score-ready")
         if ready_manual_status.get("summary", {}).get("release_proof") is not False:
             raise RuntimeError("manual recording status must not set release_proof")
+        if ready_manual_status.get("score_report_path") != score_report_path:
+            raise RuntimeError("manual recording status should carry the manifest score report path")
         if int(ready_manual_status.get("summary", {}).get("placeholder_label_count") or 0) != 0:
             raise RuntimeError("manual recording status should clear placeholder labels when explicit labels are supplied")
+        ready_manual_markdown = (
+            manual_manifest_path.parent / "manual-recording-status-ready-with-labels.md"
+        ).read_text(encoding="utf-8")
+        if "Status: **SCORE-READY**" not in ready_manual_markdown:
+            raise RuntimeError("manual recording status Markdown should show score-ready when labels and WAVs pass")
+        if "release_audio_gate.py --json" not in ready_manual_markdown:
+            raise RuntimeError("manual recording status Markdown should include the release gate follow-up")
+        if f"--headphone-isolation-report {score_report_arg}" not in ready_manual_markdown:
+            raise RuntimeError("manual recording status Markdown should gate the manifest score report path")
+        if "unit headphones" not in ready_manual_markdown:
+            raise RuntimeError("manual recording status Markdown should carry concrete score labels")
         manual_score_result = score_manual_recordings(
             argparse.Namespace(
                 adapter_id=DEFAULT_ADAPTER_ID,
@@ -6258,6 +6435,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         / "manual-recording-manifest.json",
     )
     check_manual_parser.add_argument("--report", type=Path)
+    check_manual_parser.add_argument("--markdown-report", type=Path)
     check_manual_parser.add_argument("--headphone-device-label")
     check_manual_parser.add_argument("--isolation-fixture-label")
     check_manual_parser.add_argument("--measurement-microphone-label")

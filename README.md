@@ -329,9 +329,10 @@ explicitly downmix stereo WAV exports with `--allow-downmix`, writes `manual-imp
 `release_proof=false`, rejects reference clones/duplicate takes, and does not do loudness
 normalization, denoising, clipping repair, or score-optimized trimming. Then run
 `headphone-isolation-check-manual` before scoring. It writes
-`manual-recording-status.json` and exits nonzero until the manifest, reference WAVs, and three
-recordings are ready and specific score labels have been supplied. Use `--score-warning-only` before
-recording if you only want a status report. After it reports score-ready, run
+`manual-recording-status.json` plus `manual-recording-status.md`, and exits nonzero until the
+manifest, reference WAVs, and three recordings are ready and specific score labels have been
+supplied. Use `--score-warning-only` before recording if you only want a status report. After it
+reports score-ready, run
 `headphone-isolation-score-manual` with the same headphone, microphone, and earcup-position labels.
 It reuses the manifest paths and invokes the release-gated headphone scorer.
 

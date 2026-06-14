@@ -538,9 +538,9 @@ place the files at the manifest's expected paths or run `headphone-isolation-imp
 three raw recorder WAVs. The importer writes a non-release `manual-import-log.json`, can explicitly
 downmix stereo WAV exports, and rejects reference clones, duplicate takes, placeholder labels supplied
 to import, and implicit overwrites. Then run `headphone-isolation-check-manual` without warning-only
-before scoring. The doctor writes `manual-recording-status.json` and fails until the manifest,
-reference hashes, sample rate, mono 16-bit PCM format, and minimum recording durations are ready, and
-until `check-manual` receives specific hardware and fixture labels matching the later
+before scoring. The doctor writes `manual-recording-status.json` plus `manual-recording-status.md`,
+and fails until the manifest, reference hashes, sample rate, mono 16-bit PCM format, and minimum
+recording durations are ready, and until `check-manual` receives specific hardware and fixture labels matching the later
 `headphone-isolation-score-manual` command.
 
 ## Release Audio Evidence Gate
