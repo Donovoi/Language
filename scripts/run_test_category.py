@@ -32,6 +32,9 @@ MANUAL_RECORDING_FILENAMES = {
 }
 PLACEHOLDER_REQUIRED_ENV_VALUES = {
     "HEADPHONE_OUTPUT",
+    "LANGUAGE_HEADPHONE_OUTPUT_DEVICE",
+    "LANGUAGE_MEASUREMENT_INPUT_DEVICE",
+    "LANGUAGE_SOURCE_OUTPUT_DEVICE",
     "LISTENER_EAR_INPUT",
     "REPLACE_WITH_EARCUP_AND_MIC_POSITION",
     "REPLACE_WITH_HEADPHONE_MODEL",
@@ -425,9 +428,9 @@ STEPS: dict[str, Step] = {
             "{env:LANGUAGE_MANUAL_RECORDING_MANIFEST:artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-manifest.json}",
             "--dry-run",
             "--source-output-device",
-            "{env:LANGUAGE_SOURCE_OUTPUT_DEVICE}",
+            "{env:LANGUAGE_SOURCE_OUTPUT_DEVICE:LANGUAGE_SOURCE_OUTPUT_DEVICE}",
             "--headphone-output-device",
-            "{env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE}",
+            "{env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE:LANGUAGE_HEADPHONE_OUTPUT_DEVICE}",
         ),
         required_env=("LANGUAGE_SOURCE_OUTPUT_DEVICE", "LANGUAGE_HEADPHONE_OUTPUT_DEVICE"),
     ),
@@ -443,9 +446,9 @@ STEPS: dict[str, Step] = {
             "--manifest",
             "{env:LANGUAGE_MANUAL_RECORDING_MANIFEST:artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-manifest.json}",
             "--source-output-device",
-            "{env:LANGUAGE_SOURCE_OUTPUT_DEVICE}",
+            "{env:LANGUAGE_SOURCE_OUTPUT_DEVICE:LANGUAGE_SOURCE_OUTPUT_DEVICE}",
             "--headphone-output-device",
-            "{env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE}",
+            "{env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE:LANGUAGE_HEADPHONE_OUTPUT_DEVICE}",
             "--countdown-s",
             "{env:LANGUAGE_MANUAL_PLAYBACK_COUNTDOWN_S:5}",
             "--non-interactive",
@@ -1186,6 +1189,11 @@ def self_test() -> int:
     ):
         if playback_step.required_env != ("LANGUAGE_SOURCE_OUTPUT_DEVICE", "LANGUAGE_HEADPHONE_OUTPUT_DEVICE"):
             raise AssertionError(f"{playback_step.name} must require explicit source/headphone output devices")
+        playback_command, _ = command_for_step(playback_step, "powershell")
+        rendered_playback_command = " ".join(playback_command)
+        for placeholder in ("LANGUAGE_SOURCE_OUTPUT_DEVICE", "LANGUAGE_HEADPHONE_OUTPUT_DEVICE"):
+            if placeholder not in rendered_playback_command:
+                raise AssertionError(f"{playback_step.name} dry-run command must show {placeholder}")
     old_env = os.environ.get("LANGUAGE_HEADPHONE_DEVICE_LABEL")
     os.environ["LANGUAGE_HEADPHONE_DEVICE_LABEL"] = "REPLACE_WITH_HEADPHONE_MODEL"
     try:
