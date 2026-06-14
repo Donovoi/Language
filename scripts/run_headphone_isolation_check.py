@@ -39,6 +39,8 @@ DEFAULT_MANUAL_PLAYBACK_LOG = "manual-playback-log.json"
 DEFAULT_MANUAL_IMPORT_LOG = "manual-import-log.json"
 DEFAULT_MANUAL_COLLECTION_PLAN = "headphone-evidence-collection-plan.json"
 DEFAULT_MANUAL_COLLECTION_MARKDOWN = "headphone-evidence-collection-plan.md"
+DEFAULT_MANUAL_RAW_RECORDING_DIR = "raw-listener-ear-recordings"
+DEFAULT_MANUAL_RAW_RECORDING_README = "listener-ear-recording-dropbox.md"
 DEFAULT_ADAPTER_ID = "listener_headphone_earpiece_isolation_measurement_v1"
 DEFAULT_PREFLIGHT_ADAPTER_ID = "listener_headphone_earpiece_preflight_v1"
 DEFAULT_ROUTE_PROBE_ADAPTER_ID = "listener_headphone_earpiece_route_probe_v1"
@@ -997,7 +999,7 @@ def preflight_recommended_path(summary: dict[str, Any]) -> str:
 
 def powershell_quote_arg(value: Any) -> str:
     text = str(value)
-    safe = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.\\/:$")
+    safe = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-.\\/:")
     if text and all(char in safe for char in text):
         return text
     return "'" + text.replace("'", "''") + "'"
@@ -4101,6 +4103,74 @@ def manual_collection_import_ready(args: argparse.Namespace) -> bool:
     )
 
 
+def manual_raw_recording_dropbox(manifest_path: Path) -> dict[str, Any]:
+    dropbox_dir = manifest_path.parent / DEFAULT_MANUAL_RAW_RECORDING_DIR
+    return {
+        "path": str(dropbox_dir),
+        "readme_path": str(dropbox_dir / DEFAULT_MANUAL_RAW_RECORDING_README),
+        "expected_recordings": {
+            "source_open_ear_recording": str(dropbox_dir / "source-open-ear-recording.wav"),
+            "source_isolated_ear_recording": str(dropbox_dir / "source-isolated-ear-recording.wav"),
+            "translated_headphone_recording": str(dropbox_dir / "translated-headphone-recording.wav"),
+        },
+        "release_evidence": False,
+        "release_proof": False,
+    }
+
+
+def write_manual_raw_recording_dropbox(
+    *,
+    dropbox: dict[str, Any],
+    manifest_path: Path,
+    playback_route: dict[str, Any],
+) -> None:
+    dropbox_dir = Path(str(dropbox.get("path", "")))
+    readme_path = Path(str(dropbox.get("readme_path", "")))
+    expected = dropbox.get("expected_recordings", {})
+    expected = expected if isinstance(expected, dict) else {}
+    dropbox_dir.mkdir(parents=True, exist_ok=True)
+    playback_route = playback_route if isinstance(playback_route, dict) else {}
+    lines = [
+        "# Listener-Ear Recording Dropbox",
+        "",
+        "This folder is for raw phone, USB microphone, or external-recorder WAV exports.",
+        "It is not release evidence until the files are imported, checked, scored, and accepted by the release gate.",
+        "",
+        "## Required WAV Files",
+        "",
+        f"- `source-open-ear-recording.wav`: source speaker playback with the listener ear open.",
+        f"- `source-isolated-ear-recording.wav`: same source playback with the headphone or earpiece sealed over the measurement point.",
+        f"- `translated-headphone-recording.wav`: translated/headphone playback recorded at the same listener-ear point.",
+        "",
+        "## Placement",
+        "",
+        f"- Manual manifest: `{markdown_inline_path(manifest_path)}`",
+        f"- Dropbox folder: `{markdown_inline_path(dropbox_dir)}`",
+        f"- Source output for play-manual: `{markdown_inline(playback_route.get('source_output_device', 'choose explicitly'))}`",
+        f"- Headphone output for play-manual: `{markdown_inline(playback_route.get('headphone_output_device', 'choose explicitly'))}`",
+        "- Preflight route suggestions can become stale when Windows audio devices change; rerun preflight or pass explicit outputs if unsure.",
+        "- These outputs only assist reference playback; final evidence still needs imported, scored listener-ear WAV recordings.",
+        "",
+        "## Expected Paths",
+        "",
+    ]
+    for key in (
+        "source_open_ear_recording",
+        "source_isolated_ear_recording",
+        "translated_headphone_recording",
+    ):
+        lines.append(f"- `{key}`: `{markdown_inline_path(expected.get(key, ''))}`")
+    lines.extend(
+        [
+            "",
+            "Keep the recorder position fixed between the source-open and source-isolated takes.",
+            "Export mono 16-bit PCM WAV at the kit sample rate, or use the generated import command with `--allow-downmix` for stereo exports.",
+            "",
+        ]
+    )
+    readme_path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def _string_or_none(value: Any) -> str | None:
     if value is None:
         return None
@@ -4124,6 +4194,10 @@ def markdown_inline(value: Any, *, max_len: int = 120) -> str:
     if len(text) > max_len:
         return text[: max_len - 3].rstrip() + "..."
     return text
+
+
+def markdown_inline_path(value: Any) -> str:
+    return markdown_inline(value, max_len=4096)
 
 
 def default_preflight_report_path(output_dir: Path) -> Path:
@@ -4257,6 +4331,7 @@ def manual_collection_commands(
     manifest_path: Path,
     score_report_path: Path,
     playback_route: dict[str, Any] | None = None,
+    raw_recording_dropbox: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     base = "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1"
     python = "-Python $env:LANGUAGE_PYTHON"
@@ -4273,9 +4348,24 @@ def manual_collection_commands(
         or playback_route.get("headphone_output_device")
         or "HEADPHONE_OUTPUT"
     )
-    source_open = getattr(args, "source_open_ear_recording", None) or "RAW_SOURCE_OPEN.wav"
-    source_isolated = getattr(args, "source_isolated_ear_recording", None) or "RAW_SOURCE_ISOLATED.wav"
-    translated = getattr(args, "translated_headphone_recording", None) or "RAW_TRANSLATED.wav"
+    raw_recording_dropbox = raw_recording_dropbox if isinstance(raw_recording_dropbox, dict) else {}
+    expected_raw = raw_recording_dropbox.get("expected_recordings", {})
+    expected_raw = expected_raw if isinstance(expected_raw, dict) else {}
+    source_open = (
+        getattr(args, "source_open_ear_recording", None)
+        or expected_raw.get("source_open_ear_recording")
+        or "RAW_SOURCE_OPEN.wav"
+    )
+    source_isolated = (
+        getattr(args, "source_isolated_ear_recording", None)
+        or expected_raw.get("source_isolated_ear_recording")
+        or "RAW_SOURCE_ISOLATED.wav"
+    )
+    translated = (
+        getattr(args, "translated_headphone_recording", None)
+        or expected_raw.get("translated_headphone_recording")
+        or "RAW_TRANSLATED.wav"
+    )
     return {
         "prepare": (
             f"{base} -Action prepare-manual {python} "
@@ -4317,6 +4407,10 @@ def render_manual_collection_markdown(plan: dict[str, Any]) -> str:
     next_actions = [str(action) for action in plan.get("next_actions", []) if str(action).strip()]
     playback_route = plan.get("preflight_playback_route", {})
     playback_route = playback_route if isinstance(playback_route, dict) else {}
+    raw_dropbox = plan.get("raw_recording_dropbox", {})
+    raw_dropbox = raw_dropbox if isinstance(raw_dropbox, dict) else {}
+    expected_raw = raw_dropbox.get("expected_recordings", {})
+    expected_raw = expected_raw if isinstance(expected_raw, dict) else {}
     lines = [
         "# Headphone/Earpiece Evidence Collection Plan",
         "",
@@ -4367,10 +4461,20 @@ def render_manual_collection_markdown(plan: dict[str, Any]) -> str:
         lines.append(f"- Route issues: {issues_text}")
     warnings = playback_route.get("warnings", [])
     if isinstance(warnings, list) and warnings:
-        lines.append(f"- Warnings: {'; '.join(markdown_inline(warning) for warning in warnings[:3])}")
+        lines.append(f"- Warnings: {'; '.join(markdown_inline(warning, max_len=4096) for warning in warnings[:3])}")
     lines.extend(
         [
             f"- Next step: {markdown_inline(playback_route.get('next_step', ''))}",
+            "",
+            "## Raw Recording Dropbox",
+            "",
+            "Put phone, USB microphone, or external-recorder WAV exports at these exact paths before running `import_recordings`.",
+            "",
+            f"- Folder: `{markdown_inline_path(raw_dropbox.get('path', ''))}`",
+            f"- Instructions: `{markdown_inline_path(raw_dropbox.get('readme_path', ''))}`",
+            f"- Source open-ear WAV: `{markdown_inline_path(expected_raw.get('source_open_ear_recording', ''))}`",
+            f"- Source isolated-ear WAV: `{markdown_inline_path(expected_raw.get('source_isolated_ear_recording', ''))}`",
+            f"- Translated headphone WAV: `{markdown_inline_path(expected_raw.get('translated_headphone_recording', ''))}`",
             "",
             "## Issues",
             "",
@@ -4575,11 +4679,18 @@ def collect_headphone_evidence(args: argparse.Namespace) -> int:
             next_actions.append("run score-manual or rerun collect-headphone-evidence with --score-if-ready")
 
     playback_route = manual_collection_preflight_playback_route(args)
+    raw_recording_dropbox = manual_raw_recording_dropbox(manifest_path)
+    write_manual_raw_recording_dropbox(
+        dropbox=raw_recording_dropbox,
+        manifest_path=manifest_path,
+        playback_route=playback_route,
+    )
     commands = manual_collection_commands(
         args=args,
         manifest_path=manifest_path,
         score_report_path=score_report_path,
         playback_route=playback_route,
+        raw_recording_dropbox=raw_recording_dropbox,
     )
     plan = {
         "schema_version": 1,
@@ -4603,6 +4714,7 @@ def collect_headphone_evidence(args: argparse.Namespace) -> int:
         "issues": issues + status_issues,
         "next_actions": next_actions,
         "preflight_playback_route": playback_route,
+        "raw_recording_dropbox": raw_recording_dropbox,
         "recommended_commands": commands,
         "step_results": step_results,
         "detractor_loop": {
@@ -5765,11 +5877,33 @@ def self_test() -> int:
         explicit_play_command = collection_plan.get("recommended_commands", {}).get("play_references", "")
         if "unit-source-output" not in explicit_play_command or "unit-headphone-output" not in explicit_play_command:
             raise RuntimeError("explicit collection playback routes should override missing preflight suggestions")
+        raw_dropbox = collection_plan.get("raw_recording_dropbox", {})
+        raw_expected = raw_dropbox.get("expected_recordings", {}) if isinstance(raw_dropbox, dict) else {}
+        if "raw-listener-ear-recordings" not in str(raw_dropbox.get("path", "")):
+            raise RuntimeError("collection plan should create a raw listener-ear recording dropbox")
+        raw_dropbox_readme_path = Path(str(raw_dropbox.get("readme_path", "")))
+        if not raw_dropbox_readme_path.exists():
+            raise RuntimeError("collection plan should write the raw listener-ear recording dropbox README")
+        raw_dropbox_markdown = raw_dropbox_readme_path.read_text(encoding="utf-8")
+        import_command = collection_plan.get("recommended_commands", {}).get("import_recordings", "")
+        for key in (
+            "source_open_ear_recording",
+            "source_isolated_ear_recording",
+            "translated_headphone_recording",
+        ):
+            expected_path = str(raw_expected.get(key, ""))
+            if not expected_path or expected_path not in import_command:
+                raise RuntimeError(f"collection import command should point at concrete dropbox path for {key}")
         collection_markdown = (manual_manifest_path.parent / "collection-plan.md").read_text(encoding="utf-8")
+        for key, expected_path in raw_expected.items():
+            expected_path = str(expected_path)
+            if expected_path not in collection_markdown or expected_path not in raw_dropbox_markdown:
+                raise RuntimeError(f"dropbox markdown should show the full concrete path for {key}")
         for expected_text in (
             "Headphone/Earpiece Evidence Collection Plan",
             "built-in laptop mic is not listener-ear proof",
             "Playback Route Suggestion",
+            "Raw Recording Dropbox",
             "play_references",
             "import_recordings",
             "release_audio_gate.py --json",
@@ -6759,6 +6893,42 @@ def self_test() -> int:
             raise RuntimeError("explicit manual playback outputs should override valid preflight suggestions")
         if "--source-output-device '1'" in override_play_command or "--headphone-output-device '2'" in override_play_command:
             raise RuntimeError("preflight output suggestions must not override explicit manual playback outputs")
+        raw_override_dir = root / "raw exports with spaces"
+        raw_source_open = root / "raw$exports" / "source-open.wav"
+        raw_source_isolated = raw_override_dir / "source isolated.wav"
+        raw_translated = raw_override_dir / "translated headphone.wav"
+        raw_override_commands = manual_collection_commands(
+            args=argparse.Namespace(
+                headphone_output_device=None,
+                playback_gain_db=DEFAULT_PLAYBACK_GAIN_DB,
+                sample_rate_hz=sample_rate_hz,
+                source_isolated_ear_recording=raw_source_isolated,
+                source_open_ear_recording=raw_source_open,
+                source_output_device=None,
+                translated_headphone_recording=raw_translated,
+            ),
+            manifest_path=manual_manifest_path,
+            score_report_path=root / "raw-override-headphone-isolation-report.json",
+            playback_route=preflight_playback_route,
+            raw_recording_dropbox={
+                "expected_recordings": {
+                    "source_open_ear_recording": str(root / "dropbox-default" / "source-open-ear-recording.wav"),
+                    "source_isolated_ear_recording": str(
+                        root / "dropbox-default" / "source-isolated-ear-recording.wav"
+                    ),
+                    "translated_headphone_recording": str(
+                        root / "dropbox-default" / "translated-headphone-recording.wav"
+                    ),
+                }
+            },
+        )
+        raw_override_import_command = raw_override_commands.get("import_recordings", "")
+        for expected_path in (raw_source_open, raw_source_isolated, raw_translated):
+            quoted_path = _powershell_quote(expected_path)
+            if quoted_path not in raw_override_import_command:
+                raise RuntimeError("explicit raw recording overrides with shell-sensitive paths should be quoted")
+        if "dropbox-default" in raw_override_import_command:
+            raise RuntimeError("explicit raw recording overrides should take precedence over dropbox defaults")
         forged_preflight = json.loads(json.dumps(confirmed_preflight_report))
         forged_candidate = forged_preflight["benchmarks"]["headphone_earpiece_preflight"]["candidate_route_triples"][0]
         forged_candidate["source_output_device"] = "$env:TEMP"
