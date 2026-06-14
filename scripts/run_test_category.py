@@ -649,6 +649,7 @@ CATEGORIES: dict[str, Category] = {
             "Physical checklist: artifacts/release/physical-audio-checklist.md",
             "Raw WAV dropbox: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/raw-listener-ear-recordings",
         ),
+        handoff_log_steps=("headphone-route-triage-handoff",),
         manual_status_report="artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.json",
     ),
     "evidence-kit": Category(
@@ -1142,6 +1143,8 @@ def self_test() -> int:
         raise AssertionError("recording-session-dry-run must validate playback routing without audio")
     if CATEGORIES["route-triage"].handoff_log_steps != ("headphone-route-triage-handoff",):
         raise AssertionError("route-triage must print the generated probe handoff in quiet mode")
+    if CATEGORIES["physical-audio-handoff"].handoff_log_steps != ("headphone-route-triage-handoff",):
+        raise AssertionError("physical-audio-handoff must include the route probe handoff in quiet mode")
     if not CATEGORIES["recording-status"].success_hints:
         raise AssertionError("recording-status must print where the manual status handoff was written")
     if not CATEGORIES["recording-status"].manual_status_report:
