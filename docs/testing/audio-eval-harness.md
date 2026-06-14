@@ -694,6 +694,10 @@ Route sweeps are still triage only. Their reports include `summary.failure_summa
 `diagnosis` entries so operators can tell whether the route failed to open, used the same output for
 source and headphones, was too quiet, clipped, or heard audio that did not match the generated
 reference because of processing or routing mismatch.
+When a single-route headphone/earpiece probe is present, `scripts/release_audio_gate.py` also renders
+that diagnosis in the operator handoff. Quiet source-route failures include a same-route retry command
+6 dB louder, capped at -12 dB; this is still triage only, and laptop built-in microphones remain
+insufficient for final listener-ear release evidence.
 When PortAudio routing is the blocker, `headphone-isolation-prepare-manual` creates non-release
 reference WAVs, `manual-recording-manifest.json`, and `manual-recording-checklist.md` for a
 phone/USB mic/external recorder flow. The manual kit remains `release_proof=false`; use

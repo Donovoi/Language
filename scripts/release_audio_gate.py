@@ -2764,6 +2764,82 @@ def _route_probe_metric(summary: dict[str, Any], prefix: str) -> dict[str, Any]:
     }
 
 
+def _powershell_single_quote_arg(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _route_probe_command(
+    *,
+    measurement_input_device: str,
+    source_output_device: str,
+    headphone_output_device: str,
+    sample_rate_hz: int,
+    input_channels: int,
+    output_channels: int,
+    playback_gain_db: float | None,
+) -> str:
+    gain = -18.0 if playback_gain_db is None else playback_gain_db
+    return (
+        "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action probe-route "
+        "-Python $env:LANGUAGE_PYTHON "
+        f"--measurement-input-device {_powershell_single_quote_arg(measurement_input_device)} "
+        f"--source-output-device {_powershell_single_quote_arg(source_output_device)} "
+        f"--headphone-output-device {_powershell_single_quote_arg(headphone_output_device)} "
+        f"--sample-rate-hz {sample_rate_hz} "
+        f"--input-channels {input_channels} "
+        f"--output-channels {output_channels} "
+        f"--playback-gain-db {gain:g} "
+        "--score-warning-only"
+    )
+
+
+def _route_probe_retry_hints(
+    *,
+    blocking_reasons: list[str],
+    device_route: dict[str, dict[str, Any]],
+    sample_rate_hz: int,
+    input_channels: int,
+    output_channels: int,
+    playback_gain_db: float | None,
+) -> dict[str, Any]:
+    measurement_input = device_route.get("measurement_input", {})
+    source_output = device_route.get("source_output", {})
+    headphone_output = device_route.get("headphone_output", {})
+    measurement_id = _string_or_empty(measurement_input.get("requested_device"))
+    source_id = _string_or_empty(source_output.get("requested_device"))
+    headphone_id = _string_or_empty(headphone_output.get("requested_device"))
+    if not (measurement_id and source_id and headphone_id and sample_rate_hz and input_channels and output_channels):
+        return {}
+
+    current_gain = -18.0 if playback_gain_db is None else playback_gain_db
+    hints: dict[str, Any] = {
+        "same_route_after_processing_changes": _route_probe_command(
+            measurement_input_device=measurement_id,
+            source_output_device=source_id,
+            headphone_output_device=headphone_id,
+            sample_rate_hz=sample_rate_hz,
+            input_channels=input_channels,
+            output_channels=output_channels,
+            playback_gain_db=current_gain,
+        )
+    }
+    if "source:recording_too_quiet" in blocking_reasons and current_gain <= -18.0:
+        retry_gain = min(-12.0, current_gain + 6.0)
+        hints["same_route_after_gain_adjustment"] = _route_probe_command(
+            measurement_input_device=measurement_id,
+            source_output_device=source_id,
+            headphone_output_device=headphone_id,
+            sample_rate_hz=sample_rate_hz,
+            input_channels=input_channels,
+            output_channels=output_channels,
+            playback_gain_db=retry_gain,
+        )
+        hints["gain_adjustment_note"] = (
+            f"Source route was too quiet; retry 6 dB louder at {retry_gain:g} dB only if the route is not clipping."
+        )
+    return hints
+
+
 def load_headphone_route_probe_status_handoff(path: Path | None) -> dict[str, Any] | None:
     if path is None:
         return None
@@ -2827,6 +2903,26 @@ def load_headphone_route_probe_status_handoff(path: Path | None) -> dict[str, An
     else:
         status = "FAIL-TRIAGE"
         next_step = "Apply the route diagnosis, then rerun route probe or switch to the manual listener-ear kit."
+    device_route = {
+        "measurement_input": _route_probe_device(device_info, "measurement_input_device"),
+        "source_output": _route_probe_device(device_info, "source_output_device"),
+        "headphone_output": _route_probe_device(device_info, "headphone_output_device"),
+    }
+    sample_rate_hz = _nonnegative_int(probe_summary.get("sample_rate_hz"))
+    input_channels = _nonnegative_int(probe_summary.get("input_channels"))
+    output_channels = _nonnegative_int(probe_summary.get("output_channels"))
+    playback_gain_db = _float_or_none(probe_summary.get("playback_gain_db"))
+    blocking_reasons = _limited_string_list(diagnosis.get("blocking_reasons"), limit=6)
+    recommended_commands: dict[str, Any] = {}
+    if status == "FAIL-TRIAGE":
+        recommended_commands = _route_probe_retry_hints(
+            blocking_reasons=blocking_reasons,
+            device_route=device_route,
+            sample_rate_hz=sample_rate_hz,
+            input_channels=input_channels,
+            output_channels=output_channels,
+            playback_gain_db=playback_gain_db,
+        )
 
     handoff.update(
         {
@@ -2835,19 +2931,16 @@ def load_headphone_route_probe_status_handoff(path: Path | None) -> dict[str, An
             "next_step": next_step,
             "release_proof": _literal_true(payload.get("release_proof")),
             "identity_issues": identity_issues,
-            "sample_rate_hz": _nonnegative_int(probe_summary.get("sample_rate_hz")),
-            "input_channels": _nonnegative_int(probe_summary.get("input_channels")),
-            "output_channels": _nonnegative_int(probe_summary.get("output_channels")),
-            "playback_gain_db": _float_or_none(probe_summary.get("playback_gain_db")),
+            "sample_rate_hz": sample_rate_hz,
+            "input_channels": input_channels,
+            "output_channels": output_channels,
+            "playback_gain_db": playback_gain_db,
             "source_route": source_metric,
             "headphone_route": headphone_metric,
-            "device_route": {
-                "measurement_input": _route_probe_device(device_info, "measurement_input_device"),
-                "source_output": _route_probe_device(device_info, "source_output_device"),
-                "headphone_output": _route_probe_device(device_info, "headphone_output_device"),
-            },
-            "blocking_reasons": _limited_string_list(diagnosis.get("blocking_reasons"), limit=6),
+            "device_route": device_route,
+            "blocking_reasons": blocking_reasons,
             "next_actions": _limited_string_list(diagnosis.get("next_actions"), limit=5),
+            "recommended_commands": recommended_commands,
         }
     )
     return handoff
@@ -3147,6 +3240,35 @@ def headphone_route_probe_status_handoff_lines(route_probe_status: dict[str, Any
     next_actions = route_probe_status.get("next_actions", [])
     if isinstance(next_actions, list) and next_actions:
         lines.append(f"- Suggested next actions: {'; '.join(str(action) for action in next_actions[:3])}")
+    commands = route_probe_status.get("recommended_commands", {})
+    commands = commands if isinstance(commands, dict) else {}
+    if status != "FAIL-TRIAGE":
+        commands = {}
+    gain_note = str(commands.get("gain_adjustment_note", "")).strip()
+    if gain_note:
+        lines.append(f"- Gain retry note: {gain_note}")
+    gain_command = str(commands.get("same_route_after_gain_adjustment", "")).strip()
+    same_route_command = str(commands.get("same_route_after_processing_changes", "")).strip()
+    if gain_command:
+        lines.extend(
+            [
+                "- Suggested same-route gain retry:",
+                "",
+                "```powershell",
+                gain_command,
+                "```",
+            ]
+        )
+    elif same_route_command and status == "FAIL-TRIAGE":
+        lines.extend(
+            [
+                "- Suggested same-route retry after fixing processing/placement:",
+                "",
+                "```powershell",
+                same_route_command,
+                "```",
+            ]
+        )
     lines.append(f"- Next step: {route_probe_status.get('next_step', '')}")
     return lines
 
@@ -4774,7 +4896,7 @@ def self_test() -> None:
                 "benchmarks": {
                     "headphone_earpiece_route_probe": {
                         "adapter_id": "unit_route_probe",
-                        "summary": passing_route_probe_summary,
+                        "summary": route_probe_benchmark_summary,
                     }
                 },
             },
@@ -5295,6 +5417,8 @@ def self_test() -> None:
             raise AssertionError("expected failed route probe to stay non-evidentiary in Markdown")
         if "source:recording_too_quiet" not in failed_route_probe_markdown or "headphone:reference_distorted" not in failed_route_probe_markdown:
             raise AssertionError("expected failed route probe handoff to include blocking reasons")
+        if "Suggested same-route gain retry" not in failed_route_probe_markdown or "--playback-gain-db -12" not in failed_route_probe_markdown:
+            raise AssertionError("expected quiet route probe handoff to include a cautious -12 dB retry command")
         passed_route_probe_report = build_report(
             release_results,
             prototype_results,
@@ -5311,6 +5435,11 @@ def self_test() -> None:
         wrong_route_probe_markdown = render_markdown_report(wrong_route_probe_report)
         if "INVALID" not in wrong_route_probe_markdown or "fixture_kind is not headphone route probe" not in wrong_route_probe_markdown:
             raise AssertionError("wrong route probe fixture kind must render invalid")
+        wrong_route_probe_handoff = wrong_route_probe_report.get("operator_handoff", {}).get("headphone_route_probe_status", {})
+        if isinstance(wrong_route_probe_handoff, dict) and wrong_route_probe_handoff.get("recommended_commands"):
+            raise AssertionError("invalid route probe handoff must not emit retry commands")
+        if "Suggested same-route" in wrong_route_probe_markdown or "--playback-gain-db -12" in wrong_route_probe_markdown:
+            raise AssertionError("invalid route probe Markdown must not render retry commands")
         missing_benchmark_summary_report = build_report(
             release_results,
             prototype_results,

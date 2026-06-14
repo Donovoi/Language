@@ -279,7 +279,10 @@ measurement input, and writes
 `artifacts/audio_eval/runs/headphone-earpiece-route-probe/headphone-route-probe-report.json` with
 `release_proof=false`; it is route triage, not release evidence. Proceed to guided capture only when
 the command exits successfully and the report has `summary.passed=true`. Add `--score-warning-only`
-only when collecting a failure report from a known-bad route. The guided capture records the open-ear
+only when collecting a failure report from a known-bad route. When the latest route probe is present,
+the release-gate Markdown handoff repeats the failed route diagnosis and, for quiet source routes,
+prints a same-route retry command 6 dB louder, capped at -12 dB; use laptop built-in mic/speakers for
+this triage only, not final listener-ear proof. The guided capture records the open-ear
 source control, isolated source, and translated headphone playback with explicit PortAudio device
 identities, then feeds those WAVs into the release-gated scorer:
 
