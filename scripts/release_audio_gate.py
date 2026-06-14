@@ -47,6 +47,9 @@ DEFAULT_ROOM_SUPPRESSION_REPORT = (
 DEFAULT_HEADPHONE_ISOLATION_REPORT = (
     DEFAULT_AUDIO_EVAL_DIR / "runs/headphone-earpiece-isolation/headphone-isolation-report.json"
 )
+DEFAULT_HEADPHONE_PREFLIGHT_REPORT = (
+    DEFAULT_AUDIO_EVAL_DIR / "runs/headphone-earpiece-preflight/headphone-preflight-report.json"
+)
 DEFAULT_HEADPHONE_MANUAL_STATUS_REPORT = (
     DEFAULT_AUDIO_EVAL_DIR / "runs/headphone-earpiece-manual-kit/manual-recording-status.json"
 )
@@ -67,6 +70,8 @@ PROTOTYPE_FIXTURE_KINDS = {
     "fixture_pcm_capture_replay",
     "fleurs_playback_suppression",
 }
+EXPECTED_HEADPHONE_PREFLIGHT_FIXTURE_KIND = "headphone_earpiece_preflight"
+EXPECTED_HEADPHONE_PREFLIGHT_MEASUREMENT_KIND = "headphone_earpiece_preflight"
 
 LIVE_CAPTURE_REQUIRED_GATES = {
     "capture_source_is_microphone",
@@ -284,6 +289,18 @@ def _nonnegative_int(value: Any) -> int:
     except (TypeError, ValueError):
         return 0
     return max(0, parsed)
+
+
+def _string_or_empty(value: Any) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, str)]
 
 
 def _quality_gates(report: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -2502,10 +2519,215 @@ def load_headphone_manual_status_handoff(path: Path | None) -> dict[str, Any] | 
     return handoff
 
 
+def _first_preflight_candidate(candidates: Any) -> dict[str, Any]:
+    if not isinstance(candidates, list):
+        return {}
+    for candidate in candidates:
+        if isinstance(candidate, dict):
+            input_roles = _string_list(candidate.get("input_roles"))
+            source_roles = _string_list(candidate.get("source_roles"))
+            headphone_roles = _string_list(candidate.get("headphone_roles"))
+            return {
+                "rank": _nonnegative_int(candidate.get("rank")),
+                "input_device": _string_or_empty(candidate.get("input_device")),
+                "input_name": _string_or_empty(candidate.get("input_name")),
+                "input_hostapi_name": _string_or_empty(candidate.get("input_hostapi_name")),
+                "input_roles": input_roles,
+                "source_output_device": _string_or_empty(candidate.get("source_output_device")),
+                "source_name": _string_or_empty(candidate.get("source_name")),
+                "source_hostapi_name": _string_or_empty(candidate.get("source_hostapi_name")),
+                "source_roles": source_roles,
+                "headphone_output_device": _string_or_empty(candidate.get("headphone_output_device")),
+                "headphone_name": _string_or_empty(candidate.get("headphone_name")),
+                "headphone_hostapi_name": _string_or_empty(candidate.get("headphone_hostapi_name")),
+                "headphone_roles": headphone_roles,
+                "preflight_route_score": _nonnegative_int(candidate.get("preflight_route_score")),
+            }
+    return {}
+
+
+def _preflight_candidate_route(candidate: dict[str, Any]) -> str:
+    return (
+        f"{_string_or_empty(candidate.get('input_device'))}:"
+        f"{_string_or_empty(candidate.get('source_output_device'))}:"
+        f"{_string_or_empty(candidate.get('headphone_output_device'))}"
+    )
+
+
+def _preflight_candidate_capture_ready(candidate: dict[str, Any]) -> bool:
+    input_roles = set(_string_list(candidate.get("input_roles")))
+    source_roles = set(_string_list(candidate.get("source_roles")))
+    headphone_roles = set(_string_list(candidate.get("headphone_roles")))
+    if "builtin_or_array_mic_route_triage_only" in input_roles:
+        return False
+    if "headset_mic_route_triage_only" in input_roles:
+        return False
+    if not (
+        "external_input_candidate_needs_listener_ear_placement" in input_roles
+        or "input_candidate_unknown_placement" in input_roles
+        or "external_listener_ear_input_candidate" in input_roles
+    ):
+        return False
+    if "source_output_candidate" not in source_roles:
+        return False
+    if "headphone_output_candidate" not in headphone_roles:
+        return False
+    if "headphone_output_candidate" in source_roles:
+        return False
+    if "source_output_candidate" in headphone_roles:
+        return False
+    return True
+
+
+def _find_preflight_candidate(candidates: Any, selected_route: str) -> dict[str, Any] | None:
+    if not isinstance(candidates, list) or not selected_route:
+        return None
+    for candidate in candidates:
+        if isinstance(candidate, dict) and _preflight_candidate_route(candidate) == selected_route:
+            return candidate
+    return None
+
+
+def load_headphone_preflight_status_handoff(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    markdown_path = path.with_suffix(".md")
+    handoff: dict[str, Any] = {
+        "path": str(path),
+        "markdown_path": str(markdown_path),
+        "markdown_present": markdown_path.exists(),
+        "present": False,
+        "release_evidence": False,
+    }
+    try:
+        payload = _load_json(path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        handoff.update(
+            {
+                "status": "UNREADABLE",
+                "parse_error": str(exc),
+                "next_step": "Regenerate the headphone/earpiece preflight report.",
+            }
+        )
+        return handoff
+    if payload is None:
+        handoff.update(
+            {
+                "status": "MISSING",
+                "next_step": "Run headphone/earpiece preflight before route probing or capture.",
+            }
+        )
+        return handoff
+
+    summary = _summary(payload)
+    benchmarks = payload.get("benchmarks", {})
+    benchmark = benchmarks.get("headphone_earpiece_preflight", {}) if isinstance(benchmarks, dict) else {}
+    benchmark = benchmark if isinstance(benchmark, dict) else {}
+    candidates = benchmark.get("candidate_route_triples")
+    commands = benchmark.get("recommended_commands", {})
+    commands = {
+        str(key): str(value)
+        for key, value in commands.items()
+        if isinstance(key, str) and isinstance(value, str)
+    } if isinstance(commands, dict) else {}
+    recommended_path = _string_or_empty(summary.get("recommended_path")) or "unknown"
+    physical_confirmed = _literal_true(summary.get("physical_listener_ear_input_confirmed"))
+    planning_passed = _literal_true(summary.get("planning_passed"))
+    selected_route = _string_or_empty(summary.get("selected_route"))
+    selected_candidate = _find_preflight_candidate(candidates, selected_route)
+    contract_issues: list[str] = []
+    fatal_identity_issues: list[str] = []
+    if payload.get("fixture_kind") != EXPECTED_HEADPHONE_PREFLIGHT_FIXTURE_KIND:
+        fatal_identity_issues.append("fixture_kind is not headphone preflight")
+    if payload.get("measurement_kind") != EXPECTED_HEADPHONE_PREFLIGHT_MEASUREMENT_KIND:
+        fatal_identity_issues.append("measurement_kind is not headphone preflight")
+    if payload.get("release_proof") is not False or summary.get("release_proof") is not False:
+        fatal_identity_issues.append("preflight must keep release_proof=false")
+    contract_issues.extend(fatal_identity_issues)
+    if not planning_passed:
+        contract_issues.append("planning did not pass")
+    if recommended_path != "guided_capture_possible":
+        contract_issues.append("recommended_path is not guided_capture_possible")
+    if not physical_confirmed:
+        contract_issues.append("physical listener-ear input is not confirmed")
+    if not _literal_true(summary.get("selected_route_requested")):
+        contract_issues.append("selected route was not requested")
+    if not _literal_true(summary.get("selected_route_found")):
+        contract_issues.append("selected route was not found")
+    if not _literal_true(summary.get("selected_route_capture_ready")):
+        contract_issues.append("selected route is not capture-ready")
+    if not selected_route:
+        contract_issues.append("selected route is missing")
+    if _nonnegative_int(summary.get("sample_rate_hz")) <= 0:
+        contract_issues.append("sample rate is missing")
+    if _nonnegative_int(summary.get("input_channels")) <= 0:
+        contract_issues.append("input channels are missing")
+    if _nonnegative_int(summary.get("output_channels")) <= 0:
+        contract_issues.append("output channels are missing")
+    if _nonnegative_int(summary.get("candidate_route_triple_count")) <= 0:
+        contract_issues.append("candidate route count is missing")
+    if _nonnegative_int(summary.get("capture_ready_route_triple_count")) <= 0:
+        contract_issues.append("capture-ready route count is missing")
+    if selected_candidate is None:
+        contract_issues.append("selected route candidate is not present")
+    elif not _preflight_candidate_capture_ready(selected_candidate):
+        contract_issues.append("selected route candidate is not capture-ready by role labels")
+    if not str(commands.get("capture", "")).strip():
+        contract_issues.append("generated capture command is missing")
+
+    if fatal_identity_issues:
+        status = "INVALID"
+        next_step = "Regenerate preflight; the report identity or release-proof fields do not match the headphone preflight contract."
+    elif not contract_issues:
+        status = "READY-FOR-GUIDED-CAPTURE"
+        next_step = "Run the generated capture command, then rerun this release gate with the scored report."
+    elif recommended_path == "guided_capture_possible_after_physical_input_confirmation":
+        status = "NEEDS-PHYSICAL-INPUT-CONFIRMATION"
+        next_step = "Only confirm a selected route after a real listener-ear input is physically placed; otherwise use route triage or the manual kit."
+    elif recommended_path == "route_probe_triage_only_manual_listener_ear_capture_required":
+        status = "TRIAGE-ONLY"
+        next_step = "Use route_probe_triage_only for routing diagnostics, then collect final evidence with a real listener-ear recorder or mic."
+    elif recommended_path == "guided_capture_possible" or physical_confirmed or planning_passed:
+        status = "INVALID"
+        next_step = "Regenerate preflight; the report claims guided capture readiness but fails the capture binding contract."
+    else:
+        status = "NEEDS-MANUAL-RECORDER"
+        next_step = "Use the manual recording kit or connect a real listener-ear input before guided capture."
+
+    handoff.update(
+        {
+            "present": True,
+            "status": status,
+            "next_step": next_step,
+            "release_proof": _literal_true(payload.get("release_proof")),
+            "recommended_path": recommended_path,
+            "physical_listener_ear_input_confirmed": physical_confirmed,
+            "planning_passed": planning_passed,
+            "selected_route": selected_route,
+            "selected_route_requested": _literal_true(summary.get("selected_route_requested")),
+            "selected_route_found": _literal_true(summary.get("selected_route_found")),
+            "selected_route_capture_ready": _literal_true(summary.get("selected_route_capture_ready")),
+            "sample_rate_hz": _nonnegative_int(summary.get("sample_rate_hz")),
+            "input_channels": _nonnegative_int(summary.get("input_channels")),
+            "output_channels": _nonnegative_int(summary.get("output_channels")),
+            "candidate_route_triple_count": _nonnegative_int(summary.get("candidate_route_triple_count")),
+            "capture_ready_route_triple_count": _nonnegative_int(summary.get("capture_ready_route_triple_count")),
+            "likely_external_input_count": _nonnegative_int(summary.get("likely_external_input_count")),
+            "displayed_candidate": _first_preflight_candidate(candidates),
+            "selected_candidate": _first_preflight_candidate([selected_candidate] if selected_candidate else []),
+            "contract_issues": contract_issues,
+            "recommended_commands": commands,
+            "required_follow_up": _string_or_empty(benchmark.get("required_follow_up")),
+        }
+    )
+    return handoff
+
+
 def build_report(
     release_results: list[GateResult],
     prototype_results: list[GateResult],
     headphone_manual_status_report: Path | None = None,
+    headphone_preflight_report: Path | None = None,
 ) -> dict[str, Any]:
     blocking_failures = [gate for gate in release_results if not gate.passed and gate.release_blocking]
     report = {
@@ -2532,11 +2754,15 @@ def build_report(
             ),
         },
     }
+    operator_handoff: dict[str, Any] = {}
     manual_status = load_headphone_manual_status_handoff(headphone_manual_status_report)
     if manual_status is not None:
-        report["operator_handoff"] = {
-            "headphone_manual_status": manual_status,
-        }
+        operator_handoff["headphone_manual_status"] = manual_status
+    preflight_status = load_headphone_preflight_status_handoff(headphone_preflight_report)
+    if preflight_status is not None:
+        operator_handoff["headphone_preflight_status"] = preflight_status
+    if operator_handoff:
+        report["operator_handoff"] = operator_handoff
     return report
 
 
@@ -2607,7 +2833,111 @@ def headphone_manual_status_handoff_lines(manual_status: dict[str, Any] | None) 
     return lines
 
 
-def playback_source_suppression_handoff_lines(manual_status: dict[str, Any] | None = None) -> list[str]:
+def headphone_preflight_status_handoff_lines(preflight_status: dict[str, Any] | None) -> list[str]:
+    lines = [
+        "",
+        "### Current Headphone Preflight Status",
+        "",
+        "This preflight is an operator handoff only; it is not release evidence.",
+        "",
+    ]
+    if not isinstance(preflight_status, dict):
+        lines.extend(
+            [
+                "- Status: not loaded in this release report.",
+                f"- Default preflight path: `{DEFAULT_HEADPHONE_PREFLIGHT_REPORT}`",
+                "- Next step: run headphone/earpiece preflight to enumerate current host routes.",
+            ]
+        )
+        return lines
+
+    status = str(preflight_status.get("status", "UNKNOWN"))
+    lines.append(f"- Status: **{status}**")
+    lines.append(f"- JSON preflight: `{preflight_status.get('path', '')}`")
+    markdown_path = str(preflight_status.get("markdown_path", ""))
+    if markdown_path:
+        markdown_present = bool(preflight_status.get("markdown_present"))
+        suffix = "present" if markdown_present else "not found yet"
+        lines.append(f"- Markdown preflight: `{markdown_path}` ({suffix})")
+    if not preflight_status.get("present"):
+        parse_error = str(preflight_status.get("parse_error", "")).strip()
+        if parse_error:
+            lines.append(f"- Read error: `{parse_error}`")
+        lines.append(f"- Next step: {preflight_status.get('next_step', '')}")
+        return lines
+
+    lines.extend(
+        [
+            f"- Recommended path: `{preflight_status.get('recommended_path', '')}`",
+            f"- Physical listener-ear input confirmed: {bool(preflight_status.get('physical_listener_ear_input_confirmed'))}",
+            f"- Planning passed: {bool(preflight_status.get('planning_passed'))}",
+            f"- Candidate/capture-ready/external-input counts: "
+            f"{preflight_status.get('candidate_route_triple_count', 0)}/"
+            f"{preflight_status.get('capture_ready_route_triple_count', 0)}/"
+            f"{preflight_status.get('likely_external_input_count', 0)}",
+        ]
+    )
+    selected_candidate = preflight_status.get("selected_candidate", {})
+    selected_candidate = selected_candidate if isinstance(selected_candidate, dict) else {}
+    displayed_candidate = preflight_status.get("displayed_candidate", {})
+    displayed_candidate = displayed_candidate if isinstance(displayed_candidate, dict) else {}
+    candidate = selected_candidate or displayed_candidate
+    if candidate:
+        route = (
+            f"{candidate.get('input_device', '')}:"
+            f"{candidate.get('source_output_device', '')}:"
+            f"{candidate.get('headphone_output_device', '')}"
+        )
+        input_roles = candidate.get("input_roles", [])
+        input_roles_text = ", ".join(str(role) for role in input_roles) if isinstance(input_roles, list) else ""
+        route_label = "Selected route candidate" if selected_candidate else "Displayed route candidate"
+        lines.extend(
+            [
+                f"- {route_label}: `{route}`",
+                f"- Input: `{candidate.get('input_name', '')}` ({candidate.get('input_hostapi_name', '')}; {input_roles_text})",
+                f"- Source output: `{candidate.get('source_name', '')}` ({candidate.get('source_hostapi_name', '')})",
+                f"- Headphone output: `{candidate.get('headphone_name', '')}` ({candidate.get('headphone_hostapi_name', '')})",
+            ]
+        )
+    contract_issues = preflight_status.get("contract_issues", [])
+    if isinstance(contract_issues, list) and status == "INVALID":
+        lines.append(f"- Contract issues: {len(contract_issues)}")
+    lines.append(f"- Next step: {preflight_status.get('next_step', '')}")
+
+    commands = preflight_status.get("recommended_commands", {})
+    commands = commands if isinstance(commands, dict) else {}
+    command_order = {
+        "READY-FOR-GUIDED-CAPTURE": ["capture"],
+        "NEEDS-PHYSICAL-INPUT-CONFIRMATION": ["confirm_physical_input_preflight", "route_probe_triage_only"],
+        "TRIAGE-ONLY": ["route_probe_triage_only"],
+        "NEEDS-MANUAL-RECORDER": ["manual_prepare", "preflight"],
+        "INVALID": [],
+    }.get(status, ["preflight"])
+    command_key = ""
+    command = ""
+    for candidate_key in command_order:
+        candidate_command = str(commands.get(candidate_key, "")).strip()
+        if candidate_command:
+            command_key = candidate_key
+            command = candidate_command
+            break
+    if command:
+        lines.extend(
+            [
+                f"- Suggested `{command_key}` command:",
+                "",
+                "```powershell",
+                command,
+                "```",
+            ]
+        )
+    return lines
+
+
+def playback_source_suppression_handoff_lines(
+    preflight_status: dict[str, Any] | None = None,
+    manual_status: dict[str, Any] | None = None,
+) -> list[str]:
     lines = [
         "",
         "### Playback/Source Suppression Evidence Collection",
@@ -2647,6 +2977,7 @@ def playback_source_suppression_handoff_lines(manual_status: dict[str, Any] | No
         "python scripts/release_audio_gate.py --json",
         "```",
     ]
+    lines.extend(headphone_preflight_status_handoff_lines(preflight_status))
     lines.extend(headphone_manual_status_handoff_lines(manual_status))
     return lines
 
@@ -2735,7 +3066,9 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             operator_handoff = operator_handoff if isinstance(operator_handoff, dict) else {}
             manual_status = operator_handoff.get("headphone_manual_status")
             manual_status = manual_status if isinstance(manual_status, dict) else None
-            lines.extend(playback_source_suppression_handoff_lines(manual_status))
+            preflight_status = operator_handoff.get("headphone_preflight_status")
+            preflight_status = preflight_status if isinstance(preflight_status, dict) else None
+            lines.extend(playback_source_suppression_handoff_lines(preflight_status, manual_status))
             included_playback_collection = True
         else:
             lines.append("- Address each failed release-blocking gate above, then rerun the gate.")
@@ -3485,6 +3818,8 @@ def self_test() -> None:
         root = Path(tmp)
         if parse_args([]).headphone_manual_status_report != DEFAULT_HEADPHONE_MANUAL_STATUS_REPORT:
             raise AssertionError("expected release gate to load the default manual status path")
+        if parse_args([]).headphone_preflight_report != DEFAULT_HEADPHONE_PREFLIGHT_REPORT:
+            raise AssertionError("expected release gate to load the default headphone preflight path")
         if _specific_measurement_label("REPLACE_WITH_MIC_MODEL_AND_POSITION"):
             raise AssertionError("REPLACE_WITH labels must be rejected as placeholder measurement labels")
         stub = root / "stub.json"
@@ -3531,6 +3866,14 @@ def self_test() -> None:
         manual_status_invalid_json = root / "manual-recording-status-invalid-json.json"
         manual_status_malformed_values = root / "manual-recording-status-malformed-values.json"
         manual_score_report = root / "headphone-isolation-report-score-ready.json"
+        missing_preflight_status = root / "missing-preflight-report.json"
+        preflight_status_unconfirmed = root / "headphone-preflight-report-unconfirmed.json"
+        preflight_status_confirmed = root / "headphone-preflight-report-confirmed.json"
+        preflight_status_invalid_json = root / "headphone-preflight-report-invalid.json"
+        preflight_status_malformed_values = root / "headphone-preflight-report-malformed-values.json"
+        preflight_status_malformed_candidate = root / "headphone-preflight-report-malformed-candidate.json"
+        preflight_status_wrong_fixture = root / "headphone-preflight-report-wrong-fixture.json"
+        preflight_status_missing_capture_command = root / "headphone-preflight-report-missing-capture-command.json"
 
         _write_json(stub, _report(True))
         _write_json(failing, _report(False))
@@ -3876,6 +4219,236 @@ def self_test() -> None:
                 },
             },
         )
+        preflight_candidate = {
+            "rank": 1,
+            "input_device": 1,
+            "input_name": "Microphone Array",
+            "input_hostapi_name": "MME",
+            "input_roles": ["builtin_or_array_mic_route_triage_only"],
+            "source_output_device": 6,
+            "source_name": "Unit Source Speakers",
+            "source_hostapi_name": "MME",
+            "source_roles": ["source_output_candidate"],
+            "headphone_output_device": 4,
+            "headphone_name": "Unit Headphones",
+            "headphone_hostapi_name": "MME",
+            "headphone_roles": ["headphone_output_candidate"],
+            "preflight_route_score": 80,
+        }
+        preflight_commands = {
+            "confirm_physical_input_preflight": (
+                "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight "
+                "-Python $env:LANGUAGE_PYTHON --selected-route 0:6:4 --confirm-physical-listener-ear-input"
+            ),
+            "route_probe_triage_only": (
+                "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action probe-route "
+                "-Python $env:LANGUAGE_PYTHON --measurement-input-device 1 --source-output-device 6 "
+                "--headphone-output-device 4 --score-warning-only"
+            ),
+            "capture": (
+                "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action capture "
+                "-Python $env:LANGUAGE_PYTHON --measurement-input-device 1 --source-output-device 6 "
+                "--headphone-output-device 4 --preflight-report unit-preflight.json"
+            ),
+        }
+        _write_json(
+            preflight_status_unconfirmed,
+            {
+                "schema_version": 1,
+                "fixture_kind": EXPECTED_HEADPHONE_PREFLIGHT_FIXTURE_KIND,
+                "measurement_kind": EXPECTED_HEADPHONE_PREFLIGHT_MEASUREMENT_KIND,
+                "release_proof": False,
+                "summary": {
+                    "candidate_route_triple_count": 12,
+                    "capture_ready_route_triple_count": 4,
+                    "input_channels": 1,
+                    "likely_external_input_count": 0,
+                    "output_channels": 2,
+                    "physical_listener_ear_input_confirmed": False,
+                    "planning_passed": False,
+                    "recommended_path": "guided_capture_possible_after_physical_input_confirmation",
+                    "release_proof": False,
+                    "sample_rate_hz": 48000,
+                    "selected_route": None,
+                    "selected_route_capture_ready": False,
+                    "selected_route_found": False,
+                    "selected_route_requested": False,
+                },
+                "benchmarks": {
+                    "headphone_earpiece_preflight": {
+                        "candidate_route_triples": [preflight_candidate],
+                        "recommended_commands": preflight_commands,
+                        "required_follow_up": "Preflight never satisfies release evidence.",
+                    }
+                },
+            },
+        )
+        preflight_status_unconfirmed.with_suffix(".md").write_text("# Preflight Status\n", encoding="utf-8")
+        confirmed_candidate = dict(preflight_candidate)
+        confirmed_candidate["input_roles"] = ["external_input_candidate_needs_listener_ear_placement"]
+        _write_json(
+            preflight_status_confirmed,
+            {
+                "schema_version": 1,
+                "fixture_kind": EXPECTED_HEADPHONE_PREFLIGHT_FIXTURE_KIND,
+                "measurement_kind": EXPECTED_HEADPHONE_PREFLIGHT_MEASUREMENT_KIND,
+                "release_proof": False,
+                "summary": {
+                    "candidate_route_triple_count": 12,
+                    "capture_ready_route_triple_count": 4,
+                    "input_channels": 1,
+                    "likely_external_input_count": 1,
+                    "output_channels": 2,
+                    "physical_listener_ear_input_confirmed": True,
+                    "planning_passed": True,
+                    "recommended_path": "guided_capture_possible",
+                    "release_proof": False,
+                    "sample_rate_hz": 48000,
+                    "selected_route": "1:6:4",
+                    "selected_route_capture_ready": True,
+                    "selected_route_found": True,
+                    "selected_route_requested": True,
+                },
+                "benchmarks": {
+                    "headphone_earpiece_preflight": {
+                        "candidate_route_triples": [confirmed_candidate],
+                        "recommended_commands": preflight_commands,
+                        "required_follow_up": "Capture still must be scored before release.",
+                    }
+                },
+            },
+        )
+        preflight_status_invalid_json.write_text("{", encoding="utf-8")
+        _write_json(
+            preflight_status_malformed_values,
+            {
+                "schema_version": 1,
+                "fixture_kind": EXPECTED_HEADPHONE_PREFLIGHT_FIXTURE_KIND,
+                "measurement_kind": EXPECTED_HEADPHONE_PREFLIGHT_MEASUREMENT_KIND,
+                "release_proof": "false",
+                "summary": {
+                    "candidate_route_triple_count": "many",
+                    "capture_ready_route_triple_count": -4,
+                    "input_channels": "one",
+                    "likely_external_input_count": None,
+                    "output_channels": "two",
+                    "physical_listener_ear_input_confirmed": "true",
+                    "planning_passed": "true",
+                    "recommended_path": "guided_capture_possible",
+                    "release_proof": "false",
+                    "sample_rate_hz": "48000",
+                    "selected_route": "1:6:4",
+                    "selected_route_capture_ready": "true",
+                    "selected_route_found": "true",
+                    "selected_route_requested": "true",
+                },
+                "benchmarks": [],
+            },
+        )
+        _write_json(
+            preflight_status_malformed_candidate,
+            {
+                "schema_version": 1,
+                "fixture_kind": EXPECTED_HEADPHONE_PREFLIGHT_FIXTURE_KIND,
+                "measurement_kind": EXPECTED_HEADPHONE_PREFLIGHT_MEASUREMENT_KIND,
+                "release_proof": False,
+                "summary": {
+                    "candidate_route_triple_count": 1,
+                    "capture_ready_route_triple_count": 1,
+                    "input_channels": 1,
+                    "likely_external_input_count": 1,
+                    "output_channels": 2,
+                    "physical_listener_ear_input_confirmed": True,
+                    "planning_passed": True,
+                    "recommended_path": "guided_capture_possible",
+                    "release_proof": False,
+                    "sample_rate_hz": 48000,
+                    "selected_route": "1:6:4",
+                    "selected_route_capture_ready": True,
+                    "selected_route_found": True,
+                    "selected_route_requested": True,
+                },
+                "benchmarks": {
+                    "headphone_earpiece_preflight": {
+                        "candidate_route_triples": [
+                            {
+                                "input_device": 1,
+                                "input_roles": None,
+                                "source_output_device": 6,
+                                "source_roles": ["source_output_candidate"],
+                                "headphone_output_device": 4,
+                                "headphone_roles": ["headphone_output_candidate"],
+                            }
+                        ],
+                        "recommended_commands": {"capture": "echo should-not-be-suggested"},
+                    }
+                },
+            },
+        )
+        _write_json(
+            preflight_status_wrong_fixture,
+            {
+                "schema_version": 1,
+                "fixture_kind": "forged_preflight",
+                "measurement_kind": EXPECTED_HEADPHONE_PREFLIGHT_MEASUREMENT_KIND,
+                "release_proof": False,
+                "summary": {
+                    "candidate_route_triple_count": 1,
+                    "capture_ready_route_triple_count": 1,
+                    "input_channels": 1,
+                    "likely_external_input_count": 1,
+                    "output_channels": 2,
+                    "physical_listener_ear_input_confirmed": True,
+                    "planning_passed": True,
+                    "recommended_path": "guided_capture_possible",
+                    "release_proof": False,
+                    "sample_rate_hz": 48000,
+                    "selected_route": "1:6:4",
+                    "selected_route_capture_ready": True,
+                    "selected_route_found": True,
+                    "selected_route_requested": True,
+                },
+                "benchmarks": {
+                    "headphone_earpiece_preflight": {
+                        "candidate_route_triples": [confirmed_candidate],
+                        "recommended_commands": {"capture": "echo should-not-be-suggested"},
+                    }
+                },
+            },
+        )
+        missing_capture_commands = dict(preflight_commands)
+        missing_capture_commands.pop("capture")
+        _write_json(
+            preflight_status_missing_capture_command,
+            {
+                "schema_version": 1,
+                "fixture_kind": EXPECTED_HEADPHONE_PREFLIGHT_FIXTURE_KIND,
+                "measurement_kind": EXPECTED_HEADPHONE_PREFLIGHT_MEASUREMENT_KIND,
+                "release_proof": False,
+                "summary": {
+                    "candidate_route_triple_count": 1,
+                    "capture_ready_route_triple_count": 1,
+                    "input_channels": 1,
+                    "likely_external_input_count": 1,
+                    "output_channels": 2,
+                    "physical_listener_ear_input_confirmed": True,
+                    "planning_passed": True,
+                    "recommended_path": "guided_capture_possible",
+                    "release_proof": False,
+                    "sample_rate_hz": 48000,
+                    "selected_route": "1:6:4",
+                    "selected_route_capture_ready": True,
+                    "selected_route_found": True,
+                    "selected_route_requested": True,
+                },
+                "benchmarks": {
+                    "headphone_earpiece_preflight": {
+                        "candidate_route_triples": [confirmed_candidate],
+                        "recommended_commands": missing_capture_commands,
+                    }
+                },
+            },
+        )
 
         complete_args = argparse.Namespace(
             live_capture_report=capture,
@@ -4218,6 +4791,115 @@ def self_test() -> None:
         invalid_status_markdown = render_markdown_report(invalid_status_report)
         if "UNREADABLE" not in invalid_status_markdown:
             raise AssertionError("expected invalid manual status JSON to render as unreadable")
+        missing_preflight_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_preflight_report=missing_preflight_status,
+        )
+        if missing_preflight_report["summary"] != report["summary"]:
+            raise AssertionError("preflight handoff must not change release gate summary")
+        missing_preflight_markdown = render_markdown_report(missing_preflight_report)
+        if "Current Headphone Preflight Status" not in missing_preflight_markdown or "MISSING" not in missing_preflight_markdown:
+            raise AssertionError("expected missing preflight status to be called out in Markdown")
+        parsed_preflight_args = parse_args(["--headphone-preflight-report", str(preflight_status_unconfirmed)])
+        parsed_preflight_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_preflight_report=parsed_preflight_args.headphone_preflight_report,
+        )
+        if "headphone_preflight_status" not in parsed_preflight_report.get("operator_handoff", {}):
+            raise AssertionError("expected parsed CLI preflight path to be included in report handoff")
+        invalid_preflight_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_preflight_report=preflight_status_invalid_json,
+        )
+        invalid_preflight_markdown = render_markdown_report(invalid_preflight_report)
+        if "UNREADABLE" not in invalid_preflight_markdown:
+            raise AssertionError("expected invalid preflight JSON to render as unreadable")
+        unconfirmed_preflight_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_preflight_report=preflight_status_unconfirmed,
+        )
+        if unconfirmed_preflight_report["release_blocking_gates"] != report["release_blocking_gates"]:
+            raise AssertionError("preflight handoff must not change release-blocking gates")
+        unconfirmed_preflight_markdown = render_markdown_report(unconfirmed_preflight_report)
+        if (
+            "NEEDS-PHYSICAL-INPUT-CONFIRMATION" not in unconfirmed_preflight_markdown
+            or "not release evidence" not in unconfirmed_preflight_markdown
+        ):
+            raise AssertionError("expected unconfirmed preflight to stay non-evidentiary in Markdown")
+        if "Displayed route candidate: `1:6:4`" not in unconfirmed_preflight_markdown:
+            raise AssertionError("expected unconfirmed preflight to label the displayed route candidate")
+        if (
+            "Suggested `confirm_physical_input_preflight` command" not in unconfirmed_preflight_markdown
+            or "--selected-route 0:6:4" not in unconfirmed_preflight_markdown
+        ):
+            raise AssertionError("expected unconfirmed preflight to prioritize the physical confirmation command")
+        confirmed_preflight_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_preflight_report=preflight_status_confirmed,
+        )
+        confirmed_preflight_markdown = render_markdown_report(confirmed_preflight_report)
+        if "READY-FOR-GUIDED-CAPTURE" not in confirmed_preflight_markdown or "-Action capture" not in confirmed_preflight_markdown:
+            raise AssertionError("expected confirmed preflight to include the capture command")
+        malformed_preflight_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_preflight_report=preflight_status_malformed_values,
+        )
+        malformed_preflight_markdown = render_markdown_report(malformed_preflight_report)
+        if "READY-FOR-GUIDED-CAPTURE" in malformed_preflight_markdown:
+            raise AssertionError("string booleans in preflight status must not be treated as confirmed")
+        if "Candidate/capture-ready/external-input counts: 0/0/0" not in malformed_preflight_markdown:
+            raise AssertionError("malformed preflight counts should be coerced without crashing")
+        if "INVALID" not in malformed_preflight_markdown:
+            raise AssertionError("malformed preflight values should render as invalid")
+        malformed_candidate_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_preflight_report=preflight_status_malformed_candidate,
+        )
+        malformed_candidate_markdown = render_markdown_report(malformed_candidate_report)
+        if "READY-FOR-GUIDED-CAPTURE" in malformed_candidate_markdown or "INVALID" not in malformed_candidate_markdown:
+            raise AssertionError("malformed preflight candidate roles must not render ready")
+        wrong_fixture_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_preflight_report=preflight_status_wrong_fixture,
+        )
+        wrong_fixture_markdown = render_markdown_report(wrong_fixture_report)
+        if "READY-FOR-GUIDED-CAPTURE" in wrong_fixture_markdown or "INVALID" not in wrong_fixture_markdown:
+            raise AssertionError("wrong preflight fixture kind must not render ready")
+        if "Suggested `confirm_physical_input_preflight` command" in wrong_fixture_markdown:
+            raise AssertionError("wrong preflight fixture kind must not render a physical confirmation command")
+        missing_capture_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_preflight_report=preflight_status_missing_capture_command,
+        )
+        missing_capture_markdown = render_markdown_report(missing_capture_report)
+        if "READY-FOR-GUIDED-CAPTURE" in missing_capture_markdown or "INVALID" not in missing_capture_markdown:
+            raise AssertionError("preflight without generated capture command must not render ready")
+        if "-Action capture" in missing_capture_markdown:
+            raise AssertionError("missing capture command preflight must not render a capture command")
+        combined_handoff_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_manual_status_report=manual_status_not_ready,
+            headphone_preflight_report=preflight_status_unconfirmed,
+        )
+        combined_handoff = combined_handoff_report.get("operator_handoff", {})
+        if not (
+            isinstance(combined_handoff, dict)
+            and "headphone_manual_status" in combined_handoff
+            and "headphone_preflight_status" in combined_handoff
+        ):
+            raise AssertionError("expected report JSON to keep both manual and preflight handoffs")
+        if combined_handoff_report["summary"] != report["summary"]:
+            raise AssertionError("combined operator handoffs must not change release gate summary")
         not_ready_report = build_report(
             release_results,
             prototype_results,
@@ -4276,6 +4958,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--voice-report", type=Path, default=DEFAULT_VOICE_REPORT)
     parser.add_argument("--room-suppression-report", type=Path, default=DEFAULT_ROOM_SUPPRESSION_REPORT)
     parser.add_argument("--headphone-isolation-report", type=Path, default=DEFAULT_HEADPHONE_ISOLATION_REPORT)
+    parser.add_argument("--headphone-preflight-report", type=Path, default=DEFAULT_HEADPHONE_PREFLIGHT_REPORT)
     parser.add_argument("--headphone-manual-status-report", type=Path, default=DEFAULT_HEADPHONE_MANUAL_STATUS_REPORT)
     parser.add_argument("--playback-prototype-report", type=Path, default=DEFAULT_PLAYBACK_PROTOTYPE_REPORT)
     parser.add_argument("--capture-prototype-report", type=Path, default=DEFAULT_CAPTURE_PROTOTYPE_REPORT)
@@ -4294,6 +4977,7 @@ def main(argv: list[str] | None = None) -> int:
         release_results,
         prototype_results,
         headphone_manual_status_report=args.headphone_manual_status_report,
+        headphone_preflight_report=args.headphone_preflight_report,
     )
     write_report(report, args.report)
     write_markdown_report(report, args.markdown_report)
