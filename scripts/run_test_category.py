@@ -67,6 +67,11 @@ STEPS: dict[str, Step] = {
         description="release progress estimate contract self-test",
         local_args=("{python}", "scripts/release_progress.py", "--self-test"),
     ),
+    "release-checklist-contract": Step(
+        name="release-checklist-contract",
+        description="release checklist category-command contract",
+        local_args=("{python}", "scripts/check_release_checklist.py", "--self-test"),
+    ),
     "gateway-package-verifier-self-test": Step(
         name="gateway-package-verifier-self-test",
         description="gateway package entry-point verifier contract self-test",
@@ -443,6 +448,7 @@ CATEGORIES: dict[str, Category] = {
             "release-audio-gate-self-test",
             "release-audio-status-self-test",
             "release-progress-self-test",
+            "release-checklist-contract",
             "gateway-package-verifier-self-test",
             "gateway-auth-smoke-self-test",
             "audio-contract-runner-self-test",
@@ -459,6 +465,7 @@ CATEGORIES: dict[str, Category] = {
             "release-audio-gate-self-test",
             "release-audio-status-self-test",
             "release-progress-self-test",
+            "release-checklist-contract",
             "gateway-package-verifier-self-test",
             "gateway-auth-smoke-self-test",
             "audio-contract-runner-self-test",
