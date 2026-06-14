@@ -662,6 +662,20 @@ CATEGORIES: dict[str, Category] = {
             "Writes the manual playback log with release_proof=false.",
         ),
     ),
+    "recording-session-dry-run": Category(
+        name="recording-session-dry-run",
+        description="Prepare the listener-ear kit, validate playback routing without audio, and print release status.",
+        steps=(
+            "headphone-isolation-collect-evidence",
+            "headphone-isolation-playback-plan",
+            "headphone-isolation-check-manual",
+            "release-audio-status",
+        ),
+        notes=(
+            "Requires LANGUAGE_SOURCE_OUTPUT_DEVICE and LANGUAGE_HEADPHONE_OUTPUT_DEVICE.",
+            "Does not play or record audio; use this before starting the external listener-ear recorder.",
+        ),
+    ),
     "reference-playback": Category(
         name="reference-playback",
         description="Play manual source/translated references for an external listener-ear recorder.",
@@ -999,6 +1013,8 @@ def self_test() -> int:
         raise AssertionError("physical-audio-handoff must list host devices before route preflight")
     if CATEGORIES["reference-playback-dry-run"].steps != ("headphone-isolation-playback-plan",):
         raise AssertionError("reference-playback-dry-run must only validate the playback plan")
+    if "headphone-isolation-playback-plan" not in CATEGORIES["recording-session-dry-run"].steps:
+        raise AssertionError("recording-session-dry-run must validate playback routing without audio")
     if CATEGORIES["reference-playback"].steps != ("headphone-isolation-playback-session",):
         raise AssertionError("reference-playback must only run the explicit playback session")
     for playback_step in (

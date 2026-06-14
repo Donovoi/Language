@@ -46,6 +46,7 @@ Use `--dry-run` to inspect the command plan. By default, full output goes to
 | `evidence-kit` | Manual listener-ear recording kit, readiness check, and raw WAV dropbox. | Audio playback/recording. Put the three exported WAVs in the dropbox, then rerun. |
 | `recording-status` | Readiness check for the three manual listener-ear WAVs. | Playback, recording, scoring, or release proof. |
 | `reference-playback-dry-run` | Validate the manual reference playback plan without playing audio. | Requires explicit source/headphone output IDs. |
+| `recording-session-dry-run` | Prepare the listener-ear kit, validate playback routing without audio, and print release status. | Requires explicit source/headphone output IDs; does not play or record audio. |
 | `reference-playback` | Play the manual source/translated references for an external listener-ear recorder. | Plays audio; start the external recorder first. Not release evidence. |
 | `release-evidence` | Prepare/import/check the manual listener-ear kit, then print compact release status. | Audio playback/recording, placeholder-label scoring, or release proof. |
 | `release-evidence-score` | Import/check and score complete listener-ear evidence when WAVs and concrete labels are ready. | Audio playback/recording. Placeholder labels keep scoring blocked. |
@@ -97,6 +98,8 @@ the manual kit, readiness status, and `artifacts/release/physical-audio-checklis
 together.
 Use `reference-playback-dry-run` after setting `LANGUAGE_SOURCE_OUTPUT_DEVICE` and
 `LANGUAGE_HEADPHONE_OUTPUT_DEVICE` to validate the three-take playback plan without playing audio.
+Use `recording-session-dry-run` with the same output variables before a hardware session when you
+want the kit prepared, playback routing validated, and status printed without playing audio.
 Use `reference-playback` only when the external listener-ear recorder is rolling; the playback log
 remains `release_proof=false`.
 Use `guided-capture --dry-run` after preflight reports a capture-ready route and before you let the
