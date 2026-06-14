@@ -45,6 +45,8 @@ Use `--dry-run` to inspect the command plan. By default, full output goes to
 | `physical-audio-handoff` | Refresh host device listings and route triage, prepare/check the manual kit, and write the physical-audio checklist. | Audio playback/recording, scoring, or release proof. |
 | `evidence-kit` | Manual listener-ear recording kit, readiness check, and raw WAV dropbox. | Audio playback/recording. Put the three exported WAVs in the dropbox, then rerun. |
 | `recording-status` | Readiness check for the three manual listener-ear WAVs. | Playback, recording, scoring, or release proof. |
+| `reference-playback-dry-run` | Validate the manual reference playback plan without playing audio. | Requires explicit source/headphone output IDs. |
+| `reference-playback` | Play the manual source/translated references for an external listener-ear recorder. | Plays audio; start the external recorder first. Not release evidence. |
 | `release-evidence` | Prepare/import/check the manual listener-ear kit, then print compact release status. | Audio playback/recording, placeholder-label scoring, or release proof. |
 | `release-evidence-score` | Import/check and score complete listener-ear evidence when WAVs and concrete labels are ready. | Audio playback/recording. Placeholder labels keep scoring blocked. |
 | `release-status` | Compact release-gate blocker and next-action handoff. | Exits zero by default; use `release` for strict failure semantics. |
@@ -93,6 +95,10 @@ large JSON or Markdown handoff.
 Use `physical-audio-handoff` before a hardware session when you want host device IDs, route triage,
 the manual kit, readiness status, and `artifacts/release/physical-audio-checklist.md` refreshed
 together.
+Use `reference-playback-dry-run` after setting `LANGUAGE_SOURCE_OUTPUT_DEVICE` and
+`LANGUAGE_HEADPHONE_OUTPUT_DEVICE` to validate the three-take playback plan without playing audio.
+Use `reference-playback` only when the external listener-ear recorder is rolling; the playback log
+remains `release_proof=false`.
 Use `guided-capture --dry-run` after preflight reports a capture-ready route and before you let the
 host play/record audio. It fails before touching devices unless the required `LANGUAGE_*` device and
 label environment variables are set.

@@ -390,6 +390,46 @@ STEPS: dict[str, Step] = {
         target_args=("--score-warning-only",),
         make_env={"HEADPHONE_ISOLATION_CHECK_MANUAL_ARGS": "--score-warning-only"},
     ),
+    "headphone-isolation-playback-plan": Step(
+        name="headphone-isolation-playback-plan",
+        description="dry-run the three-take manual reference playback plan without playing audio",
+        local_args=(
+            "pwsh",
+            "-NoProfile",
+            "-File",
+            DEV_CONTAINER,
+            "headphone-isolation-play-manual",
+            "--manifest",
+            "{env:LANGUAGE_MANUAL_RECORDING_MANIFEST:artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-manifest.json}",
+            "--dry-run",
+            "--source-output-device",
+            "{env:LANGUAGE_SOURCE_OUTPUT_DEVICE}",
+            "--headphone-output-device",
+            "{env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE}",
+        ),
+        required_env=("LANGUAGE_SOURCE_OUTPUT_DEVICE", "LANGUAGE_HEADPHONE_OUTPUT_DEVICE"),
+    ),
+    "headphone-isolation-playback-session": Step(
+        name="headphone-isolation-playback-session",
+        description="play the three manual reference takes through explicit source/headphone outputs",
+        local_args=(
+            "pwsh",
+            "-NoProfile",
+            "-File",
+            DEV_CONTAINER,
+            "headphone-isolation-play-manual",
+            "--manifest",
+            "{env:LANGUAGE_MANUAL_RECORDING_MANIFEST:artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-manifest.json}",
+            "--source-output-device",
+            "{env:LANGUAGE_SOURCE_OUTPUT_DEVICE}",
+            "--headphone-output-device",
+            "{env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE}",
+            "--countdown-s",
+            "{env:LANGUAGE_MANUAL_PLAYBACK_COUNTDOWN_S:5}",
+            "--non-interactive",
+        ),
+        required_env=("LANGUAGE_SOURCE_OUTPUT_DEVICE", "LANGUAGE_HEADPHONE_OUTPUT_DEVICE"),
+    ),
     "headphone-isolation-guided-capture": Step(
         name="headphone-isolation-guided-capture",
         description="strict host-guided listener-ear capture and scoring",
@@ -611,6 +651,24 @@ CATEGORIES: dict[str, Category] = {
         steps=("headphone-isolation-check-manual",),
         notes=(
             "Use after placing the open-ear source, isolated source, and translated playback WAVs in the dropbox.",
+        ),
+    ),
+    "reference-playback-dry-run": Category(
+        name="reference-playback-dry-run",
+        description="Validate the manual reference playback plan without playing audio.",
+        steps=("headphone-isolation-playback-plan",),
+        notes=(
+            "Requires LANGUAGE_SOURCE_OUTPUT_DEVICE and LANGUAGE_HEADPHONE_OUTPUT_DEVICE.",
+            "Writes the manual playback log with release_proof=false.",
+        ),
+    ),
+    "reference-playback": Category(
+        name="reference-playback",
+        description="Play manual source/translated references for an external listener-ear recorder.",
+        steps=("headphone-isolation-playback-session",),
+        notes=(
+            "Requires LANGUAGE_SOURCE_OUTPUT_DEVICE and LANGUAGE_HEADPHONE_OUTPUT_DEVICE.",
+            "Plays audio; start the external recorder first. The playback log is not release evidence.",
         ),
     ),
     "release-evidence": Category(
@@ -921,7 +979,14 @@ def self_test() -> int:
         for runner in ("make", "powershell"):
             for step in steps:
                 command_for_step(step, runner)
-    for excluded in ("hardware", "guided-capture", "release", "optional-models", "voice-candidates"):
+    for excluded in (
+        "hardware",
+        "guided-capture",
+        "reference-playback",
+        "release",
+        "optional-models",
+        "voice-candidates",
+    ):
         if excluded in CATEGORIES["all"].includes:
             raise AssertionError(f"all should not implicitly include {excluded}")
     handoff_steps = CATEGORIES["physical-audio-handoff"].steps
@@ -932,6 +997,16 @@ def self_test() -> int:
     )
     if handoff_steps[: len(expected_handoff_prefix)] != expected_handoff_prefix:
         raise AssertionError("physical-audio-handoff must list host devices before route preflight")
+    if CATEGORIES["reference-playback-dry-run"].steps != ("headphone-isolation-playback-plan",):
+        raise AssertionError("reference-playback-dry-run must only validate the playback plan")
+    if CATEGORIES["reference-playback"].steps != ("headphone-isolation-playback-session",):
+        raise AssertionError("reference-playback must only run the explicit playback session")
+    for playback_step in (
+        STEPS["headphone-isolation-playback-plan"],
+        STEPS["headphone-isolation-playback-session"],
+    ):
+        if playback_step.required_env != ("LANGUAGE_SOURCE_OUTPUT_DEVICE", "LANGUAGE_HEADPHONE_OUTPUT_DEVICE"):
+            raise AssertionError(f"{playback_step.name} must require explicit source/headphone output devices")
     for step in STEPS.values():
         for name in step.required_env:
             if not re.match(r"^[A-Z][A-Z0-9_]*$", name):
