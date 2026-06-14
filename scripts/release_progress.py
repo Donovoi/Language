@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,7 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GATE_REPORT = ROOT / "artifacts/release/audio-gate-report.json"
 RELEASE_GATE_SCRIPT = ROOT / "scripts/release_audio_gate.py"
+PORTABLE_FLUTTER = Path("C:/tmp/flutter/bin/flutter.bat")
 
 
 @dataclass(frozen=True)
@@ -70,6 +72,19 @@ def _load_report(path: Path | None) -> dict[str, Any]:
     return _run_release_gate()
 
 
+def _resolve_flutter() -> str | None:
+    for name in ("LANGUAGE_FLUTTER", "FLUTTER"):
+        candidate = os.environ.get(name, "").strip()
+        if candidate:
+            return candidate
+    resolved = shutil.which("flutter")
+    if resolved:
+        return resolved
+    if PORTABLE_FLUTTER.exists():
+        return str(PORTABLE_FLUTTER)
+    return None
+
+
 def _audio_percent(report: dict[str, Any]) -> tuple[int, str]:
     summary = _as_dict(report.get("summary"))
     gate_count = int(summary.get("release_blocking_gate_count", 0) or 0)
@@ -94,7 +109,8 @@ def build_progress(report: dict[str, Any]) -> dict[str, Any]:
     audio_percent, audio_evidence = _audio_percent(report)
     release_reports_exist = DEFAULT_GATE_REPORT.exists() and (ROOT / "artifacts/release/audio-gate-report.md").exists()
     checklist_ready = (ROOT / "artifacts/release/physical-audio-checklist.md").exists()
-    flutter_ready = shutil.which("flutter") is not None
+    flutter_path = _resolve_flutter()
+    flutter_ready = flutter_path is not None
     auth_tests_ready = _file_has_text("services/gateway/tests/test_gateway.py", "test_read_endpoints_remain_auth_free")
     auth_runtime_ready = _file_has_text("services/gateway/app/auth.py", "require_write_token")
     category_runner_ready = _file_has_text("scripts/run_test_category.py", "physical-audio-handoff")
@@ -113,7 +129,7 @@ def build_progress(report: dict[str, Any]) -> dict[str, Any]:
             "Release smoke + artifact readiness",
             100 if release_reports_exist and checklist_ready and flutter_ready else 95 if release_reports_exist and checklist_ready else 90,
             0.12,
-            "release reports, physical checklist, and Flutter host are ready"
+            f"release reports, physical checklist, and Flutter host are ready ({flutter_path})"
             if release_reports_exist and checklist_ready and flutter_ready
             else "release reports/checklist exist; Flutter is not on PATH for local app validation"
             if release_reports_exist and checklist_ready

@@ -23,6 +23,7 @@ from typing import Iterable
 ROOT = Path(__file__).resolve().parents[1]
 DEV_CONTAINER = "scripts/dev_container.ps1"
 ENV_ARG_PATTERN = re.compile(r"^\{env:([A-Za-z_][A-Za-z0-9_]*)(?::([^{}]*))?\}$")
+PORTABLE_FLUTTER = Path("C:/tmp/flutter/bin/flutter.bat")
 
 
 @dataclass(frozen=True)
@@ -159,6 +160,8 @@ STEPS: dict[str, Step] = {
             "-UseExistingGatewayVenv",
             "-Python",
             "{env:LANGUAGE_CORE_PYTHON:services\\gateway\\.venv\\Scripts\\python.exe}",
+            "-Flutter",
+            "{flutter}",
         ),
         target="check",
     ),
@@ -590,6 +593,9 @@ def expand_arg_templates(args: Iterable[str]) -> list[str]:
         if arg == "{python}":
             expanded.append(sys.executable)
             continue
+        if arg == "{flutter}":
+            expanded.append(resolve_flutter())
+            continue
         match = ENV_ARG_PATTERN.match(arg)
         if match:
             name = match.group(1)
@@ -598,6 +604,19 @@ def expand_arg_templates(args: Iterable[str]) -> list[str]:
         else:
             expanded.append(arg)
     return expanded
+
+
+def resolve_flutter() -> str:
+    for name in ("LANGUAGE_FLUTTER", "FLUTTER"):
+        candidate = os.environ.get(name, "").strip()
+        if candidate:
+            return candidate
+    resolved = shutil.which("flutter")
+    if resolved:
+        return resolved
+    if PORTABLE_FLUTTER.exists():
+        return str(PORTABLE_FLUTTER)
+    return "flutter"
 
 
 def command_for_step(step: Step, runner: str) -> tuple[list[str], dict[str, str]]:
