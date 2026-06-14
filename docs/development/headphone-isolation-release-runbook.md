@@ -73,12 +73,16 @@ pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -P
 # confirm_physical_input_preflight command. It includes --selected-route.
 ```
 
-On the current host snapshot, likely candidates were:
+On the current host snapshot from June 14, 2026, preflight found 39 audio devices and reported
+`guided_capture_possible_after_physical_input_confirmation`, but no likely external listener-ear
+input. Good route-triage candidates were:
 
-- source speaker output: `14` (`Speakers (SoundWire Speakers), Windows WASAPI`)
-- headphone output: `16` (`Headphones (WH-1000XM6), Windows WASAPI`)
-- laptop microphone array: `17` (`Microphone Array..., Windows WASAPI`)
-- headset microphone: `18` (`Headset (WH-1000XM6), Windows WASAPI`)
+- MME route: input `1` (`Microphone Array on SoundWire D`), source output `5`
+  (`Speakers (SoundWire Speakers)`), headphone output `4` (`Headphones (WH-1000XM6)`).
+- WASAPI route: input `17` (`Microphone Array on SoundWire Device...`), source output `14`
+  (`Speakers (SoundWire Speakers)`), headphone output `16` (`Headphones (WH-1000XM6)`).
+- headset microphone route: `18` (`Headset (WH-1000XM6), Windows WASAPI`) remains triage only unless
+  it is physically positioned at the listener-ear acoustic point.
 
 For final evidence, prefer a measurement mic physically inside/at the earcup. Use the headset mic only
 for route triage unless it is physically positioned at the listener-ear point. The `17` examples below
