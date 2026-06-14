@@ -60,6 +60,7 @@ than by inventing a second package version line.
 	- `make source-bundle`
 	- Windows without `make`: `pwsh -NoProfile -File scripts/package_local.ps1 -Python <path-to-supported-python>`
 	- `make flutter-release-android` (only when Flutter + Android SDK are available locally)
+	- after installing the gateway package in a virtualenv, verify `language-gateway --help`
 	- For local Windows source/gateway handoff, verify `dist/local-release-artifacts/manifest.md` and
 	  `dist/local-release-artifacts/SHA256SUMS.txt`; releasable handoffs must show `dirty_tree: false`.
 - [ ] Use `.github/workflows/release.yml` for the complete artifact matrix:

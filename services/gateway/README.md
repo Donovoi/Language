@@ -111,6 +111,12 @@ When you want the gateway to honor `LANGUAGE_GATEWAY_*` from the repo-root `.env
 python -m app.main
 ```
 
+Installed gateway packages also expose a console entry point:
+
+```bash
+language-gateway --host 127.0.0.1 --port 8000
+```
+
 For Flutter, pass the optional base URL override at compile time:
 
 ```bash
