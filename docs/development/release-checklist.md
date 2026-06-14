@@ -65,7 +65,10 @@ than by inventing a second package version line.
 	  `dist/local-release-artifacts/SHA256SUMS.txt`; releasable handoffs must show `dirty_tree: false`.
 - [ ] Use `.github/workflows/release.yml` for the complete artifact matrix:
 	- `workflow_dispatch` with `channel=internal-beta` for internal candidate builds
+	- `workflow_dispatch` with `channel=release` only after the strict audio gate passes
 	- `push` of an annotated `vX.Y.Z` tag for a publishable repository release
+	- lightweight `v*` tags are rejected by the workflow
+	- release-channel and tag runs are expected to fail until `make release-audio-gate` passes
 - [ ] Confirm the workflow uploads the expected artifact groups:
 	- source bundle
 	- gateway packages

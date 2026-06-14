@@ -159,14 +159,22 @@ That flow:
 
 1. verifies version alignment and changelog readiness
 2. reruns Rust, Python, and Flutter validation
-3. builds the source, gateway, and Flutter artifact set on matching runners
-4. uploads channel-labeled artifact groups to the workflow run
-5. adds a manifest and `SHA256SUMS.txt` bundle for candidate tracking and verification
+3. prints the current strict audio-gate status as an internal-beta handoff
+4. builds the source, gateway, and Flutter artifact set on matching runners
+5. uploads channel-labeled artifact groups to the workflow run
+6. adds a manifest and `SHA256SUMS.txt` bundle for candidate tracking and verification
 
 ### Tagged release flow
 
 Push an annotated tag `vX.Y.Z` to run the same matrix in `release` mode.
-When the tag run succeeds, the workflow also attaches the artifacts to the GitHub release.
+The workflow rejects lightweight `v*` tags; the tag object must be annotated and match the aligned
+version.
+For `release` channel or tag runs, the workflow runs `python scripts/release_audio_gate.py --json`
+as a blocking job before artifacts are built. Until the physical listener-ear/source-suppression
+evidence passes, tagged release publication is expected to fail. When the tag run succeeds, the
+workflow also attaches the artifacts to the GitHub release.
+The audio-gate job uploads its current JSON/Markdown reports when present, including failed release
+attempts, so reviewers can inspect the exact blocker.
 
 ## Smoke-verification path for the first internal beta
 
