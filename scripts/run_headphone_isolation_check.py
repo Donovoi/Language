@@ -4101,18 +4101,178 @@ def manual_collection_import_ready(args: argparse.Namespace) -> bool:
     )
 
 
+def _string_or_none(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _numeric_device_id(value: Any) -> str | None:
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, int):
+        return str(value) if value >= 0 else None
+    text = str(value).strip()
+    return text if text.isdigit() else None
+
+
+def markdown_inline(value: Any, *, max_len: int = 120) -> str:
+    text = "" if value is None else str(value)
+    text = " ".join(text.replace("\r", " ").replace("\n", " ").split())
+    text = text.replace("`", "'")
+    if len(text) > max_len:
+        return text[: max_len - 3].rstrip() + "..."
+    return text
+
+
+def default_preflight_report_path(output_dir: Path) -> Path:
+    return Path(output_dir) / "runs" / DEFAULT_PREFLIGHT_RUN_ID / DEFAULT_PREFLIGHT_REPORT
+
+
+def manual_collection_preflight_playback_route(args: argparse.Namespace) -> dict[str, Any]:
+    path = Path(getattr(args, "preflight_report", None) or default_preflight_report_path(Path(args.output_dir)))
+    route: dict[str, Any] = {
+        "path": str(path),
+        "present": False,
+        "release_evidence": False,
+        "release_proof": False,
+        "status": "MISSING",
+        "next_step": "Run headphone/earpiece preflight or pass --source-output-device and --headphone-output-device.",
+    }
+    if not path.exists():
+        return route
+    route["present"] = True
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        route.update(
+            {
+                "status": "UNREADABLE",
+                "parse_error": str(exc),
+                "next_step": "Regenerate the headphone/earpiece preflight report.",
+            }
+        )
+        return route
+    if not isinstance(payload, dict):
+        route.update({"status": "INVALID", "identity_issues": ["preflight report root is not an object"]})
+        return route
+
+    generated_at_unix = payload.get("generated_at_unix")
+    generated_at_int = int(generated_at_unix) if isinstance(generated_at_unix, int) and generated_at_unix > 0 else None
+    summary = payload.get("summary", {})
+    summary = summary if isinstance(summary, dict) else {}
+    benchmark = payload.get("benchmarks", {}).get("headphone_earpiece_preflight", {})
+    benchmark = benchmark if isinstance(benchmark, dict) else {}
+    candidates = benchmark.get("candidate_route_triples", [])
+    candidates = candidates if isinstance(candidates, list) else []
+    identity_issues: list[str] = []
+    if payload.get("fixture_kind") != PREFLIGHT_FIXTURE_KIND:
+        identity_issues.append("fixture_kind is not headphone preflight")
+    if payload.get("measurement_kind") != PREFLIGHT_MEASUREMENT_KIND:
+        identity_issues.append("measurement_kind is not headphone preflight")
+    if payload.get("release_proof") is not False or summary.get("release_proof") is not False:
+        identity_issues.append("preflight must keep release_proof=false")
+    if not candidates:
+        identity_issues.append("preflight candidate list is missing")
+    if identity_issues:
+        route.update(
+            {
+                "status": "INVALID",
+                "identity_issues": identity_issues,
+                "next_step": "Regenerate preflight before using it to fill manual playback routes.",
+            }
+        )
+        return route
+
+    selected_route = _string_or_none(summary.get("selected_route"))
+    selected_candidate: dict[str, Any] | None = None
+    if selected_route:
+        for candidate in candidates:
+            if isinstance(candidate, dict) and route_triple_arg(candidate) == selected_route:
+                selected_candidate = candidate
+                break
+    first_candidate = next((candidate for candidate in candidates if isinstance(candidate, dict)), None)
+    candidate = selected_candidate or first_candidate
+    if not isinstance(candidate, dict):
+        route.update(
+            {
+                "status": "INVALID",
+                "identity_issues": ["preflight candidate list has no object candidate"],
+                "next_step": "Regenerate preflight before using it to fill manual playback routes.",
+            }
+        )
+        return route
+
+    source_device = _numeric_device_id(candidate.get("source_output_device"))
+    headphone_device = _numeric_device_id(candidate.get("headphone_output_device"))
+    if not source_device or not headphone_device:
+        route.update(
+            {
+                "status": "INVALID",
+                "identity_issues": ["preflight candidate source/headphone output ids must be numeric"],
+                "next_step": "Regenerate preflight before using it to fill manual playback routes.",
+            }
+        )
+        return route
+    if source_device == headphone_device:
+        route.update(
+            {
+                "status": "UNUSABLE",
+                "identity_issues": ["source and headphone outputs are the same device"],
+                "next_step": "Pass distinct --source-output-device and --headphone-output-device values.",
+            }
+        )
+        return route
+
+    route.update(
+        {
+            "status": "SUGGESTED",
+            "source": "selected_preflight_route" if selected_candidate is not None else "displayed_preflight_candidate",
+            "generated_at_unix": generated_at_int,
+            "selected_route": selected_route or "",
+            "source_output_device": source_device,
+            "source_output_name": _string_or_none(candidate.get("source_name")) or "",
+            "source_hostapi_name": _string_or_none(candidate.get("source_hostapi_name")) or "",
+            "headphone_output_device": headphone_device,
+            "headphone_output_name": _string_or_none(candidate.get("headphone_name")) or "",
+            "headphone_hostapi_name": _string_or_none(candidate.get("headphone_hostapi_name")) or "",
+            "input_device": _string_or_none(candidate.get("input_device")) or "",
+            "input_name": _string_or_none(candidate.get("input_name")) or "",
+            "input_roles": [str(role) for role in candidate.get("input_roles", []) if str(role).strip()]
+            if isinstance(candidate.get("input_roles"), list)
+            else [],
+            "warnings": [
+                "Preflight route suggestions can become stale when Windows audio devices change; rerun preflight or pass explicit outputs if unsure."
+            ],
+            "next_step": "Use these outputs only for play-manual assistance; final evidence still needs listener-ear WAV recordings.",
+        }
+    )
+    return route
+
+
 def manual_collection_commands(
     *,
     args: argparse.Namespace,
     manifest_path: Path,
     score_report_path: Path,
+    playback_route: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     base = "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1"
     python = "-Python $env:LANGUAGE_PYTHON"
     manifest_arg = _powershell_quote(manifest_path)
     score_report_arg = _powershell_quote(score_report_path)
-    source_route = getattr(args, "source_output_device", None) or "SOURCE_SPEAKER_OUTPUT"
-    headphone_route = getattr(args, "headphone_output_device", None) or "HEADPHONE_OUTPUT"
+    playback_route = playback_route if isinstance(playback_route, dict) else {}
+    source_route = (
+        getattr(args, "source_output_device", None)
+        or playback_route.get("source_output_device")
+        or "SOURCE_SPEAKER_OUTPUT"
+    )
+    headphone_route = (
+        getattr(args, "headphone_output_device", None)
+        or playback_route.get("headphone_output_device")
+        or "HEADPHONE_OUTPUT"
+    )
     source_open = getattr(args, "source_open_ear_recording", None) or "RAW_SOURCE_OPEN.wav"
     source_isolated = getattr(args, "source_isolated_ear_recording", None) or "RAW_SOURCE_ISOLATED.wav"
     translated = getattr(args, "translated_headphone_recording", None) or "RAW_TRANSLATED.wav"
@@ -4123,8 +4283,8 @@ def manual_collection_commands(
         ),
         "play_references": (
             f"{base} -Action play-manual {python} --manifest {manifest_arg} "
-            f"--source-output-device {powershell_quote_arg(source_route)} "
-            f"--headphone-output-device {powershell_quote_arg(headphone_route)}"
+            f"--source-output-device {_powershell_quote(source_route)} "
+            f"--headphone-output-device {_powershell_quote(headphone_route)}"
         ),
         "import_recordings": (
             f"{base} -Action import-manual {python} --manifest {manifest_arg} "
@@ -4155,6 +4315,8 @@ def render_manual_collection_markdown(plan: dict[str, Any]) -> str:
     commands = commands if isinstance(commands, dict) else {}
     issues = [str(issue) for issue in plan.get("issues", []) if str(issue).strip()]
     next_actions = [str(action) for action in plan.get("next_actions", []) if str(action).strip()]
+    playback_route = plan.get("preflight_playback_route", {})
+    playback_route = playback_route if isinstance(playback_route, dict) else {}
     lines = [
         "# Headphone/Earpiece Evidence Collection Plan",
         "",
@@ -4180,9 +4342,40 @@ def render_manual_collection_markdown(plan: dict[str, Any]) -> str:
         "4. Record three separate mono WAV takes: source open-ear, source isolated-ear, and translated headphone playback.",
         "5. Keep the measurement mic position fixed between open-ear and isolated-ear source takes, except for sealing the headphone/earpiece over it.",
         "",
-        "## Issues",
+        "## Playback Route Suggestion",
         "",
+        "This only makes `play-manual` easier to run. It is not guided capture and is not release evidence.",
+        "",
+        f"- Status: **{markdown_inline(playback_route.get('status', 'UNKNOWN'))}**",
+        f"- Preflight report: `{markdown_inline(playback_route.get('path', ''))}`",
     ]
+    if playback_route.get("status") == "SUGGESTED":
+        lines.extend(
+            [
+                f"- Source: `{markdown_inline(playback_route.get('source', ''))}`",
+                f"- Generated at unix: `{markdown_inline(playback_route.get('generated_at_unix', 'unknown'))}`",
+                f"- Source output: `{markdown_inline(playback_route.get('source_output_device', ''))}` "
+                f"({markdown_inline(playback_route.get('source_output_name', ''))}; "
+                f"{markdown_inline(playback_route.get('source_hostapi_name', ''))})",
+                f"- Headphone output: `{markdown_inline(playback_route.get('headphone_output_device', ''))}` "
+                f"({markdown_inline(playback_route.get('headphone_output_name', ''))}; "
+                f"{markdown_inline(playback_route.get('headphone_hostapi_name', ''))})",
+            ]
+        )
+    elif playback_route.get("identity_issues"):
+        issues_text = "; ".join(markdown_inline(issue) for issue in playback_route.get("identity_issues", [])[:4])
+        lines.append(f"- Route issues: {issues_text}")
+    warnings = playback_route.get("warnings", [])
+    if isinstance(warnings, list) and warnings:
+        lines.append(f"- Warnings: {'; '.join(markdown_inline(warning) for warning in warnings[:3])}")
+    lines.extend(
+        [
+            f"- Next step: {markdown_inline(playback_route.get('next_step', ''))}",
+            "",
+            "## Issues",
+            "",
+        ]
+    )
     lines.extend([f"- {issue}" for issue in issues] or ["- None"])
     lines.extend(["", "## Next Actions", ""])
     lines.extend([f"- {action}" for action in next_actions] or ["- None"])
@@ -4381,7 +4574,13 @@ def collect_headphone_evidence(args: argparse.Namespace) -> int:
         if score_ready:
             next_actions.append("run score-manual or rerun collect-headphone-evidence with --score-if-ready")
 
-    commands = manual_collection_commands(args=args, manifest_path=manifest_path, score_report_path=score_report_path)
+    playback_route = manual_collection_preflight_playback_route(args)
+    commands = manual_collection_commands(
+        args=args,
+        manifest_path=manifest_path,
+        score_report_path=score_report_path,
+        playback_route=playback_route,
+    )
     plan = {
         "schema_version": 1,
         "generated_at_unix": int(time.time()),
@@ -4403,6 +4602,7 @@ def collect_headphone_evidence(args: argparse.Namespace) -> int:
         },
         "issues": issues + status_issues,
         "next_actions": next_actions,
+        "preflight_playback_route": playback_route,
         "recommended_commands": commands,
         "step_results": step_results,
         "detractor_loop": {
@@ -5560,10 +5760,16 @@ def self_test() -> int:
             raise RuntimeError("collection plan should report NOT-READY before listener-ear recordings exist")
         if collection_plan.get("summary", {}).get("score_attempted") is not False:
             raise RuntimeError("collection plan must not score before manual status is ready")
+        if collection_plan.get("preflight_playback_route", {}).get("status") != "MISSING":
+            raise RuntimeError("collection plan should report missing preflight playback route without a preflight report")
+        explicit_play_command = collection_plan.get("recommended_commands", {}).get("play_references", "")
+        if "unit-source-output" not in explicit_play_command or "unit-headphone-output" not in explicit_play_command:
+            raise RuntimeError("explicit collection playback routes should override missing preflight suggestions")
         collection_markdown = (manual_manifest_path.parent / "collection-plan.md").read_text(encoding="utf-8")
         for expected_text in (
             "Headphone/Earpiece Evidence Collection Plan",
             "built-in laptop mic is not listener-ear proof",
+            "Playback Route Suggestion",
             "play_references",
             "import_recordings",
             "release_audio_gate.py --json",
@@ -6507,6 +6713,130 @@ def self_test() -> int:
             json.dumps(confirmed_preflight_report, indent=2, sort_keys=True, allow_nan=False) + "\n",
             encoding="utf-8",
         )
+        preflight_playback_route = manual_collection_preflight_playback_route(
+            argparse.Namespace(
+                output_dir=root / "unused-preflight-out",
+                preflight_report=confirmed_preflight_path,
+            )
+        )
+        if preflight_playback_route.get("status") != "SUGGESTED":
+            raise RuntimeError("confirmed preflight should suggest manual playback outputs")
+        preflight_playback_commands = manual_collection_commands(
+            args=argparse.Namespace(
+                headphone_output_device=None,
+                playback_gain_db=DEFAULT_PLAYBACK_GAIN_DB,
+                sample_rate_hz=sample_rate_hz,
+                source_isolated_ear_recording=None,
+                source_open_ear_recording=None,
+                source_output_device=None,
+                translated_headphone_recording=None,
+            ),
+            manifest_path=manual_manifest_path,
+            score_report_path=root / "preflight-playback-headphone-isolation-report.json",
+            playback_route=preflight_playback_route,
+        )
+        preflight_play_command = preflight_playback_commands.get("play_references", "")
+        if "--source-output-device '1'" not in preflight_play_command:
+            raise RuntimeError("preflight playback route should fill source output device")
+        if "--headphone-output-device '2'" not in preflight_play_command:
+            raise RuntimeError("preflight playback route should fill headphone output device")
+        override_playback_commands = manual_collection_commands(
+            args=argparse.Namespace(
+                headphone_output_device="manual-headphone-output",
+                playback_gain_db=DEFAULT_PLAYBACK_GAIN_DB,
+                sample_rate_hz=sample_rate_hz,
+                source_isolated_ear_recording=None,
+                source_open_ear_recording=None,
+                source_output_device="manual-source-output",
+                translated_headphone_recording=None,
+            ),
+            manifest_path=manual_manifest_path,
+            score_report_path=root / "override-headphone-isolation-report.json",
+            playback_route=preflight_playback_route,
+        )
+        override_play_command = override_playback_commands.get("play_references", "")
+        if "manual-source-output" not in override_play_command or "manual-headphone-output" not in override_play_command:
+            raise RuntimeError("explicit manual playback outputs should override valid preflight suggestions")
+        if "--source-output-device '1'" in override_play_command or "--headphone-output-device '2'" in override_play_command:
+            raise RuntimeError("preflight output suggestions must not override explicit manual playback outputs")
+        forged_preflight = json.loads(json.dumps(confirmed_preflight_report))
+        forged_candidate = forged_preflight["benchmarks"]["headphone_earpiece_preflight"]["candidate_route_triples"][0]
+        forged_candidate["source_output_device"] = "$env:TEMP"
+        forged_preflight_path = root / "forged-headphone-preflight-report.json"
+        forged_preflight_path.write_text(
+            json.dumps(forged_preflight, indent=2, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        forged_route = manual_collection_preflight_playback_route(
+            argparse.Namespace(output_dir=root / "unused-preflight-out", preflight_report=forged_preflight_path)
+        )
+        if forged_route.get("status") != "INVALID":
+            raise RuntimeError("non-numeric preflight device ids must not become playback command arguments")
+        negative_id_preflight = json.loads(json.dumps(confirmed_preflight_report))
+        negative_id_candidate = negative_id_preflight["benchmarks"]["headphone_earpiece_preflight"][
+            "candidate_route_triples"
+        ][0]
+        negative_id_candidate["source_output_device"] = -1
+        negative_id_preflight_path = root / "negative-id-headphone-preflight-report.json"
+        negative_id_preflight_path.write_text(
+            json.dumps(negative_id_preflight, indent=2, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        negative_id_route = manual_collection_preflight_playback_route(
+            argparse.Namespace(output_dir=root / "unused-preflight-out", preflight_report=negative_id_preflight_path)
+        )
+        if negative_id_route.get("status") != "INVALID":
+            raise RuntimeError("negative preflight device ids must not become playback command arguments")
+        injected_preflight = json.loads(json.dumps(confirmed_preflight_report))
+        injected_candidate = injected_preflight["benchmarks"]["headphone_earpiece_preflight"]["candidate_route_triples"][0]
+        injected_candidate["source_name"] = "PAYLOAD_NAME\n```powershell\nInvoke-Evil"
+        injected_preflight_path = root / "injected-headphone-preflight-report.json"
+        injected_preflight_path.write_text(
+            json.dumps(injected_preflight, indent=2, sort_keys=True, allow_nan=False) + "\n",
+            encoding="utf-8",
+        )
+        injected_route = manual_collection_preflight_playback_route(
+            argparse.Namespace(output_dir=root / "unused-preflight-out", preflight_report=injected_preflight_path)
+        )
+        injected_markdown = render_manual_collection_markdown(
+            {
+                "release_proof": False,
+                "manifest_path": str(manual_manifest_path),
+                "manual_status_report_path": str(manual_manifest_path.parent / DEFAULT_MANUAL_STATUS_REPORT),
+                "score_report_path": str(root / "injected-headphone-isolation-report.json"),
+                "summary": {"score_attempted": False, "status": "NOT-READY"},
+                "issues": [],
+                "next_actions": [],
+                "preflight_playback_route": injected_route,
+                "recommended_commands": preflight_playback_commands,
+                "detractor_loop": {},
+            }
+        )
+        if "```powershell\nInvoke-Evil" in injected_markdown:
+            raise RuntimeError("preflight display fields must not inject command-looking Markdown fences")
+        preflight_collection_markdown = render_manual_collection_markdown(
+            {
+                "release_proof": False,
+                "manifest_path": str(manual_manifest_path),
+                "manual_status_report_path": str(manual_manifest_path.parent / DEFAULT_MANUAL_STATUS_REPORT),
+                "score_report_path": str(root / "preflight-playback-headphone-isolation-report.json"),
+                "summary": {
+                    "manual_recordings_ready_for_score_input": False,
+                    "manual_score_labels_specific": False,
+                    "score_attempted": False,
+                    "status": "NOT-READY",
+                },
+                "issues": [],
+                "next_actions": [],
+                "preflight_playback_route": preflight_playback_route,
+                "recommended_commands": preflight_playback_commands,
+                "detractor_loop": {},
+            }
+        )
+        if "Source output: `1`" not in preflight_collection_markdown or "Headphone output: `2`" not in preflight_collection_markdown:
+            raise RuntimeError("collection Markdown should show preflight-derived playback outputs")
+        if "Preflight route suggestions can become stale" not in preflight_collection_markdown:
+            raise RuntimeError("collection Markdown should warn that preflight playback routes can become stale")
         binding = capture_preflight_binding(
             preflight_report=confirmed_preflight_path,
             measurement_input_device="0",
@@ -6859,6 +7189,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     collect_parser.add_argument("--status-report", type=Path)
     collect_parser.add_argument("--plan-report", type=Path)
     collect_parser.add_argument("--markdown-report", type=Path)
+    collect_parser.add_argument(
+        "--preflight-report",
+        type=Path,
+        help="optional headphone preflight report used only to fill manual play-reference output devices",
+    )
     collect_parser.add_argument("--skip-prepare", action="store_true")
     collect_parser.add_argument("--source-output-device")
     collect_parser.add_argument("--headphone-output-device")
