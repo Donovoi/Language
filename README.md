@@ -101,7 +101,7 @@ Common categories:
 | `hardware` | Host audio discovery and listener-ear planning | Run deliberately when testing devices. |
 | `route-triage` | Host headphone route preflight and probe handoff | Prints the probe command; does not run it. |
 | `guided-capture` | Strict host-guided listener-ear capture | Requires explicit device IDs, concrete labels, and a confirmed preflight report. |
-| `physical-audio-handoff` | Current host route, manual kit, and checklist | Best first command before a hardware session. |
+| `physical-audio-handoff` | Current host devices, route, manual kit, and checklist | Best first command before a hardware session. |
 | `evidence-kit` | Manual listener-ear recording kit/dropbox | Creates/checks the folder for the three release WAVs. |
 | `recording-status` | Listener-ear WAV readiness | Use after adding the three manual recordings. |
 | `release-evidence` | One-command listener-ear evidence handoff | Prepare/import/check the kit, then print release status. |

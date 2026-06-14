@@ -581,8 +581,10 @@ CATEGORIES: dict[str, Category] = {
     ),
     "physical-audio-handoff": Category(
         name="physical-audio-handoff",
-        description="One-command host-audio route, manual kit, and release checklist handoff.",
+        description="One-command host-audio device snapshot, route, manual kit, and release checklist handoff.",
         steps=(
+            "live-microphone-list-devices",
+            "headphone-isolation-list-devices",
             "headphone-local-preflight",
             "headphone-route-triage-handoff",
             "headphone-isolation-collect-evidence",
@@ -922,6 +924,14 @@ def self_test() -> int:
     for excluded in ("hardware", "guided-capture", "release", "optional-models", "voice-candidates"):
         if excluded in CATEGORIES["all"].includes:
             raise AssertionError(f"all should not implicitly include {excluded}")
+    handoff_steps = CATEGORIES["physical-audio-handoff"].steps
+    expected_handoff_prefix = (
+        "live-microphone-list-devices",
+        "headphone-isolation-list-devices",
+        "headphone-local-preflight",
+    )
+    if handoff_steps[: len(expected_handoff_prefix)] != expected_handoff_prefix:
+        raise AssertionError("physical-audio-handoff must list host devices before route preflight")
     for step in STEPS.values():
         for name in step.required_env:
             if not re.match(r"^[A-Z][A-Z0-9_]*$", name):

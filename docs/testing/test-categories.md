@@ -42,7 +42,7 @@ Use `--dry-run` to inspect the command plan. By default, full output goes to
 | `hardware` | Host device listing, listener-ear route preflight, and virtual listener-ear lab. | Release proof. Run physical capture/score commands from the runbook when ready. |
 | `route-triage` | Refresh host headphone preflight and print the deliberate route-probe command. | The printed command is not run automatically; if run, it plays/records audio and remains non-release triage. |
 | `guided-capture` | Strict host-guided listener-ear capture and scoring through PortAudio. | Requires explicit `LANGUAGE_*` device IDs, concrete labels, and a physically confirmed selected-route preflight report. |
-| `physical-audio-handoff` | Refresh route triage, prepare/check the manual kit, and write the physical-audio checklist. | Audio playback/recording, scoring, or release proof. |
+| `physical-audio-handoff` | Refresh host device listings and route triage, prepare/check the manual kit, and write the physical-audio checklist. | Audio playback/recording, scoring, or release proof. |
 | `evidence-kit` | Manual listener-ear recording kit, readiness check, and raw WAV dropbox. | Audio playback/recording. Put the three exported WAVs in the dropbox, then rerun. |
 | `recording-status` | Readiness check for the three manual listener-ear WAVs. | Playback, recording, scoring, or release proof. |
 | `release-evidence` | Prepare/import/check the manual listener-ear kit, then print compact release status. | Audio playback/recording, placeholder-label scoring, or release proof. |
@@ -90,8 +90,9 @@ The `release` category is allowed to fail when the operator handoff says physica
 missing. Do not treat fixture-only passes as source-suppression release proof.
 Use `release-status` first when you only need the current blocker and the next commands without a
 large JSON or Markdown handoff.
-Use `physical-audio-handoff` before a hardware session when you want route triage, the manual kit,
-readiness status, and `artifacts/release/physical-audio-checklist.md` refreshed together.
+Use `physical-audio-handoff` before a hardware session when you want host device IDs, route triage,
+the manual kit, readiness status, and `artifacts/release/physical-audio-checklist.md` refreshed
+together.
 Use `guided-capture --dry-run` after preflight reports a capture-ready route and before you let the
 host play/record audio. It fails before touching devices unless the required `LANGUAGE_*` device and
 label environment variables are set.
