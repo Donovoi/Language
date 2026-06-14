@@ -93,15 +93,16 @@ For Windows host-audio headphone/earpiece isolation work, use the local wrapper 
 PortAudio can see Bluetooth, WASAPI, USB, and built-in microphone devices directly:
 
 ```powershell
-$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action self-test -Python $env:LANGUAGE_PYTHON
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action virtual-lab -Python $env:LANGUAGE_PYTHON
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action prepare-manual -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --playback-gain-db -18
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action self-test
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action virtual-lab
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight --sample-rate-hz 48000 --input-channels 1 --output-channels 2
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action prepare-manual --sample-rate-hz 48000 --playback-gain-db -18
 ```
 
 The wrapper creates `.venv-audio-local/` and installs only the packages needed for the selected
-action. Device-listing, preflight, route-probe, sweep, capture, and manual-playback actions also
+action. It auto-selects a supported Python `>=3.11,<3.14` from `-Python`, `LANGUAGE_PYTHON`,
+`PYTHON`, Codex's bundled runtime, or `python`; set `LANGUAGE_PYTHON` when you need a specific
+interpreter. Device-listing, preflight, route-probe, sweep, capture, and manual-playback actions also
 install `sounddevice`; pure manifest/scoring actions need only `numpy`. Preflight is no-audio
 hardware planning only and writes `release_proof=false` reports under
 `artifacts/audio_eval/runs/headphone-earpiece-preflight/`. Laptop built-in microphones are useful

@@ -66,9 +66,8 @@ The microphone must capture three states from the same listener-ear position:
 Device numbers can shift. Always list devices first:
 
 ```powershell
-$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action list-devices -Python $env:LANGUAGE_PYTHON
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action list-devices
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight --sample-rate-hz 48000 --input-channels 1 --output-channels 2
 # If the report finds a capture-ready external listener-ear input, run its generated
 # confirm_physical_input_preflight command. It includes --selected-route.
 ```
@@ -103,17 +102,17 @@ Bluetooth/WASAPI/USB audio routes. The wrapper creates `.venv-audio-local/`, ins
 installs `sounddevice` only for commands that touch host devices:
 
 ```powershell
-$env:LANGUAGE_PYTHON = "C:\Path\To\python.exe"
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action self-test -Python $env:LANGUAGE_PYTHON
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action list-devices -Python $env:LANGUAGE_PYTHON
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --input-channels 1 --output-channels 2
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action self-test
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action list-devices
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action preflight --sample-rate-hz 48000 --input-channels 1 --output-channels 2
 # Follow the generated confirm/capture commands only when preflight reports a capture-ready route.
-pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action prepare-manual -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --playback-gain-db -18
+pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action prepare-manual --sample-rate-hz 48000 --playback-gain-db -18
 ```
 
-Use `-RecreateVenv` if dependency installation gets into a bad state. A passing virtual lab or route
-probe is still not release evidence; the release gate needs a physical listener-ear recording scored
-by `score-manual` or `capture`.
+The wrapper auto-selects a supported Python `>=3.11,<3.14`; set `LANGUAGE_PYTHON` only when you need
+to point it at a specific interpreter. Use `-RecreateVenv` if dependency installation gets into a bad
+state. A passing virtual lab or route probe is still not release evidence; the release gate needs a
+physical listener-ear recording scored by `score-manual` or `capture`.
 
 ## Hardware Setup Checklist
 
