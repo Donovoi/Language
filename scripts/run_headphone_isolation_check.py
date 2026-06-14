@@ -3371,6 +3371,13 @@ def write_manual_recording_checklist(
     score_report_path = manifest.get("score_report_path")
     manifest_arg = _powershell_quote(manifest_path)
     score_report_arg = _powershell_quote(score_report_path)
+    raw_dropbox = manual_raw_recording_dropbox(manifest_path)
+    raw_recording_dir = Path(str(raw_dropbox["path"]))
+    raw_expected_recordings = raw_dropbox.get("expected_recordings", {})
+    raw_expected_recordings = raw_expected_recordings if isinstance(raw_expected_recordings, dict) else {}
+    raw_recording_paths = {
+        key: Path(str(value)) for key, value in raw_expected_recordings.items()
+    }
     lines = [
         "# Headphone/Earpiece Manual Recording Checklist",
         "",
@@ -3400,18 +3407,32 @@ def write_manual_recording_checklist(
         f"- Maximum release alignment lag: `{max_alignment_lag_ms}` ms",
         f"- Required source isolation: `{min_source_isolation_db}` dB or better",
         "",
+        "## Raw Recorder Dropbox",
+        "",
+        (
+            "Record or export the external recorder WAVs into this dropbox first. The import/check "
+            "steps then copy validated files into the manifest paths used by scoring."
+        ),
+        "",
+        f"- Dropbox folder: `{raw_recording_dir}`",
+        f"- Source open-ear raw WAV: `{raw_recording_paths['source_open_ear_recording']}`",
+        f"- Source isolated-ear raw WAV: `{raw_recording_paths['source_isolated_ear_recording']}`",
+        f"- Translated headphone raw WAV: `{raw_recording_paths['translated_headphone_recording']}`",
+        "",
         "## Takes",
         "",
-        "| Take | Play This Reference | Record To This WAV | Physical Setup |",
-        "| --- | --- | --- | --- |",
+        "| Take | Play This Reference | Copy Raw Export To | Imported Manifest WAV | Physical Setup |",
+        "| --- | --- | --- | --- | --- |",
     ]
     for step in manifest.get("recording_steps", []):
         if not isinstance(step, dict):
             continue
+        name = str(step.get("name") or "")
         lines.append(
             "| "
-            f"`{step.get('name')}` | "
+            f"`{name}` | "
             f"`{step.get('play')}` | "
+            f"`{raw_recording_paths.get(name, raw_recording_dir / (name + '.wav'))}` | "
             f"`{step.get('record_to')}` | "
             f"{step.get('instruction')} |"
         )
@@ -5806,6 +5827,8 @@ def self_test() -> int:
         for expected_text in (
             "Headphone/Earpiece Manual Recording Checklist",
             "not release evidence",
+            "Raw Recorder Dropbox",
+            "Copy Raw Export To",
             "source_open_ear_recording",
             "source_isolated_ear_recording",
             "translated_headphone_recording",
@@ -5826,6 +5849,13 @@ def self_test() -> int:
             expected_path = expected_recording_paths.get(key)
             if not expected_path or str(expected_path) not in manual_checklist:
                 raise RuntimeError(f"manual recording checklist missing expected path for {key}")
+        raw_dropbox = manual_raw_recording_dropbox(manual_manifest_path)
+        raw_expected_recordings = raw_dropbox.get("expected_recordings", {})
+        if not isinstance(raw_expected_recordings, dict):
+            raise RuntimeError("manual raw dropbox helper returned invalid expected recordings")
+        for raw_path in raw_expected_recordings.values():
+            if str(raw_path) not in manual_checklist:
+                raise RuntimeError(f"manual recording checklist missing raw dropbox path {raw_path}")
         for key in ("source_reference", "translated_playback_reference"):
             expected_path = artifact_paths.get(key)
             if not expected_path or str(expected_path) not in manual_checklist:
