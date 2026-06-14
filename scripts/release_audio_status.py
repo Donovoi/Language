@@ -14,6 +14,11 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GATE_REPORT = ROOT / "artifacts/release/audio-gate-report.json"
 DEFAULT_OPERATOR_CHECKLIST = ROOT / "artifacts/release/physical-audio-checklist.md"
+MANUAL_RECORDING_FILENAMES = {
+    "source_open_ear_recording": "source-open-ear-recording.wav",
+    "source_isolated_ear_recording": "source-isolated-ear-recording.wav",
+    "translated_headphone_recording": "translated-headphone-recording.wav",
+}
 RELEASE_GATE_SCRIPT = ROOT / "scripts/release_audio_gate.py"
 
 
@@ -23,6 +28,11 @@ def _as_dict(value: Any) -> dict[str, Any]:
 
 def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _recording_display_name(value: Any) -> str:
+    text = str(value).strip()
+    return MANUAL_RECORDING_FILENAMES.get(text, text)
 
 
 def _repo_relative(path: str | Path) -> str:
@@ -83,7 +93,7 @@ def _manual_evidence_lines(report: dict[str, Any]) -> list[str]:
         lines.append(f"Raw WAV dropbox: {_repo_relative(dropbox_path)}")
     missing = [str(item) for item in _as_list(dropbox_state.get("missing_recordings"))]
     if missing:
-        lines.append(f"Missing recordings: {', '.join(missing)}")
+        lines.append(f"Missing recordings: {', '.join(_recording_display_name(item) for item in missing)}")
     return lines
 
 
@@ -313,7 +323,9 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
     if blocking:
         lines.append(f"- Blocking gate(s): {'; '.join(blocking)}")
     if missing:
-        lines.append(f"- Missing listener-ear recordings: {', '.join(missing)}")
+        lines.append(
+            f"- Missing listener-ear recordings: {', '.join(_recording_display_name(item) for item in missing)}"
+        )
     if dropbox_path:
         lines.append(f"- Raw WAV dropbox: `{_repo_relative(dropbox_path)}`")
     if dropbox_readme_path:
@@ -502,7 +514,7 @@ def _compact_next_actions(report: dict[str, Any]) -> list[str]:
 
     actions = [*preflight_actions, "Run: python scripts/run_test_category.py release-evidence"]
     if dropbox_path and missing:
-        missing_text = ", ".join(missing)
+        missing_text = ", ".join(_recording_display_name(item) for item in missing)
         actions.append(f"Record/export missing WAVs into {_repo_relative(dropbox_path)}: {missing_text}")
         actions.append("Rerun: python scripts/run_test_category.py release-evidence")
         actions.append("When WAVs are ready and labels are set, run: python scripts/run_test_category.py release-evidence-score")
@@ -715,7 +727,7 @@ def self_test() -> int:
         "Release audio status: NOT READY",
         "Release gates: 1/2 passed",
         "playback_source_suppression_evidence",
-        "Missing recordings: source_open_ear_recording",
+        "Missing recordings: source-open-ear-recording.wav",
         "Next actions:",
         "Playback helper for an external listener-ear recorder (not release proof):",
         "$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = \"12\"",
