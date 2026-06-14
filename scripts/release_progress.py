@@ -31,6 +31,11 @@ EXPECTED_LOCAL_ARTIFACTS = (
     "language-0.1.0-source.zip",
     "language-gateway-0.1.0.tar.gz",
 )
+MANUAL_RECORDING_FILENAMES = {
+    "source_open_ear_recording": "source-open-ear-recording.wav",
+    "source_isolated_ear_recording": "source-isolated-ear-recording.wav",
+    "translated_headphone_recording": "translated-headphone-recording.wav",
+}
 
 
 @dataclass(frozen=True)
@@ -68,6 +73,11 @@ def _file_has_all_text(path: str, required: tuple[str, ...]) -> bool:
         return False
     content = candidate.read_text(encoding="utf-8", errors="replace")
     return all(text in content for text in required)
+
+
+def _recording_display_name(value: Any) -> str:
+    text = str(value).strip()
+    return MANUAL_RECORDING_FILENAMES.get(text, text)
 
 
 def _token_discipline_status_from_flags(
@@ -286,7 +296,8 @@ def _audio_percent(report: dict[str, Any]) -> tuple[int, str]:
     missing = [str(item) for item in _as_list(state.get("missing_recordings"))]
     score_category_ready = _file_has_text("scripts/run_test_category.py", "release-evidence-score")
     if missing and score_category_ready:
-        return 90, f"{gate_count - failure_count}/{gate_count} gates; missing WAVs: {', '.join(missing)}"
+        missing_text = ", ".join(_recording_display_name(item) for item in missing)
+        return 90, f"{gate_count - failure_count}/{gate_count} gates; missing WAVs: {missing_text}"
     if failure_count:
         return 85, f"{gate_count - failure_count}/{gate_count} gates; release blocker remains"
     return 80, "audio gate evidence is incomplete"
@@ -444,6 +455,7 @@ def self_test() -> int:
     required = [
         "Release progress estimate:",
         "Playback/source suppression evidence",
+        "source-open-ear-recording.wav",
         "conversation-token guide, agent handoff rules, and quiet runner wiring are present",
         "Total release goal:",
         "release gate remains authoritative",
