@@ -68,6 +68,12 @@ cd <repository-root>
 make gateway-run
 ```
 
+If you are smoke-testing an installed gateway wheel or sdist instead of a source checkout, run:
+
+```bash
+language-gateway --host 127.0.0.1 --port 8000
+```
+
 Keep that terminal running.
 
 ## 2. Verify the host-side gateway baseline

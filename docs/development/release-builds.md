@@ -30,7 +30,7 @@ Use the guidance in `docs/development/versioning.md` and the checklist in `docs/
 | Artifact | Primary build path | Output | Smoke-verification status | Notes |
 | --- | --- | --- | --- | --- |
 | Source bundle | `make source-bundle` or workflow `source-bundle` job | `dist/language-<version>-source.tar.gz`, `dist/language-<version>-source.zip` | Supported | Easiest way to hand a reviewer the exact candidate source. |
-| Gateway packages | `make gateway-package` or workflow `gateway-package` job | Local build dir: `services/gateway/dist/*.tar.gz`, `services/gateway/dist/*.whl`; local handoff/workflow artifact: `language-gateway-<version>.tar.gz` plus wheel | Packaging verified | The repo does not yet ship a dedicated packaged CLI wrapper; the smoke path still uses a checkout or unpacked source bundle to run the gateway. |
+| Gateway packages | `make gateway-package` or workflow `gateway-package` job | Local build dir: `services/gateway/dist/*.tar.gz`, `services/gateway/dist/*.whl`; local handoff/workflow artifact: `language-gateway-<version>.tar.gz` plus wheel | Packaging verified | Installed packages expose `language-gateway` for source-free smoke runs. |
 | Android release app | `make flutter-release-android` or workflow `flutter-android` job | release APK + AAB | **Primary smoke path** | Default Android build targets the emulator/local-host path. Set `FIELD_APP_API_BASE_URL` at workflow-dispatch time for device or hosted-gateway testing. Set the `FIELD_APP_AUTH_TOKEN` GitHub secret only for controlled auth-enabled smoke builds. |
 | iOS unsigned app bundle | workflow `flutter-ios` job on `macos-latest` | zipped `Runner.app` | Manual follow-up | Unsigned only; build requires a macOS runner. |
 | macOS app bundle | workflow `flutter-macos` job on `macos-latest` | zipped `.app` bundle | Manual follow-up | Unsigned/unnotarized. |
@@ -47,6 +47,12 @@ make check
 make smoke-local-demo
 make gateway-package
 make source-bundle
+```
+
+After installing the gateway wheel or sdist in a virtualenv, run the packaged server with:
+
+```bash
+language-gateway --host 127.0.0.1 --port 8000
 ```
 
 On Windows hosts without `make`, Bash, or WSL, use the native host smoke equivalent:
