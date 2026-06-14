@@ -13,6 +13,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GATE_REPORT = ROOT / "artifacts/release/audio-gate-report.json"
+DEFAULT_OPERATOR_CHECKLIST = ROOT / "artifacts/release/physical-audio-checklist.md"
 RELEASE_GATE_SCRIPT = ROOT / "scripts/release_audio_gate.py"
 
 
@@ -168,6 +169,129 @@ def _route_probe_lines(report: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _release_state(report: dict[str, Any]) -> tuple[str, int, int]:
+    summary = _as_dict(report.get("summary"))
+    gate_count = int(summary.get("release_blocking_gate_count", 0) or 0)
+    failure_count = int(summary.get("release_blocking_failure_count", 0) or 0)
+    passed_count = max(gate_count - failure_count, 0)
+    state = "READY" if failure_count == 0 and gate_count else "NOT READY"
+    return state, passed_count, gate_count
+
+
+def _blocking_gate_lines(report: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    for gate in _as_list(report.get("release_blocking_gates")):
+        if not isinstance(gate, dict) or gate.get("passed"):
+            continue
+        name = str(gate.get("name", "unknown")).strip() or "unknown"
+        message = str(gate.get("message", "")).strip()
+        if message:
+            lines.append(f"`{name}`: {message}")
+        else:
+            lines.append(f"`{name}`")
+    return lines
+
+
+def render_operator_checklist(report: dict[str, Any]) -> str:
+    state, passed_count, gate_count = _release_state(report)
+    handoff = _as_dict(report.get("operator_handoff"))
+    collection = _as_dict(handoff.get("headphone_collection_plan_status"))
+    dropbox = _as_dict(collection.get("raw_recording_dropbox"))
+    dropbox_state = _as_dict(dropbox.get("state"))
+    dropbox_path = str(dropbox.get("path", "")).strip()
+    missing = [str(item) for item in _as_list(dropbox_state.get("missing_recordings"))]
+    probe = _as_dict(handoff.get("headphone_route_probe_status"))
+    route = _as_dict(probe.get("device_route"))
+
+    lines = [
+        "# Physical Audio Test Checklist",
+        "",
+        "Generated from the current release audio reports. This is an operator handoff, not release proof.",
+        "",
+        "## Current State",
+        "",
+        f"- Release status: **{state}** ({passed_count}/{gate_count} gates passed)",
+    ]
+    blocking = _blocking_gate_lines(report)
+    if blocking:
+        lines.append(f"- Blocking gate(s): {'; '.join(blocking)}")
+    if missing:
+        lines.append(f"- Missing listener-ear recordings: {', '.join(missing)}")
+    if dropbox_path:
+        lines.append(f"- Raw WAV dropbox: `{_repo_relative(dropbox_path)}`")
+
+    if probe:
+        lines.extend(
+            [
+                "",
+                "## Current Route Triage",
+                "",
+                f"- Probe status: `{probe.get('status', 'unknown')}`",
+            ]
+        )
+        if route:
+            lines.extend(
+                [
+                    f"- Measurement input: {_route_device_label(_as_dict(route.get('measurement_input')))}",
+                    f"- Source output: {_route_device_label(_as_dict(route.get('source_output')))}",
+                    f"- Headphone output: {_route_device_label(_as_dict(route.get('headphone_output')))}",
+                ]
+            )
+        reasons = [str(item) for item in _as_list(probe.get("blocking_reasons"))]
+        if reasons:
+            lines.append(f"- Blocking reasons: {', '.join(reasons)}")
+        lines.append("- Detractor note: route probes and virtual labs stay `release_proof=false`.")
+
+    lines.extend(
+        [
+            "",
+            "## Do This With The Hardware",
+            "",
+            "1. For laptop-only triage, place one headphone earcup directly over the laptop microphone opening, disable Windows audio enhancements/noise suppression/AGC/echo cancellation, then run:",
+            "",
+            "   ```powershell",
+            "   python scripts/run_test_category.py route-triage",
+            "   ```",
+            "",
+            "   Copy and run the printed `probe-route` command only as non-release triage.",
+            "",
+            "2. For release evidence, use a separate listener-ear recorder: phone WAV recorder, USB mic, lav mic, or field recorder placed at the earcup/listener-ear point.",
+            "",
+            "3. Prepare the release-derived references and dropbox:",
+            "",
+            "   ```powershell",
+            "   python scripts/run_test_category.py release-evidence",
+            "   ```",
+            "",
+            "4. Record or export these three WAVs from the same listener-ear position:",
+            "",
+            "   - `source-open-ear-recording.wav`: source speaker plays, headphone/earpiece unsealed or removed.",
+            "   - `source-isolated-ear-recording.wav`: same source speaker route and volume, headphone/earpiece sealed over the recorder mic.",
+            "   - `translated-headphone-recording.wav`: headphone/earpiece remains sealed and plays the translated reference.",
+            "",
+            "5. Put the WAVs in the raw dropbox, then rerun:",
+            "",
+            "   ```powershell",
+            "   python scripts/run_test_category.py release-evidence",
+            "   ```",
+            "",
+            "6. When the manual status is score-ready, run the full command handoff and score with real labels for the headset, fixture, and measurement mic:",
+            "",
+            "   ```powershell",
+            "   python scripts/release_audio_status.py --full-commands",
+            "   ```",
+        ]
+    )
+
+    return "\n".join(lines) + "\n"
+
+
+def write_operator_checklist(report: dict[str, Any], path: Path = DEFAULT_OPERATOR_CHECKLIST) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(render_operator_checklist(report), encoding="utf-8")
+    return path
+
+
 def _detailed_recommended_commands(report: dict[str, Any]) -> list[str]:
     handoff = _as_dict(report.get("operator_handoff"))
     collection = _as_dict(handoff.get("headphone_collection_plan_status"))
@@ -228,11 +352,7 @@ def _compact_next_actions(report: dict[str, Any]) -> list[str]:
 
 
 def render_status(report: dict[str, Any], gate_returncode: int, *, full_commands: bool = False) -> str:
-    summary = _as_dict(report.get("summary"))
-    gate_count = int(summary.get("release_blocking_gate_count", 0) or 0)
-    failure_count = int(summary.get("release_blocking_failure_count", 0) or 0)
-    passed_count = max(gate_count - failure_count, 0)
-    state = "READY" if failure_count == 0 and gate_count else "NOT READY"
+    state, passed_count, gate_count = _release_state(report)
 
     lines = [
         f"Release audio status: {state}",
@@ -423,6 +543,17 @@ def self_test() -> int:
         if text not in detailed:
             raise AssertionError(f"missing detailed rendered text: {text}")
 
+    checklist = render_operator_checklist(failed_report)
+    for text in (
+        "Physical Audio Test Checklist",
+        "Release status: **NOT READY**",
+        "source-open-ear-recording.wav",
+        "python scripts/run_test_category.py route-triage",
+        "route probes and virtual labs stay `release_proof=false`",
+    ):
+        if text not in checklist:
+            raise AssertionError(f"missing checklist text: {text}")
+
     passed_report: dict[str, Any] = {
         "summary": {
             "release_blocking_gate_count": 1,
@@ -455,6 +586,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="print the detailed hardware command handoff instead of compact next actions",
     )
+    parser.add_argument(
+        "--write-operator-checklist",
+        action="store_true",
+        help="write a current physical-audio checklist under artifacts/release",
+    )
+    parser.add_argument(
+        "--operator-checklist-path",
+        type=Path,
+        default=DEFAULT_OPERATOR_CHECKLIST,
+        help="path used with --write-operator-checklist",
+    )
     parser.add_argument("--self-test", action="store_true", help="run script contract checks")
     return parser.parse_args(argv)
 
@@ -469,7 +611,15 @@ def main(argv: list[str] | None = None) -> int:
         gate_returncode, report, warning = _run_release_gate()
     if warning:
         print(f"warning: {warning}", file=sys.stderr)
-    print(render_status(report, gate_returncode, full_commands=args.full_commands))
+    rendered = render_status(report, gate_returncode, full_commands=args.full_commands)
+    if args.write_operator_checklist:
+        checklist_path = write_operator_checklist(report, args.operator_checklist_path)
+        rendered = (
+            f"{rendered}\n\n"
+            "Operator checklist:\n"
+            f"- {_repo_relative(checklist_path)}"
+        )
+    print(rendered)
     return gate_returncode if args.strict else 0
 
 

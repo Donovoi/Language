@@ -65,8 +65,8 @@ STEPS: dict[str, Step] = {
     ),
     "release-audio-status": Step(
         name="release-audio-status",
-        description="compact release gate blocker and next-action summary",
-        local_args=("{python}", "scripts/release_audio_status.py"),
+        description="compact release gate blocker, next-action summary, and physical-audio checklist",
+        local_args=("{python}", "scripts/release_audio_status.py", "--write-operator-checklist"),
     ),
     "headphone-route-triage-handoff-self-test": Step(
         name="headphone-route-triage-handoff-self-test",
