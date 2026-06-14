@@ -299,8 +299,13 @@ function Write-LocalArtifactManifest {
         "- dirty_tree: ``$($dirtyTree.ToString().ToLowerInvariant())``",
         "- allow_dirty: ``$($AllowDirtyTree.ToString().ToLowerInvariant())``",
         "- generated_at_utc: ``$generatedAt``",
-        "- smoke runbook: ``docs/development/internal-beta-smoke-runbook.md``",
-        "- auth note: keep ``LANGUAGE_GATEWAY_AUTH_TOKEN`` unset for packaged-app smoke tests that need write controls",
+        "- smoke runbook: ``docs/development/internal-beta-smoke-runbook.md``"
+    )
+    if ($ActionName -eq "all" -or $ActionName -eq "gateway-package") {
+        $manifestLines += "- gateway command: install the gateway wheel or sdist in a virtualenv, then run ``language-gateway --host 127.0.0.1 --port 8000``"
+    }
+    $manifestLines += @(
+        "- auth note: app artifacts can use ``FIELD_APP_AUTH_TOKEN`` for controlled internal smoke only; rotate the matching gateway token after use",
         "- limitation: this is not the full GitHub Actions release manifest; Flutter artifacts, workflow run metadata, and publish-release assets are not included",
         "",
         "## Files"
