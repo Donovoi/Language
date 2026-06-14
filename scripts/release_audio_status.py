@@ -86,6 +86,31 @@ def _manual_evidence_lines(report: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _preflight_lines(report: dict[str, Any]) -> list[str]:
+    handoff = _as_dict(report.get("operator_handoff"))
+    preflight = _as_dict(handoff.get("headphone_preflight_status"))
+    if not preflight:
+        return []
+
+    lines = [f"Status: {preflight.get('status', 'unknown')}"]
+    recommended_path = str(preflight.get("recommended_path", "")).strip()
+    if recommended_path:
+        lines.append(f"Recommended path: {recommended_path}")
+    route_counts = [
+        f"candidates={int(preflight.get('candidate_route_triple_count', 0) or 0)}",
+        f"capture_ready={int(preflight.get('capture_ready_route_triple_count', 0) or 0)}",
+        f"external_inputs={int(preflight.get('likely_external_input_count', 0) or 0)}",
+    ]
+    lines.append("Routes: " + ", ".join(route_counts))
+    next_step = str(preflight.get("next_step", "")).strip()
+    if next_step:
+        lines.append(f"Next: {next_step}")
+    path = str(preflight.get("markdown_path") or preflight.get("path") or "").strip()
+    if path:
+        lines.append(f"Report: {_repo_relative(path)}")
+    return lines
+
+
 def _detailed_recommended_commands(report: dict[str, Any]) -> list[str]:
     handoff = _as_dict(report.get("operator_handoff"))
     collection = _as_dict(handoff.get("headphone_collection_plan_status"))
@@ -179,6 +204,12 @@ def render_status(report: dict[str, Any], gate_returncode: int, *, full_commands
         lines.append("Listener-ear evidence:")
         lines.extend(f"- {line}" for line in manual_lines)
 
+    preflight_lines = _preflight_lines(report)
+    if preflight_lines:
+        lines.append("")
+        lines.append("Host audio preflight:")
+        lines.extend(f"- {line}" for line in preflight_lines)
+
     detractor = _as_dict(report.get("detractor_loop"))
     objection = str(detractor.get("strongest_current_objection", "")).strip()
     verdict = str(detractor.get("verdict", "")).strip()
@@ -250,6 +281,15 @@ def self_test() -> int:
                 "status": "NOT-READY",
                 "next_step": "Capture WAVs.",
             },
+            "headphone_preflight_status": {
+                "status": "NEEDS-PHYSICAL-INPUT-CONFIRMATION",
+                "recommended_path": "guided_capture_possible_after_physical_input_confirmation",
+                "candidate_route_triple_count": 4,
+                "capture_ready_route_triple_count": 1,
+                "likely_external_input_count": 0,
+                "next_step": "Confirm a listener-ear input or use manual recordings.",
+                "markdown_path": "artifacts/audio_eval/runs/preflight/headphone-preflight-report.md",
+            },
         },
         "detractor_loop": {
             "strongest_current_objection": "reports alone are insufficient",
@@ -265,6 +305,9 @@ def self_test() -> int:
         "Next actions:",
         "python scripts/run_test_category.py release-evidence",
         "--full-commands",
+        "Host audio preflight:",
+        "NEEDS-PHYSICAL-INPUT-CONFIRMATION",
+        "capture_ready=1",
         "Detractor check:",
     ]
     for text in required:
