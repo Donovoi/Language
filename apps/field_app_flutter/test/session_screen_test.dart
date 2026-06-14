@@ -273,6 +273,50 @@ void main() {
     expect(find.text('Focus mode'), findsOneWidget);
   });
 
+  testWidgets('live ingest toolbar button starts and stops the gateway demo',
+      (tester) async {
+    final controller = StreamController<SessionStreamEvent>();
+    final api = FakeSessionApi(
+      startMockLiveIngestHandler: (_, __) async {},
+      stopMockLiveIngestHandler: () async {},
+      watchSessionEventsHandler: (_) => controller.stream,
+    );
+    final repository = MockRepository(
+      api: api,
+      initialSession: SessionStateModel.fallback(mode: SessionMode.crowd),
+    );
+    addTearDown(() async {
+      repository.dispose();
+      await controller.close();
+    });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: SessionScreen(
+          repository: repository,
+          autoLoad: false,
+        ),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('Start live ingest demo'));
+    await tester.pumpAndSettle();
+
+    expect(
+      api.startMockLiveIngestRequests,
+      <({SessionMode mode, int intervalMs})>[
+        (mode: SessionMode.crowd, intervalMs: 350),
+      ],
+    );
+    expect(find.byTooltip('Stop live ingest demo'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Stop live ingest demo'));
+    await tester.pumpAndSettle();
+
+    expect(api.stopMockLiveIngestCallCount, 1);
+    expect(find.byTooltip('Start live ingest demo'), findsOneWidget);
+  });
+
   testWidgets('lock button requests a speaker lock update', (tester) async {
     final controller = StreamController<SessionStreamEvent>();
     final repository = MockRepository(

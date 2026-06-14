@@ -10,7 +10,7 @@ The currently supported and realistic smoke path is:
 1. run the gateway locally from a repo checkout or unpacked source bundle
 2. verify the gateway health/session/SSE baseline on the host
 3. launch the Android release app on an Android emulator
-4. trigger the scripted live-ingest demo from the host side
+4. trigger the scripted live-ingest demo from the app
 5. confirm the app reflects live lane, caption, mode, reset, and lock updates
 
 This path is the primary target because:
@@ -121,13 +121,9 @@ Expected behavior:
 - status text updates after lock/unlock
 - the app remains connected to live updates throughout
 
-## 5. Trigger the live-ingest demo from the host side
+## 5. Trigger the live-ingest demo from the app
 
-The current app does not expose a start-live-ingest control, so trigger it from the host:
-
-```bash
-curl -X POST 'http://127.0.0.1:8000/v1/mock/live-ingest?interval_ms=350'
-```
+Tap the toolbar play button labelled `Start live ingest demo`.
 
 While that request runs, watch the emulator UI.
 
