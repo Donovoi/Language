@@ -228,6 +228,10 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
     dropbox = _as_dict(collection.get("raw_recording_dropbox"))
     dropbox_state = _as_dict(dropbox.get("state"))
     dropbox_path = str(dropbox.get("path", "")).strip()
+    dropbox_readme_path = str(dropbox.get("readme_path", "")).strip()
+    collection_markdown_path = str(collection.get("markdown_path", "")).strip()
+    manual_status_path = str(collection.get("manual_status_report_path", "")).strip()
+    score_report_path = str(collection.get("score_report_path", "")).strip()
     missing = [str(item) for item in _as_list(dropbox_state.get("missing_recordings"))]
     probe = _as_dict(handoff.get("headphone_route_probe_status"))
     route = _as_dict(probe.get("device_route"))
@@ -249,6 +253,14 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
         lines.append(f"- Missing listener-ear recordings: {', '.join(missing)}")
     if dropbox_path:
         lines.append(f"- Raw WAV dropbox: `{_repo_relative(dropbox_path)}`")
+    if dropbox_readme_path:
+        lines.append(f"- Raw WAV dropbox instructions: `{_repo_relative(dropbox_readme_path)}`")
+    if collection_markdown_path:
+        lines.append(f"- Manual evidence plan: `{_repo_relative(collection_markdown_path)}`")
+    if manual_status_path:
+        lines.append(f"- Manual recording status: `{_repo_relative(manual_status_path)}`")
+    if score_report_path:
+        lines.append(f"- Score report target: `{_repo_relative(score_report_path)}`")
 
     if probe:
         lines.extend(
@@ -519,12 +531,16 @@ def self_test() -> int:
         "operator_handoff": {
             "headphone_collection_plan_status": {
                 "manifest_path": "artifacts/audio_eval/runs/manual/manifest.json",
+                "manual_status_report_path": "artifacts/audio_eval/runs/manual/manual-recording-status.json",
+                "markdown_path": "artifacts/audio_eval/runs/manual/headphone-evidence-collection-plan.md",
+                "score_report_path": "artifacts/audio_eval/runs/headphone-earpiece-isolation/headphone-isolation-report.json",
                 "recommended_commands": {
                     "prepare": "prepare command",
                     "release_gate": "release command",
                 },
                 "raw_recording_dropbox": {
                     "path": "artifacts/audio_eval/runs/manual/raw",
+                    "readme_path": "artifacts/audio_eval/runs/manual/raw/listener-ear-recording-dropbox.md",
                     "state": {"missing_recordings": ["source_open_ear_recording"]},
                 },
             },
@@ -636,10 +652,20 @@ def self_test() -> int:
             raise AssertionError(f"missing detailed rendered text: {text}")
 
     checklist = render_operator_checklist(failed_report)
+    expected_dropbox_readme = _repo_relative("artifacts/audio_eval/runs/manual/raw/listener-ear-recording-dropbox.md")
+    expected_collection_plan = _repo_relative("artifacts/audio_eval/runs/manual/headphone-evidence-collection-plan.md")
+    expected_manual_status = _repo_relative("artifacts/audio_eval/runs/manual/manual-recording-status.json")
+    expected_score_report = _repo_relative(
+        "artifacts/audio_eval/runs/headphone-earpiece-isolation/headphone-isolation-report.json"
+    )
     for text in (
         "Physical Audio Test Checklist",
         "Release status: **NOT READY**",
         "source-open-ear-recording.wav",
+        f"- Raw WAV dropbox instructions: `{expected_dropbox_readme}`",
+        f"- Manual evidence plan: `{expected_collection_plan}`",
+        f"- Manual recording status: `{expected_manual_status}`",
+        f"- Score report target: `{expected_score_report}`",
         "python scripts/run_test_category.py route-triage",
         "python scripts/run_test_category.py release-evidence-score",
         "route probes and virtual labs stay `release_proof=false`",
