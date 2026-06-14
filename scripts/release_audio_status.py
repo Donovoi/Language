@@ -244,10 +244,10 @@ def _route_probe_lines(report: dict[str, Any]) -> list[str]:
     path = str(probe.get("path", "")).strip()
     if stale_reason:
         lines.append(
-            "Previous probe route and metrics are stale; use the Host audio preflight route above."
+            "Previous probe route and metrics are stale; this is OK unless you need optional route diagnostics."
         )
         lines.append(
-            "Next: run python scripts/run_test_category.py route-triage for a fresh probe command; run that printed command only if route diagnostics are needed"
+            "Next: for release evidence, continue with the listener-ear WAV path; for diagnostics only, run python scripts/run_test_category.py route-triage and then the printed audible probe command"
         )
         if path:
             lines.append(f"Previous report: {_repo_relative(path)}")
@@ -373,7 +373,7 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
             )
         if stale_reason:
             lines.append(
-                f"- Probe freshness: {stale_reason}; run `python scripts/run_test_category.py route-triage` for a fresh probe command, then run that printed command only if route diagnostics are needed."
+                f"- Probe freshness: {stale_reason}; OK for release handoff. For diagnostics only, run `python scripts/run_test_category.py route-triage`, then the printed audible probe command."
             )
         if route and not stale_reason:
             lines.extend(
@@ -797,8 +797,9 @@ def self_test() -> int:
         "real listener-ear mic",
         "Optional diagnostics",
         "STALE-TRIAGE",
-        "Previous probe route and metrics are stale",
-        "fresh probe command",
+        "this is OK unless you need optional route diagnostics",
+        "listener-ear WAV path",
+        "printed audible probe command",
     ):
         if text not in triage_rendered:
             raise AssertionError(f"missing triage next-action text: {text}")
@@ -841,7 +842,7 @@ def self_test() -> int:
         if text not in checklist:
             raise AssertionError(f"missing checklist text: {text}")
     stale_checklist = render_operator_checklist(triage_report)
-    for text in ("Probe status: `STALE-TRIAGE`", "Probe freshness:"):
+    for text in ("Probe status: `STALE-TRIAGE`", "Probe freshness:", "OK for release handoff"):
         if text not in stale_checklist:
             raise AssertionError(f"missing stale checklist text: {text}")
     for text in ("Measurement input:", "source:reference_not_detected"):
