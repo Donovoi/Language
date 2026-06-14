@@ -123,6 +123,7 @@ def render_handoff(report: dict[str, Any], report_path: Path) -> str:
         [
             "- Detractor: this command plays/records a probe and is route triage only.",
             "- Release gate: still requires scored physical listener-ear WAV evidence.",
+            "- Audible diagnostic: the printed probe plays a short -18 dB test signal; keep volume moderate.",
             "",
             "Run deliberately:",
             command,
@@ -169,6 +170,7 @@ def self_test() -> int:
         "headphone 9 Headphones",
         "--score-warning-only",
         "route triage only",
+        "short -18 dB test signal",
         "$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = \"8\"",
         "$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = \"9\"",
         "python scripts/run_test_category.py recording-session-dry-run",
