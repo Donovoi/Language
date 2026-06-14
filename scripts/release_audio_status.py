@@ -371,7 +371,7 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
             lines.append(
                 f"- Probe freshness: {stale_reason}; run `python scripts/run_test_category.py route-triage` for a fresh probe command, then run that printed command only if route diagnostics are needed."
             )
-        if route:
+        if route and not stale_reason:
             lines.extend(
                 [
                     f"- Measurement input: {_route_device_label(_as_dict(route.get('measurement_input')))}",
@@ -380,7 +380,7 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
                 ]
             )
         reasons = [str(item) for item in _as_list(probe.get("blocking_reasons"))]
-        if reasons:
+        if reasons and not stale_reason:
             lines.append(f"- Blocking reasons: {', '.join(reasons)}")
         lines.append("- Detractor note: route probes and virtual labs stay `release_proof=false`.")
 
@@ -819,6 +819,9 @@ def self_test() -> int:
     for text in ("Probe status: `STALE-TRIAGE`", "Probe freshness:"):
         if text not in stale_checklist:
             raise AssertionError(f"missing stale checklist text: {text}")
+    for text in ("Measurement input:", "source:reference_not_detected"):
+        if text in stale_checklist:
+            raise AssertionError(f"stale checklist should suppress old probe detail: {text}")
 
     passed_report: dict[str, Any] = {
         "summary": {
