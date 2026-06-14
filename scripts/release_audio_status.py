@@ -502,6 +502,20 @@ def _compact_next_actions(report: dict[str, Any]) -> list[str]:
     return actions
 
 
+def _playback_helper_status_lines(report: dict[str, Any]) -> list[str]:
+    handoff = _as_dict(report.get("operator_handoff"))
+    preflight = _as_dict(handoff.get("headphone_preflight_status"))
+    commands = _preflight_playback_env_lines(preflight)
+    if not commands:
+        return []
+    return [
+        "Playback helper for an external listener-ear recorder (not release proof):",
+        "```powershell",
+        *commands,
+        "```",
+    ]
+
+
 def render_status(report: dict[str, Any], gate_returncode: int, *, full_commands: bool = False) -> str:
     state, passed_count, gate_count = _release_state(report)
 
@@ -565,6 +579,10 @@ def render_status(report: dict[str, Any], gate_returncode: int, *, full_commands
         lines.append("Next actions:")
         for index, action in enumerate(_compact_next_actions(report), start=1):
             lines.append(f"{index}. {action}")
+        playback_helper = _playback_helper_status_lines(report)
+        if playback_helper:
+            lines.append("")
+            lines.extend(playback_helper)
         lines.append("Full command list: python scripts/release_audio_status.py --full-commands")
 
     markdown_path = ROOT / "artifacts/release/audio-gate-report.md"
@@ -690,6 +708,9 @@ def self_test() -> int:
         "playback_source_suppression_evidence",
         "Missing recordings: source_open_ear_recording",
         "Next actions:",
+        "Playback helper for an external listener-ear recorder (not release proof):",
+        "$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = \"12\"",
+        "$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = \"10\"",
         "python scripts/run_test_category.py release-evidence",
         "python scripts/run_test_category.py release-evidence-score",
         "--full-commands",
