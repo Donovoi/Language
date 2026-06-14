@@ -93,6 +93,8 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         run: |
           test "v${{ steps.version.outputs.version }}" = "${GITHUB_REF_NAME}"
+          git fetch --force --depth=1 origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          test "$(git cat-file -t "refs/tags/${GITHUB_REF_NAME}")" = "tag"
 
   validate-rust:
     runs-on: ubuntu-latest
@@ -140,8 +142,31 @@ jobs:
       - name: Run Flutter tests
         run: cd apps/field_app_flutter && flutter test
 
+  audio-release-gate:
+    needs: [release-metadata]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-python@v6.2.0
+        with:
+          python-version: '3.12'
+      - name: Strict audio gate for release artifacts
+        if: needs.release-metadata.outputs.channel == 'release'
+        run: python scripts/release_audio_gate.py --json
+      - name: Internal beta audio status handoff
+        if: needs.release-metadata.outputs.channel != 'release'
+        run: python scripts/release_audio_status.py
+      - uses: actions/upload-artifact@v4.6.2
+        if: always()
+        with:
+          name: ${{ needs.release-metadata.outputs.channel }}-audio-gate
+          path: |
+            artifacts/release/audio-gate-report.json
+            artifacts/release/audio-gate-report.md
+          if-no-files-found: ignore
+
   source-bundle:
-    needs: [release-metadata, validate-rust, validate-python, validate-flutter]
+    needs: [release-metadata, validate-rust, validate-python, validate-flutter, audio-release-gate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2
@@ -156,7 +181,7 @@ jobs:
           path: release-artifacts/*
 
   gateway-package:
-    needs: [release-metadata, validate-rust, validate-python, validate-flutter]
+    needs: [release-metadata, validate-rust, validate-python, validate-flutter, audio-release-gate]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6.0.2
@@ -190,7 +215,7 @@ jobs:
           path: /tmp/release-artifacts/*
 
   flutter-android:
-    needs: [release-metadata, validate-rust, validate-python, validate-flutter]
+    needs: [release-metadata, validate-rust, validate-python, validate-flutter, audio-release-gate]
     runs-on: ubuntu-latest
     env:
       FIELD_APP_API_BASE_URL: ${{ needs.release-metadata.outputs.field_app_api_base_url }}
@@ -228,7 +253,7 @@ jobs:
           path: /tmp/release-artifacts/*
 
   flutter-ios:
-    needs: [release-metadata, validate-rust, validate-python, validate-flutter]
+    needs: [release-metadata, validate-rust, validate-python, validate-flutter, audio-release-gate]
     runs-on: macos-latest
     env:
       FIELD_APP_API_BASE_URL: ${{ needs.release-metadata.outputs.field_app_api_base_url }}
@@ -261,7 +286,7 @@ jobs:
           path: /tmp/release-artifacts/*
 
   flutter-macos:
-    needs: [release-metadata, validate-rust, validate-python, validate-flutter]
+    needs: [release-metadata, validate-rust, validate-python, validate-flutter, audio-release-gate]
     runs-on: macos-latest
     env:
       FIELD_APP_API_BASE_URL: ${{ needs.release-metadata.outputs.field_app_api_base_url }}
@@ -294,7 +319,7 @@ jobs:
           path: /tmp/release-artifacts/*
 
   flutter-windows:
-    needs: [release-metadata, validate-rust, validate-python, validate-flutter]
+    needs: [release-metadata, validate-rust, validate-python, validate-flutter, audio-release-gate]
     runs-on: windows-latest
     env:
       FIELD_APP_API_BASE_URL: ${{ needs.release-metadata.outputs.field_app_api_base_url }}
@@ -331,6 +356,7 @@ jobs:
     needs:
       [
         release-metadata,
+        audio-release-gate,
         source-bundle,
         gateway-package,
         flutter-android,
@@ -403,6 +429,7 @@ jobs:
     needs:
       [
         release-metadata,
+        audio-release-gate,
         source-bundle,
         gateway-package,
         flutter-android,
