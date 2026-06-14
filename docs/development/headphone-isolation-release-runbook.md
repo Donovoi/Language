@@ -79,21 +79,15 @@ python scripts/run_test_category.py route-triage
 python scripts/run_test_category.py guided-capture --dry-run
 ```
 
-On the current host snapshot from June 14, 2026, preflight found 39 audio devices and reported
-`guided_capture_possible_after_physical_input_confirmation`, but no likely external listener-ear
-input. Good route-triage candidates were:
+Do not copy device IDs from this document. Windows audio IDs change when Bluetooth, USB, docks,
+monitors, and default devices change. Treat the generated preflight report as the source of truth for
+the current host, then copy only the commands it prints for that run.
 
-- MME route: input `1` (`Microphone Array on SoundWire D`), source output `5`
-  (`Speakers (SoundWire Speakers)`), headphone output `4` (`Headphones (WH-1000XM6)`).
-- WASAPI route: input `17` (`Microphone Array on SoundWire Device...`), source output `14`
-  (`Speakers (SoundWire Speakers)`), headphone output `16` (`Headphones (WH-1000XM6)`).
-- headset microphone route: `18` (`Headset (WH-1000XM6), Windows WASAPI`) remains triage only unless
-  it is physically positioned at the listener-ear acoustic point.
-
-For final evidence, prefer a measurement mic physically inside/at the earcup. Use the headset mic only
-for route triage unless it is physically positioned at the listener-ear point. The `17` examples below
-are the current-host improvised path with the laptop mic array; replace `17` and the microphone label
-with the real USB/lav/recorder input when you have that hardware.
+For final evidence, prefer a measurement mic physically inside/at the earcup. Use laptop arrays,
+monitor microphones, and headset microphones only for route triage unless the device is physically
+positioned at the listener-ear acoustic point. Replace every `LISTENER_EAR_INPUT`,
+`SOURCE_SPEAKER_OUTPUT`, `HEADPHONE_OUTPUT`, and hardware label below with values from the current
+preflight report and your actual fixture.
 The preflight command does not play or record audio. It writes
 `artifacts/audio_eval/runs/headphone-earpiece-preflight/headphone-preflight-report.json` and
 `headphone-preflight-report.md` with a device inventory fingerprint, likely input/output roles,
@@ -125,12 +119,12 @@ physical listener-ear recording scored by `score-manual` or `capture`.
 
 Before running the physical commands:
 
-1. Pair or connect the WH-1000XM6 headphones and confirm Windows is using the stereo headphone output,
+1. Pair or connect the headphones and confirm Windows is using the stereo headphone output,
    not a hands-free/headset call profile, for translated playback.
 2. Use a separate measurement input for release evidence: a USB/lavalier mic at the earcup is best.
    If you only have the laptop mic array, use it for `route_probe_triage_only`, not final capture.
-3. Do not use the WH-1000XM6 headset microphone as release evidence unless the mic is physically
-   positioned at the listener-ear acoustic point. The headset mic mostly hears the room and Windows
+3. Do not use a headset microphone as release evidence unless the mic is physically positioned at
+   the listener-ear acoustic point. The headset mic mostly hears the room and Windows
    voice processing, so it is useful for route triage but not final isolation proof.
 4. Put the source speaker where it will be during the test, then leave it fixed. For the open-ear
    control, the measurement mic should be exposed to the source. For the isolated-source take, seal
@@ -356,7 +350,7 @@ The release gate should pass only when the physical headphone report proves:
 
 ## Bluetooth-Only Limitation
 
-With only the WH-1000XM6 headset and no separate measurement mic, we can run:
+With only a headset and no separate measurement mic, we can run:
 
 - virtual lab
 - route probes
