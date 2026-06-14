@@ -32,6 +32,7 @@ Use `--dry-run` to inspect the command plan. By default, full output goes to
 | `optional-models` | Pyannote, Sortformer, Whisper, WeSep, and causal bridge baselines. | Hardware capture. Some steps need `HF_TOKEN` and accepted model terms. |
 | `hardware` | Host device listing, listener-ear route preflight, and virtual listener-ear lab. | Release proof. Run physical capture/score commands from the runbook when ready. |
 | `evidence-kit` | Manual listener-ear recording kit, readiness check, and raw WAV dropbox. | Audio playback/recording. Put the three exported WAVs in the dropbox, then rerun. |
+| `recording-status` | Readiness check for the three manual listener-ear WAVs. | Playback, recording, scoring, or release proof. |
 | `release` | Strict audio release gate. | Evidence generation. Expected to fail until required artifacts are present. |
 | `all` | `quick`, `core`, and `audio-fixtures`. | Hardware, release, optional model downloads, and artifact-dependent voice candidate scoring. |
 
@@ -59,6 +60,7 @@ Before release review:
 
 ```bash
 python3 scripts/run_test_category.py all --continue-on-failure
+python3 scripts/run_test_category.py recording-status
 python3 scripts/run_test_category.py release
 ```
 
