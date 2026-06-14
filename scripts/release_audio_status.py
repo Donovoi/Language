@@ -240,7 +240,10 @@ def _route_probe_lines(report: dict[str, Any]) -> list[str]:
         lines.append(f"Blocking reasons: {', '.join(reasons)}")
     actions = [str(item) for item in _as_list(probe.get("next_actions"))]
     if stale_reason:
-        actions.insert(0, "rerun python scripts/run_test_category.py route-triage before trusting these device IDs")
+        actions.insert(
+            0,
+            "run python scripts/run_test_category.py route-triage for a fresh probe command; run that printed command only if route diagnostics are needed",
+        )
     if actions:
         lines.append(f"Next: {actions[0]}")
     path = str(probe.get("path", "")).strip()
@@ -342,7 +345,7 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
             )
         if stale_reason:
             lines.append(
-                f"- Probe freshness: {stale_reason}; rerun `python scripts/run_test_category.py route-triage` before trusting these device IDs."
+                f"- Probe freshness: {stale_reason}; run `python scripts/run_test_category.py route-triage` for a fresh probe command, then run that printed command only if route diagnostics are needed."
             )
         if route:
             lines.extend(
@@ -746,7 +749,7 @@ def self_test() -> int:
         "Current host route is triage-only",
         "real listener-ear mic",
         "STALE-TRIAGE",
-        "rerun python scripts/run_test_category.py route-triage",
+        "fresh probe command",
     ):
         if text not in triage_rendered:
             raise AssertionError(f"missing triage next-action text: {text}")
