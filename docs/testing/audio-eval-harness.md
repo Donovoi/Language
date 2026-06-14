@@ -734,7 +734,8 @@ evidence is present. The JSON remains the authoritative gate artifact; the Markd
 operator handoff, blocker triage, and physical-evidence command hints. If the default
 headphone/earpiece preflight, route-probe, or manual-kit status reports exist, the Markdown also
 embeds current route candidates, route-probe diagnosis, physical-input confirmation state, manual
-readiness, and score rerun command as non-evidentiary operator context. It is intentionally stricter
+readiness, evidence collection-plan next actions, and score rerun command as non-evidentiary operator
+context. It is intentionally stricter
 than the warning-only research targets.
 
 ```bash
