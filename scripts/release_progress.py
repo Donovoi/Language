@@ -293,11 +293,16 @@ def _audio_percent(report: dict[str, Any]) -> tuple[int, str]:
     collection = _as_dict(handoff.get("headphone_collection_plan_status"))
     dropbox = _as_dict(collection.get("raw_recording_dropbox"))
     state = _as_dict(dropbox.get("state"))
+    dropbox_path = str(dropbox.get("path", "")).strip()
     missing = [str(item) for item in _as_list(state.get("missing_recordings"))]
     score_category_ready = _file_has_text("scripts/run_test_category.py", "release-evidence-score")
     if missing and score_category_ready:
         missing_text = ", ".join(_recording_display_name(item) for item in missing)
-        return 90, f"{gate_count - failure_count}/{gate_count} gates; missing WAVs: {missing_text}"
+        dropbox_candidate = Path(dropbox_path)
+        if dropbox_path and not dropbox_candidate.is_absolute():
+            dropbox_candidate = ROOT / dropbox_candidate
+        path_text = f" in {_repo_relative(dropbox_candidate)}" if dropbox_path else ""
+        return 90, f"{gate_count - failure_count}/{gate_count} gates; missing WAVs{path_text}: {missing_text}"
     if failure_count:
         return 85, f"{gate_count - failure_count}/{gate_count} gates; release blocker remains"
     return 80, "audio gate evidence is incomplete"
@@ -440,6 +445,7 @@ def self_test() -> int:
         "operator_handoff": {
             "headphone_collection_plan_status": {
                 "raw_recording_dropbox": {
+                    "path": "artifacts/audio_eval/runs/manual/raw-listener-ear-recordings",
                     "state": {
                         "missing_recordings": [
                             "source_open_ear_recording",
@@ -456,6 +462,7 @@ def self_test() -> int:
         "Release progress estimate:",
         "Playback/source suppression evidence",
         "source-open-ear-recording.wav",
+        "artifacts\\audio_eval\\runs\\manual\\raw-listener-ear-recordings",
         "conversation-token guide, agent handoff rules, and quiet runner wiring are present",
         "Total release goal:",
         "release gate remains authoritative",
