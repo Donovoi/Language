@@ -59,6 +59,9 @@ DEFAULT_HEADPHONE_ROUTE_PROBE_REPORT = (
 DEFAULT_HEADPHONE_MANUAL_STATUS_REPORT = (
     DEFAULT_AUDIO_EVAL_DIR / "runs/headphone-earpiece-manual-kit/manual-recording-status.json"
 )
+DEFAULT_HEADPHONE_COLLECTION_PLAN_REPORT = (
+    DEFAULT_AUDIO_EVAL_DIR / "runs/headphone-earpiece-manual-kit/headphone-evidence-collection-plan.json"
+)
 DEFAULT_PLAYBACK_PROTOTYPE_REPORT = (
     DEFAULT_AUDIO_EVAL_DIR / "runs/fleurs-playback-ducking-suppression/playback-suppression-report.json"
 )
@@ -82,6 +85,8 @@ EXPECTED_HEADPHONE_ROUTE_PROBE_FIXTURE_KIND = "headphone_earpiece_route_probe"
 EXPECTED_HEADPHONE_ROUTE_PROBE_MEASUREMENT_KIND = "headphone_earpiece_route_probe_triage"
 EXPECTED_ROOM_ROUTE_PROBE_FIXTURE_KIND = "real_room_route_probe"
 EXPECTED_ROOM_ROUTE_PROBE_MEASUREMENT_KIND = "real_room_route_probe_triage"
+EXPECTED_HEADPHONE_COLLECTION_PLAN_FIXTURE_KIND = "headphone_earpiece_evidence_collection_plan"
+EXPECTED_HEADPHONE_COLLECTION_PLAN_MEASUREMENT_KIND = "headphone_earpiece_evidence_collection_plan"
 
 LIVE_CAPTURE_REQUIRED_GATES = {
     "capture_source_is_microphone",
@@ -2543,6 +2548,132 @@ def load_headphone_manual_status_handoff(path: Path | None) -> dict[str, Any] | 
     return handoff
 
 
+def _collection_plan_recommended_commands(commands: Any) -> dict[str, str]:
+    if not isinstance(commands, dict):
+        return {}
+    command_order = [
+        "prepare",
+        "play_references",
+        "import_recordings",
+        "check_recordings",
+        "score_recordings",
+        "release_gate",
+    ]
+    parsed_commands: dict[str, str] = {}
+    for key in command_order:
+        value = commands.get(key)
+        if not isinstance(value, str):
+            continue
+        command = value.strip()
+        if command:
+            parsed_commands[key] = command
+    return parsed_commands
+
+
+def load_headphone_collection_plan_handoff(path: Path | None) -> dict[str, Any] | None:
+    if path is None:
+        return None
+    markdown_path = path.with_suffix(".md")
+    handoff: dict[str, Any] = {
+        "path": str(path),
+        "markdown_path": str(markdown_path),
+        "markdown_present": markdown_path.exists(),
+        "present": False,
+        "release_evidence": False,
+    }
+    try:
+        payload = _load_json(path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        handoff.update(
+            {
+                "status": "UNREADABLE",
+                "parse_error": str(exc),
+                "next_step": "Regenerate the headphone/earpiece evidence collection plan.",
+            }
+        )
+        return handoff
+    if payload is None:
+        handoff.update(
+            {
+                "status": "MISSING",
+                "next_step": "Run collect-headphone-evidence to prepare the current physical evidence handoff.",
+            }
+        )
+        return handoff
+
+    summary = _summary(payload)
+    identity_issues: list[str] = []
+    if payload.get("fixture_kind") != EXPECTED_HEADPHONE_COLLECTION_PLAN_FIXTURE_KIND:
+        identity_issues.append("fixture_kind is not headphone evidence collection plan")
+    if payload.get("measurement_kind") != EXPECTED_HEADPHONE_COLLECTION_PLAN_MEASUREMENT_KIND:
+        identity_issues.append("measurement_kind is not headphone evidence collection plan")
+    if payload.get("release_proof") is not False or summary.get("release_proof") is not False:
+        identity_issues.append("collection plan must keep release_proof=false")
+    if not summary:
+        identity_issues.append("collection plan summary is missing")
+
+    manifest_path = _string_or_empty(payload.get("manifest_path"))
+    manual_status_report_path = _string_or_empty(payload.get("manual_status_report_path"))
+    score_report_path = _string_or_empty(payload.get("score_report_path"))
+    if not manifest_path:
+        identity_issues.append("manual manifest path is missing")
+    if not manual_status_report_path:
+        identity_issues.append("manual status report path is missing")
+    if not score_report_path:
+        identity_issues.append("score report path is missing")
+
+    status = _string_or_empty(summary.get("status")) or "UNKNOWN"
+    score_attempted = _literal_true(summary.get("score_attempted"))
+    score_result = summary.get("score_result")
+    score_result_int = _nonnegative_int(score_result) if isinstance(score_result, int) else None
+    manual_score_ready = _literal_true(summary.get("manual_score_ready"))
+    recordings_ready = _literal_true(summary.get("manual_recordings_ready_for_score_input"))
+    labels_specific = _literal_true(summary.get("manual_score_labels_specific"))
+    commands = _collection_plan_recommended_commands(payload.get("recommended_commands"))
+    next_actions = _limited_string_list(payload.get("next_actions"), limit=6)
+
+    if identity_issues:
+        status = "INVALID"
+        next_step = (
+            "Regenerate the collection plan; its identity, paths, or release-proof fields do not "
+            "match the headphone/earpiece collection-plan contract."
+        )
+        commands = {}
+        next_actions = ["regenerate the collection plan with collect-headphone-evidence"]
+    elif score_attempted and score_result_int == 0:
+        next_step = "Rerun the release gate and confirm the scored listener-ear report passes."
+    elif manual_score_ready:
+        next_step = "Run score-manual, then rerun the release gate with the scored headphone isolation report."
+    elif recordings_ready and not labels_specific:
+        next_step = "Replace placeholder headphone, fixture, and measurement microphone labels before scoring."
+    else:
+        next_step = "Collect or import the three listener-ear WAV recordings, then rerun the readiness check."
+
+    handoff.update(
+        {
+            "present": True,
+            "status": status,
+            "next_step": next_step,
+            "release_proof": _literal_true(payload.get("release_proof")),
+            "identity_issues": identity_issues,
+            "manifest_path": manifest_path,
+            "manual_status_report_path": manual_status_report_path,
+            "score_report_path": score_report_path,
+            "summary": {
+                "manual_recordings_ready_for_score_input": recordings_ready,
+                "manual_score_labels_specific": labels_specific,
+                "manual_score_ready": manual_score_ready,
+                "score_attempted": score_attempted,
+                "score_result": score_result,
+                "issue_count": len(_limited_string_list(payload.get("issues"), limit=1000)),
+            },
+            "next_actions": next_actions,
+            "recommended_commands": commands,
+        }
+    )
+    return handoff
+
+
 def _first_preflight_candidate(candidates: Any) -> dict[str, Any]:
     if not isinstance(candidates, list):
         return {}
@@ -3226,6 +3357,7 @@ def build_report(
     prototype_results: list[GateResult],
     room_route_probe_report: Path | None = None,
     headphone_manual_status_report: Path | None = None,
+    headphone_collection_plan_report: Path | None = None,
     headphone_preflight_report: Path | None = None,
     headphone_route_probe_report: Path | None = None,
 ) -> dict[str, Any]:
@@ -3261,6 +3393,9 @@ def build_report(
     manual_status = load_headphone_manual_status_handoff(headphone_manual_status_report)
     if manual_status is not None:
         operator_handoff["headphone_manual_status"] = manual_status
+    collection_plan_status = load_headphone_collection_plan_handoff(headphone_collection_plan_report)
+    if collection_plan_status is not None:
+        operator_handoff["headphone_collection_plan_status"] = collection_plan_status
     preflight_status = load_headphone_preflight_status_handoff(headphone_preflight_report)
     if preflight_status is not None:
         operator_handoff["headphone_preflight_status"] = preflight_status
@@ -3336,6 +3471,93 @@ def headphone_manual_status_handoff_lines(manual_status: dict[str, Any] | None) 
                 "```",
             ]
         )
+    return lines
+
+
+def headphone_collection_plan_handoff_lines(collection_plan: dict[str, Any] | None) -> list[str]:
+    lines = [
+        "",
+        "### Current Headphone Evidence Collection Plan",
+        "",
+        "This collection plan is an operator handoff only; it is not release evidence.",
+        "",
+    ]
+    if not isinstance(collection_plan, dict):
+        lines.extend(
+            [
+                "- Status: not loaded in this release report.",
+                f"- Default collection plan path: `{DEFAULT_HEADPHONE_COLLECTION_PLAN_REPORT}`",
+                "- Next step: run collect-headphone-evidence to create the current physical evidence handoff.",
+            ]
+        )
+        return lines
+
+    status = str(collection_plan.get("status", "UNKNOWN"))
+    lines.append(f"- Status: **{status}**")
+    lines.append(f"- JSON collection plan: `{collection_plan.get('path', '')}`")
+    markdown_path = str(collection_plan.get("markdown_path", ""))
+    if markdown_path:
+        markdown_present = bool(collection_plan.get("markdown_present"))
+        suffix = "present" if markdown_present else "not found yet"
+        lines.append(f"- Markdown collection plan: `{markdown_path}` ({suffix})")
+    if not collection_plan.get("present"):
+        parse_error = str(collection_plan.get("parse_error", "")).strip()
+        if parse_error:
+            lines.append(f"- Read error: `{parse_error}`")
+        lines.append(f"- Next step: {collection_plan.get('next_step', '')}")
+        return lines
+
+    identity_issues = collection_plan.get("identity_issues", [])
+    if isinstance(identity_issues, list) and status == "INVALID":
+        issue_text = "; ".join(str(issue) for issue in identity_issues[:4])
+        lines.append(f"- Identity issues: {issue_text}")
+        lines.append(f"- Next step: {collection_plan.get('next_step', '')}")
+        next_actions = collection_plan.get("next_actions", [])
+        if isinstance(next_actions, list) and next_actions:
+            lines.append(f"- Next actions: {'; '.join(str(action) for action in next_actions[:3])}")
+        return lines
+
+    summary = collection_plan.get("summary", {})
+    summary = summary if isinstance(summary, dict) else {}
+    lines.extend(
+        [
+            f"- Manifest path: `{collection_plan.get('manifest_path', '')}`",
+            f"- Manual status report: `{collection_plan.get('manual_status_report_path', '')}`",
+            f"- Score report target: `{collection_plan.get('score_report_path', '')}`",
+            f"- Ready for score input: {bool(summary.get('manual_recordings_ready_for_score_input'))}",
+            f"- Specific score labels: {bool(summary.get('manual_score_labels_specific'))}",
+            f"- Score attempted/result: {bool(summary.get('score_attempted'))}/{summary.get('score_result')}",
+            f"- Issues: {summary.get('issue_count', 0)}",
+        ]
+    )
+    next_actions = collection_plan.get("next_actions", [])
+    if isinstance(next_actions, list) and next_actions:
+        lines.append(f"- Next actions: {'; '.join(str(action) for action in next_actions[:3])}")
+    lines.append(f"- Next step: {collection_plan.get('next_step', '')}")
+
+    commands = collection_plan.get("recommended_commands", {})
+    commands = commands if isinstance(commands, dict) and status != "INVALID" else {}
+    command_order = {
+        "NOT-READY": ["play_references", "import_recordings", "check_recordings"],
+        "FILES-READY-LABELS-PENDING": ["check_recordings"],
+        "SCORE-READY": ["score_recordings", "release_gate"],
+    }.get(status, ["release_gate"])
+    if bool(summary.get("score_attempted")) and summary.get("score_result") == 0:
+        command_order = ["release_gate"]
+    for command_key in command_order:
+        command = str(commands.get(command_key, "")).strip()
+        if not command:
+            continue
+        lines.extend(
+            [
+                f"- Suggested `{command_key}` command:",
+                "",
+                "```powershell",
+                command,
+                "```",
+            ]
+        )
+        break
     return lines
 
 
@@ -3651,6 +3873,7 @@ def playback_source_suppression_handoff_lines(
     preflight_status: dict[str, Any] | None = None,
     route_probe_status: dict[str, Any] | None = None,
     manual_status: dict[str, Any] | None = None,
+    collection_plan_status: dict[str, Any] | None = None,
 ) -> list[str]:
     lines = [
         "",
@@ -3695,6 +3918,7 @@ def playback_source_suppression_handoff_lines(
     lines.extend(headphone_preflight_status_handoff_lines(preflight_status))
     lines.extend(headphone_route_probe_status_handoff_lines(route_probe_status))
     lines.extend(headphone_manual_status_handoff_lines(manual_status))
+    lines.extend(headphone_collection_plan_handoff_lines(collection_plan_status))
     return lines
 
 
@@ -3788,12 +4012,17 @@ def render_markdown_report(report: dict[str, Any]) -> str:
             preflight_status = preflight_status if isinstance(preflight_status, dict) else None
             route_probe_status = operator_handoff.get("headphone_route_probe_status")
             route_probe_status = route_probe_status if isinstance(route_probe_status, dict) else None
+            collection_plan_status = operator_handoff.get("headphone_collection_plan_status")
+            collection_plan_status = (
+                collection_plan_status if isinstance(collection_plan_status, dict) else None
+            )
             lines.extend(
                 playback_source_suppression_handoff_lines(
                     room_route_probe_status,
                     preflight_status,
                     route_probe_status,
                     manual_status,
+                    collection_plan_status,
                 )
             )
             included_playback_collection = True
@@ -4660,6 +4889,8 @@ def self_test() -> None:
             raise AssertionError("expected release gate to load the default headphone route probe path")
         if parse_args([]).room_route_probe_report != DEFAULT_ROOM_ROUTE_PROBE_REPORT:
             raise AssertionError("expected release gate to load the default real-room route probe path")
+        if parse_args([]).headphone_collection_plan_report != DEFAULT_HEADPHONE_COLLECTION_PLAN_REPORT:
+            raise AssertionError("expected release gate to load the default headphone collection plan path")
         if _specific_measurement_label("REPLACE_WITH_MIC_MODEL_AND_POSITION"):
             raise AssertionError("REPLACE_WITH labels must be rejected as placeholder measurement labels")
         stub = root / "stub.json"
@@ -4715,6 +4946,12 @@ def self_test() -> None:
         manual_status_invalid_json = root / "manual-recording-status-invalid-json.json"
         manual_status_malformed_values = root / "manual-recording-status-malformed-values.json"
         manual_score_report = root / "headphone-isolation-report-score-ready.json"
+        missing_collection_plan = root / "missing-headphone-evidence-collection-plan.json"
+        collection_plan_not_ready = root / "headphone-evidence-collection-plan-not-ready.json"
+        collection_plan_score_ready = root / "headphone-evidence-collection-plan-score-ready.json"
+        collection_plan_score_passed = root / "headphone-evidence-collection-plan-score-passed.json"
+        collection_plan_invalid_json = root / "headphone-evidence-collection-plan-invalid.json"
+        collection_plan_wrong_release = root / "headphone-evidence-collection-plan-wrong-release.json"
         missing_preflight_status = root / "missing-preflight-report.json"
         preflight_status_unconfirmed = root / "headphone-preflight-report-unconfirmed.json"
         preflight_status_confirmed = root / "headphone-preflight-report-confirmed.json"
@@ -5136,6 +5373,113 @@ def self_test() -> None:
                     "warning_count": None,
                 },
             },
+        )
+        collection_commands = {
+            "prepare": (
+                "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action prepare-manual "
+                "-Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 --playback-gain-db -18"
+            ),
+            "play_references": (
+                "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action play-manual "
+                "-Python $env:LANGUAGE_PYTHON --source-output-device SOURCE_SPEAKER_OUTPUT "
+                "--headphone-output-device HEADPHONE_OUTPUT"
+            ),
+            "import_recordings": (
+                "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action import-manual "
+                "-Python $env:LANGUAGE_PYTHON --source-open-ear-recording RAW_SOURCE_OPEN.wav "
+                "--source-isolated-ear-recording RAW_SOURCE_ISOLATED.wav "
+                "--translated-headphone-recording RAW_TRANSLATED.wav --allow-downmix"
+            ),
+            "check_recordings": (
+                "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action check-manual "
+                "-Python $env:LANGUAGE_PYTHON --headphone-device-label $headphoneLabel "
+                "--isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel"
+            ),
+            "score_recordings": (
+                "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 -Action score-manual "
+                "-Python $env:LANGUAGE_PYTHON --headphone-device-label $headphoneLabel "
+                "--isolation-fixture-label $fixtureLabel --measurement-microphone-label $microphoneLabel"
+            ),
+            "release_gate": f"python scripts/release_audio_gate.py --json --headphone-isolation-report {manual_score_report}",
+        }
+
+        def write_collection_plan(
+            path: Path,
+            *,
+            status: str = "NOT-READY",
+            release_proof: Any = False,
+            score_attempted: bool = False,
+            score_result: int | None = None,
+            recordings_ready: bool = False,
+            labels_specific: bool = False,
+            score_ready: bool = False,
+            wrong_fixture: bool = False,
+            next_actions: list[str] | None = None,
+            manifest_path: str | None = None,
+            score_result_value: Any = None,
+        ) -> None:
+            plan_next_actions = next_actions or [
+                "collect or import the three listener-ear WAV recordings",
+                "replace placeholder headphone, fixture, and measurement microphone labels",
+            ]
+            plan_score_result = score_result if score_result_value is None else score_result_value
+            _write_json(
+                path,
+                {
+                    "schema_version": 1,
+                    "fixture_kind": (
+                        "forged_headphone_earpiece_evidence_collection_plan"
+                        if wrong_fixture
+                        else EXPECTED_HEADPHONE_COLLECTION_PLAN_FIXTURE_KIND
+                    ),
+                    "measurement_kind": EXPECTED_HEADPHONE_COLLECTION_PLAN_MEASUREMENT_KIND,
+                    "release_proof": release_proof,
+                    "manifest_path": manifest_path or str(root / "manual-recording-manifest.json"),
+                    "manual_status_report_path": str(manual_status_not_ready),
+                    "score_report_path": str(manual_score_report),
+                    "summary": {
+                        "manual_recordings_ready_for_score_input": recordings_ready,
+                        "manual_score_labels_specific": labels_specific,
+                        "manual_score_ready": score_ready,
+                        "release_proof": release_proof,
+                        "score_attempted": score_attempted,
+                        "score_result": plan_score_result,
+                        "status": status,
+                    },
+                    "issues": [
+                        "source_open_ear_recording: missing",
+                        "specific headphone, listener-ear microphone, and fixture labels must be supplied before scoring",
+                    ],
+                    "next_actions": plan_next_actions,
+                    "recommended_commands": collection_commands,
+                },
+            )
+
+        write_collection_plan(collection_plan_not_ready)
+        collection_plan_not_ready.with_suffix(".md").write_text("# Collection Plan\n", encoding="utf-8")
+        write_collection_plan(
+            collection_plan_score_ready,
+            status="SCORE-READY",
+            recordings_ready=True,
+            labels_specific=True,
+            score_ready=True,
+        )
+        write_collection_plan(
+            collection_plan_score_passed,
+            status="SCORE-COMPLETE",
+            recordings_ready=True,
+            labels_specific=True,
+            score_ready=True,
+            score_attempted=True,
+            score_result=0,
+        )
+        collection_plan_invalid_json.write_text("{", encoding="utf-8")
+        write_collection_plan(
+            collection_plan_wrong_release,
+            release_proof=True,
+            next_actions=["PAYLOAD_CONTROLLED_NEXT_ACTION_DO_NOT_RENDER"],
+            manifest_path="PAYLOAD_CONTROLLED_MANIFEST_PATH_DO_NOT_RENDER",
+            score_result_value="PAYLOAD_CONTROLLED_SCORE_RESULT_DO_NOT_RENDER",
         )
         preflight_candidate = {
             "rank": 1,
@@ -5842,6 +6186,117 @@ def self_test() -> None:
         invalid_status_markdown = render_markdown_report(invalid_status_report)
         if "UNREADABLE" not in invalid_status_markdown:
             raise AssertionError("expected invalid manual status JSON to render as unreadable")
+        missing_collection_plan_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_collection_plan_report=missing_collection_plan,
+        )
+        if missing_collection_plan_report["summary"] != report["summary"]:
+            raise AssertionError("collection plan handoff must not change release gate summary")
+        missing_collection_plan_markdown = render_markdown_report(missing_collection_plan_report)
+        if (
+            "Current Headphone Evidence Collection Plan" not in missing_collection_plan_markdown
+            or "MISSING" not in missing_collection_plan_markdown
+        ):
+            raise AssertionError("expected missing collection plan to be called out in Markdown")
+        parsed_collection_plan_args = parse_args(
+            ["--headphone-collection-plan-report", str(collection_plan_not_ready)]
+        )
+        parsed_collection_plan_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_collection_plan_report=parsed_collection_plan_args.headphone_collection_plan_report,
+        )
+        if "headphone_collection_plan_status" not in parsed_collection_plan_report.get("operator_handoff", {}):
+            raise AssertionError("expected parsed CLI collection plan path to be included in report handoff")
+        invalid_collection_plan_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_collection_plan_report=collection_plan_invalid_json,
+        )
+        invalid_collection_plan_markdown = render_markdown_report(invalid_collection_plan_report)
+        if "UNREADABLE" not in invalid_collection_plan_markdown:
+            raise AssertionError("expected invalid collection plan JSON to render as unreadable")
+        not_ready_collection_plan_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_collection_plan_report=collection_plan_not_ready,
+        )
+        if not_ready_collection_plan_report["release_blocking_gates"] != report["release_blocking_gates"]:
+            raise AssertionError("collection plan handoff must not change release-blocking gates")
+        not_ready_collection_plan_markdown = render_markdown_report(not_ready_collection_plan_report)
+        if (
+            "NOT-READY" not in not_ready_collection_plan_markdown
+            or "not release evidence" not in not_ready_collection_plan_markdown
+            or "collect or import" not in not_ready_collection_plan_markdown
+        ):
+            raise AssertionError("expected not-ready collection plan to stay non-evidentiary in Markdown")
+        if (
+            "Suggested `play_references` command" not in not_ready_collection_plan_markdown
+            or "-Action play-manual" not in not_ready_collection_plan_markdown
+        ):
+            raise AssertionError("expected not-ready collection plan to surface the play-references command")
+        collection_plan_handoff = not_ready_collection_plan_report.get("operator_handoff", {}).get(
+            "headphone_collection_plan_status",
+            {},
+        )
+        if (
+            not isinstance(collection_plan_handoff, dict)
+            or collection_plan_handoff.get("release_evidence") is not False
+            or collection_plan_handoff.get("release_proof") is not False
+        ):
+            raise AssertionError("collection plan handoff must remain explicitly non-evidentiary")
+        score_ready_collection_plan_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_collection_plan_report=collection_plan_score_ready,
+        )
+        score_ready_collection_plan_markdown = render_markdown_report(score_ready_collection_plan_report)
+        if (
+            "SCORE-READY" not in score_ready_collection_plan_markdown
+            or "Suggested `score_recordings` command" not in score_ready_collection_plan_markdown
+            or "-Action score-manual" not in score_ready_collection_plan_markdown
+        ):
+            raise AssertionError("expected score-ready collection plan to surface the score command")
+        scored_collection_plan_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_collection_plan_report=collection_plan_score_passed,
+        )
+        scored_collection_plan_markdown = render_markdown_report(scored_collection_plan_report)
+        if (
+            "SCORE-COMPLETE" not in scored_collection_plan_markdown
+            or "Suggested `release_gate` command" not in scored_collection_plan_markdown
+            or "--headphone-isolation-report" not in scored_collection_plan_markdown
+        ):
+            raise AssertionError("expected scored collection plan to surface the release gate command")
+        wrong_release_collection_plan_report = build_report(
+            release_results,
+            prototype_results,
+            headphone_collection_plan_report=collection_plan_wrong_release,
+        )
+        wrong_release_collection_plan_markdown = render_markdown_report(wrong_release_collection_plan_report)
+        if (
+            "INVALID" not in wrong_release_collection_plan_markdown
+            or "collection plan must keep release_proof=false" not in wrong_release_collection_plan_markdown
+        ):
+            raise AssertionError("wrong collection plan release_proof must render invalid")
+        wrong_release_handoff = wrong_release_collection_plan_report.get("operator_handoff", {}).get(
+            "headphone_collection_plan_status",
+            {},
+        )
+        if isinstance(wrong_release_handoff, dict) and wrong_release_handoff.get("recommended_commands"):
+            raise AssertionError("invalid collection plan handoff must not emit recommended commands")
+        if "Suggested `play_references` command" in wrong_release_collection_plan_markdown:
+            raise AssertionError("invalid collection plan Markdown must not render recommended commands")
+        if "PAYLOAD_CONTROLLED_NEXT_ACTION_DO_NOT_RENDER" in wrong_release_collection_plan_markdown:
+            raise AssertionError("invalid collection plan Markdown must not render payload-controlled next actions")
+        if "PAYLOAD_CONTROLLED_MANIFEST_PATH_DO_NOT_RENDER" in wrong_release_collection_plan_markdown:
+            raise AssertionError("invalid collection plan Markdown must not render payload-controlled paths")
+        if "PAYLOAD_CONTROLLED_SCORE_RESULT_DO_NOT_RENDER" in wrong_release_collection_plan_markdown:
+            raise AssertionError("invalid collection plan Markdown must not render payload-controlled score results")
+        if "regenerate the collection plan with collect-headphone-evidence" not in wrong_release_collection_plan_markdown:
+            raise AssertionError("invalid collection plan Markdown should render fixed regeneration guidance")
         missing_preflight_report = build_report(
             release_results,
             prototype_results,
@@ -6120,6 +6575,7 @@ def self_test() -> None:
             release_results,
             prototype_results,
             headphone_manual_status_report=manual_status_not_ready,
+            headphone_collection_plan_report=collection_plan_not_ready,
             headphone_preflight_report=preflight_status_unconfirmed,
             headphone_route_probe_report=route_probe_status_failed,
         )
@@ -6127,10 +6583,11 @@ def self_test() -> None:
         if not (
             isinstance(combined_all_handoff, dict)
             and "headphone_manual_status" in combined_all_handoff
+            and "headphone_collection_plan_status" in combined_all_handoff
             and "headphone_preflight_status" in combined_all_handoff
             and "headphone_route_probe_status" in combined_all_handoff
         ):
-            raise AssertionError("expected report JSON to keep manual, preflight, and route probe handoffs")
+            raise AssertionError("expected report JSON to keep collection, manual, preflight, and route probe handoffs")
         not_ready_report = build_report(
             release_results,
             prototype_results,
@@ -6193,6 +6650,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--headphone-preflight-report", type=Path, default=DEFAULT_HEADPHONE_PREFLIGHT_REPORT)
     parser.add_argument("--headphone-route-probe-report", type=Path, default=DEFAULT_HEADPHONE_ROUTE_PROBE_REPORT)
     parser.add_argument("--headphone-manual-status-report", type=Path, default=DEFAULT_HEADPHONE_MANUAL_STATUS_REPORT)
+    parser.add_argument("--headphone-collection-plan-report", type=Path, default=DEFAULT_HEADPHONE_COLLECTION_PLAN_REPORT)
     parser.add_argument("--playback-prototype-report", type=Path, default=DEFAULT_PLAYBACK_PROTOTYPE_REPORT)
     parser.add_argument("--capture-prototype-report", type=Path, default=DEFAULT_CAPTURE_PROTOTYPE_REPORT)
     return parser.parse_args(argv)
@@ -6211,6 +6669,7 @@ def main(argv: list[str] | None = None) -> int:
         prototype_results,
         room_route_probe_report=args.room_route_probe_report,
         headphone_manual_status_report=args.headphone_manual_status_report,
+        headphone_collection_plan_report=args.headphone_collection_plan_report,
         headphone_preflight_report=args.headphone_preflight_report,
         headphone_route_probe_report=args.headphone_route_probe_report,
     )
