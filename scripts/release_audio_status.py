@@ -147,6 +147,22 @@ def _preflight_candidate_summary(preflight: dict[str, Any]) -> str:
     )
 
 
+def _preflight_playback_env_lines(preflight: dict[str, Any]) -> list[str]:
+    candidate = _as_dict(preflight.get("selected_candidate")) or _as_dict(preflight.get("displayed_candidate"))
+    if not candidate:
+        return []
+    source_device = str(candidate.get("source_output_device", "")).strip()
+    headphone_device = str(candidate.get("headphone_output_device", "")).strip()
+    if not source_device.isdigit() or not headphone_device.isdigit() or source_device == headphone_device:
+        return []
+    return [
+        f'$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = "{source_device}"',
+        f'$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = "{headphone_device}"',
+        "python scripts/run_test_category.py reference-playback-dry-run",
+        "python scripts/run_test_category.py reference-playback",
+    ]
+
+
 def _route_device_label(device: dict[str, Any]) -> str:
     name = str(device.get("name", "")).strip()
     index = str(device.get("index", "")).strip()
@@ -273,6 +289,7 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
     stale_reason = _route_probe_stale_reason(report)
     preflight = _as_dict(handoff.get("headphone_preflight_status"))
     preflight_candidate_summary = _preflight_candidate_summary(preflight)
+    preflight_playback_env_lines = _preflight_playback_env_lines(preflight)
 
     lines = [
         "# Physical Audio Test Checklist",
@@ -313,6 +330,16 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
             lines.append(
                 "- Use `python scripts/run_test_category.py route-triage` to refresh this candidate before route diagnostics."
             )
+        if preflight_playback_env_lines:
+            lines.extend(
+                [
+                    "- Playback helper for an external listener-ear recorder (not release proof):",
+                    "",
+                    "  ```powershell",
+                    *[f"  {line}" for line in preflight_playback_env_lines],
+                    "  ```",
+                ]
+            )
         if stale_reason:
             lines.append(
                 f"- Probe freshness: {stale_reason}; rerun `python scripts/run_test_category.py route-triage` before trusting these device IDs."
@@ -350,6 +377,8 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
             "   ```powershell",
             "   python scripts/run_test_category.py release-evidence",
             "   ```",
+            "",
+            "   If the repo should play the references while the external recorder is rolling, use the playback helper shown above, starting with `reference-playback-dry-run`.",
             "",
             "4. Record or export these three WAVs from the same listener-ear position:",
             "",
@@ -723,6 +752,10 @@ def self_test() -> int:
         f"- Score report target: `{expected_score_report}`",
         "python scripts/run_test_category.py route-triage",
         "Fresh preflight candidate:",
+        "$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = \"12\"",
+        "$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = \"10\"",
+        "python scripts/run_test_category.py reference-playback-dry-run",
+        "python scripts/run_test_category.py reference-playback",
         "Output 1 (SoundWire Speaker)",
         "python scripts/run_test_category.py release-evidence-score",
         "route probes and virtual labs stay `release_proof=false`",

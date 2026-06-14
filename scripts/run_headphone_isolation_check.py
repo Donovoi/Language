@@ -4586,6 +4586,15 @@ def render_manual_collection_markdown(plan: dict[str, Any]) -> str:
                 f"- Headphone output: `{markdown_inline(playback_route.get('headphone_output_device', ''))}` "
                 f"({markdown_inline(playback_route.get('headphone_output_name', ''))}; "
                 f"{markdown_inline(playback_route.get('headphone_hostapi_name', ''))})",
+                "",
+                "Use these repo-level categories if the repo should play references while an external listener-ear recorder is rolling:",
+                "",
+                "```powershell",
+                f"$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = \"{markdown_inline(playback_route.get('source_output_device', ''))}\"",
+                f"$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = \"{markdown_inline(playback_route.get('headphone_output_device', ''))}\"",
+                "python scripts/run_test_category.py reference-playback-dry-run",
+                "python scripts/run_test_category.py reference-playback",
+                "```",
             ]
         )
     elif playback_route.get("identity_issues"):
@@ -7428,6 +7437,14 @@ def self_test() -> int:
         )
         if "Source output: `1`" not in preflight_collection_markdown or "Headphone output: `2`" not in preflight_collection_markdown:
             raise RuntimeError("collection Markdown should show preflight-derived playback outputs")
+        for expected_playback_text in (
+            '$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = "1"',
+            '$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = "2"',
+            "python scripts/run_test_category.py reference-playback-dry-run",
+            "python scripts/run_test_category.py reference-playback",
+        ):
+            if expected_playback_text not in preflight_collection_markdown:
+                raise RuntimeError(f"collection Markdown missing playback helper {expected_playback_text!r}")
         if "Preflight route suggestions can become stale" not in preflight_collection_markdown:
             raise RuntimeError("collection Markdown should warn that preflight playback routes can become stale")
         binding = capture_preflight_binding(
