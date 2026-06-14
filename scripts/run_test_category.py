@@ -49,6 +49,7 @@ class Category:
     steps: tuple[str, ...] = ()
     includes: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
+    success_hints: tuple[str, ...] = ()
 
 
 STEPS: dict[str, Step] = {
@@ -635,6 +636,10 @@ CATEGORIES: dict[str, Category] = {
             "Does not play probe audio, record audio, or score placeholder labels.",
             "Use before a hardware session to refresh the checklist and raw WAV dropbox.",
         ),
+        success_hints=(
+            "Physical checklist: artifacts/release/physical-audio-checklist.md",
+            "Raw WAV dropbox: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/raw-listener-ear-recordings",
+        ),
     ),
     "evidence-kit": Category(
         name="evidence-kit",
@@ -651,6 +656,10 @@ CATEGORIES: dict[str, Category] = {
         steps=("headphone-isolation-check-manual",),
         notes=(
             "Use after placing the open-ear source, isolated source, and translated playback WAVs in the dropbox.",
+        ),
+        success_hints=(
+            "Status handoff: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.md",
+            "Required WAV map: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/raw-listener-ear-recordings/listener-ear-recording-dropbox.md",
         ),
     ),
     "reference-playback-dry-run": Category(
@@ -675,6 +684,10 @@ CATEGORIES: dict[str, Category] = {
             "Requires LANGUAGE_SOURCE_OUTPUT_DEVICE and LANGUAGE_HEADPHONE_OUTPUT_DEVICE.",
             "Does not play or record audio; use this before starting the external listener-ear recorder.",
         ),
+        success_hints=(
+            "Status handoff: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.md",
+            "Next real audio command: python scripts/run_test_category.py reference-playback",
+        ),
     ),
     "reference-playback": Category(
         name="reference-playback",
@@ -696,6 +709,10 @@ CATEGORIES: dict[str, Category] = {
         notes=(
             "Does not record audio or score with placeholder labels.",
             "Use after placing recorder exports in the raw WAV dropbox, or before capture to create the kit.",
+        ),
+        success_hints=(
+            "Status handoff: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.md",
+            "Release status: artifacts/release/audio-gate-report.md",
         ),
     ),
     "release-evidence-score": Category(
@@ -968,6 +985,11 @@ def run_category(args: argparse.Namespace) -> int:
 
     print("")
     print(f"Category {args.category} passed.")
+    category = CATEGORIES[args.category]
+    if category.success_hints:
+        print("Handoff:")
+        for hint in category.success_hints:
+            print(f"- {hint}")
     return 0
 
 
@@ -1015,6 +1037,8 @@ def self_test() -> int:
         raise AssertionError("reference-playback-dry-run must only validate the playback plan")
     if "headphone-isolation-playback-plan" not in CATEGORIES["recording-session-dry-run"].steps:
         raise AssertionError("recording-session-dry-run must validate playback routing without audio")
+    if not CATEGORIES["recording-status"].success_hints:
+        raise AssertionError("recording-status must print where the manual status handoff was written")
     if CATEGORIES["reference-playback"].steps != ("headphone-isolation-playback-session",):
         raise AssertionError("reference-playback must only run the explicit playback session")
     for playback_step in (
