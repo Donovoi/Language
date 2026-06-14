@@ -157,6 +157,9 @@ For a shorter status and next-action handoff:
 python3 scripts/run_test_category.py release-status
 ```
 
+That command also writes `artifacts/release/physical-audio-checklist.md` for the current hardware
+handoff.
+
 Use `python3 scripts/release_audio_status.py --full-commands` when you need the full hardware
 command list in the terminal.
 
