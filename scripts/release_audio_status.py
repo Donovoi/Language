@@ -175,6 +175,7 @@ def _preflight_playback_env_lines(preflight: dict[str, Any]) -> list[str]:
         f'$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = "{source_device}"',
         f'$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = "{headphone_device}"',
         "python scripts/run_test_category.py reference-playback-dry-run",
+        "python scripts/run_test_category.py recording-session-dry-run",
         "python scripts/run_test_category.py reference-playback",
     ]
 
@@ -808,6 +809,7 @@ def self_test() -> int:
         "$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = \"12\"",
         "$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = \"10\"",
         "python scripts/run_test_category.py reference-playback-dry-run",
+        "python scripts/run_test_category.py recording-session-dry-run",
         "python scripts/run_test_category.py reference-playback",
         "Output 1 (SoundWire Speaker)",
         "python scripts/run_test_category.py release-evidence-score",

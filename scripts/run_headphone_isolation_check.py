@@ -3480,6 +3480,7 @@ def write_manual_recording_checklist(
             "$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = \"REPLACE_WITH_SOURCE_OUTPUT_ID\"",
             "$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = \"REPLACE_WITH_HEADPHONE_OUTPUT_ID\"",
             "python scripts/run_test_category.py reference-playback-dry-run",
+            "python scripts/run_test_category.py recording-session-dry-run",
             "python scripts/run_test_category.py reference-playback",
             "```",
             "",
@@ -4593,6 +4594,7 @@ def render_manual_collection_markdown(plan: dict[str, Any]) -> str:
                 f"$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = \"{markdown_inline(playback_route.get('source_output_device', ''))}\"",
                 f"$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = \"{markdown_inline(playback_route.get('headphone_output_device', ''))}\"",
                 "python scripts/run_test_category.py reference-playback-dry-run",
+                "python scripts/run_test_category.py recording-session-dry-run",
                 "python scripts/run_test_category.py reference-playback",
                 "```",
             ]
@@ -5898,6 +5900,7 @@ def self_test() -> int:
             "python scripts/run_test_category.py release",
             "python scripts/run_test_category.py recording-status",
             "python scripts/run_test_category.py reference-playback-dry-run",
+            "python scripts/run_test_category.py recording-session-dry-run",
             "python scripts/run_test_category.py reference-playback",
             "python scripts/release_audio_status.py --full-commands",
             f"headphone-isolation-play-manual --manifest {manual_manifest_arg}",
@@ -7441,6 +7444,7 @@ def self_test() -> int:
             '$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = "1"',
             '$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = "2"',
             "python scripts/run_test_category.py reference-playback-dry-run",
+            "python scripts/run_test_category.py recording-session-dry-run",
             "python scripts/run_test_category.py reference-playback",
         ):
             if expected_playback_text not in preflight_collection_markdown:
