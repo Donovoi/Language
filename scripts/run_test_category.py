@@ -720,6 +720,7 @@ CATEGORIES: dict[str, Category] = {
         ),
         success_hints=(
             "Status handoff: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.md",
+            "Before real playback: start the external listener-ear recorder and keep mic/source/headphone placement fixed.",
             "Next real audio command: python scripts/run_test_category.py reference-playback",
         ),
         manual_status_report="artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.json",
@@ -731,6 +732,10 @@ CATEGORIES: dict[str, Category] = {
         notes=(
             "Requires LANGUAGE_SOURCE_OUTPUT_DEVICE and LANGUAGE_HEADPHONE_OUTPUT_DEVICE.",
             "Plays audio; start the external recorder first. The playback log is not release evidence.",
+        ),
+        success_hints=(
+            "Export the three raw listener-ear WAVs to artifacts/audio_eval/runs/headphone-earpiece-manual-kit/raw-listener-ear-recordings.",
+            "Then run python scripts/run_test_category.py release-evidence.",
         ),
     ),
     "release-evidence": Category(
@@ -1179,6 +1184,9 @@ def self_test() -> int:
         raise AssertionError("reference-playback-dry-run must only validate the playback plan")
     if "headphone-isolation-playback-plan" not in CATEGORIES["recording-session-dry-run"].steps:
         raise AssertionError("recording-session-dry-run must validate playback routing without audio")
+    recording_hints = "\n".join(CATEGORIES["recording-session-dry-run"].success_hints)
+    if "start the external listener-ear recorder" not in recording_hints:
+        raise AssertionError("recording-session-dry-run must warn before real playback")
     if CATEGORIES["route-triage"].handoff_log_steps != ("headphone-route-triage-handoff",):
         raise AssertionError("route-triage must print the generated probe handoff in quiet mode")
     if CATEGORIES["physical-audio-handoff"].handoff_log_steps != ("headphone-route-triage-handoff",):
@@ -1195,6 +1203,9 @@ def self_test() -> int:
                 raise AssertionError(f"recording-status summary must include {expected!r}")
     if CATEGORIES["reference-playback"].steps != ("headphone-isolation-playback-session",):
         raise AssertionError("reference-playback must only run the explicit playback session")
+    reference_hints = "\n".join(CATEGORIES["reference-playback"].success_hints)
+    if "raw listener-ear WAVs" not in reference_hints or "release-evidence" not in reference_hints:
+        raise AssertionError("reference-playback must print the post-recording export handoff")
     score_required_env = (
         "LANGUAGE_HEADPHONE_DEVICE_LABEL",
         "LANGUAGE_ISOLATION_FIXTURE_LABEL",

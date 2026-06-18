@@ -100,7 +100,8 @@ Use `reference-playback-dry-run` after setting `LANGUAGE_SOURCE_OUTPUT_DEVICE` a
 `LANGUAGE_HEADPHONE_OUTPUT_DEVICE` to validate the three-take playback plan without playing audio.
 Use `recording-session-dry-run` with the same output variables before a hardware session when you
 want the kit prepared, playback routing validated, and status printed without playing audio.
-Use `reference-playback` only when the external listener-ear recorder is rolling; the playback log
+Use `reference-playback` only when the external listener-ear recorder is rolling; after playback,
+export the three raw listener-ear WAVs to the dropbox and run `release-evidence`. The playback log
 remains `release_proof=false`.
 Use `guided-capture --dry-run` after preflight reports a capture-ready route and before you let the
 host play/record audio. It fails before touching devices unless the required `LANGUAGE_*` device and
