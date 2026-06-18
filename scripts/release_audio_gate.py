@@ -2550,6 +2550,11 @@ def load_headphone_manual_status_handoff(path: Path | None) -> dict[str, Any] | 
             "manifest_path": str(payload.get("manifest_path", "")),
             "score_report_path": str(payload.get("score_report_path", "")),
             "release_proof": _literal_true(payload.get("release_proof")),
+            "recording_requirements": (
+                payload.get("recording_requirements")
+                if isinstance(payload.get("recording_requirements"), dict)
+                else {}
+            ),
             "summary": {
                 "manual_score_ready": score_ready,
                 "manual_recordings_ready_for_score_input": recordings_ready,
@@ -3617,6 +3622,16 @@ def headphone_manual_status_handoff_lines(manual_status: dict[str, Any] | None) 
             f"- Next step: {manual_status.get('next_step', '')}",
         ]
     )
+    requirements = manual_status.get("recording_requirements", {})
+    requirements = requirements if isinstance(requirements, dict) else {}
+    requirement_parts = [
+        str(requirements.get("format", "")).strip(),
+        f"{requirements.get('sample_rate_hz')} Hz" if requirements.get("sample_rate_hz") else "",
+        f">= {requirements.get('min_duration_s')}s" if requirements.get("min_duration_s") else "",
+    ]
+    requirement_text = ", ".join(part for part in requirement_parts if part)
+    if requirement_text:
+        lines.append(f"- Required WAV shape: {requirement_text}")
     score_report_path = str(manual_status.get("score_report_path", "")).strip()
     if status == "SCORE-READY" and score_report_path:
         lines.extend(
@@ -5534,6 +5549,11 @@ def self_test() -> None:
                 "schema_version": 1,
                 "release_proof": False,
                 "manifest_path": str(root / "manual-recording-manifest.json"),
+                "recording_requirements": {
+                    "format": "mono 16-bit PCM WAV",
+                    "min_duration_s": 1.85,
+                    "sample_rate_hz": 48000,
+                },
                 "score_report_path": str(manual_score_report),
                 "summary": {
                     "issue_count": 5,
@@ -5553,6 +5573,11 @@ def self_test() -> None:
                 "schema_version": 1,
                 "release_proof": False,
                 "manifest_path": str(root / "manual-recording-manifest.json"),
+                "recording_requirements": {
+                    "format": "mono 16-bit PCM WAV",
+                    "min_duration_s": 1.85,
+                    "sample_rate_hz": 48000,
+                },
                 "score_report_path": str(manual_score_report),
                 "summary": {
                     "issue_count": 0,
@@ -6953,6 +6978,8 @@ def self_test() -> None:
             raise AssertionError("expected not-ready manual status to stay non-evidentiary in Markdown")
         if str(manual_status_not_ready.with_suffix(".md")) not in not_ready_markdown:
             raise AssertionError("expected Markdown handoff to point at manual-recording-status.md")
+        if "Required WAV shape: mono 16-bit PCM WAV, 48000 Hz, >= 1.85s" not in not_ready_markdown:
+            raise AssertionError("expected manual status handoff to include required WAV shape")
         malformed_values_report = build_report(
             release_results,
             prototype_results,
