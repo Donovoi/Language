@@ -48,6 +48,8 @@ than by inventing a second package version line.
 	- collect or import the three real listener-ear WAVs named by the manual kit:
 	  `source-open-ear-recording.wav`, `source-isolated-ear-recording.wav`, and
 	  `translated-headphone-recording.wav`
+	- if recorder exports have different filenames, set the three `LANGUAGE_*_RECORDING` paths
+	  and run `python scripts/run_test_category.py stage-recordings`
 	- set concrete `LANGUAGE_HEADPHONE_DEVICE_LABEL`, `LANGUAGE_ISOLATION_FIXTURE_LABEL`, and
 	  `LANGUAGE_MEASUREMENT_MICROPHONE_LABEL` values
 	- `python scripts/run_test_category.py release-evidence-score`
