@@ -103,6 +103,7 @@ Common categories:
 | `guided-capture` | Strict host-guided listener-ear capture | Requires explicit device IDs, concrete labels, and a confirmed preflight report. |
 | `physical-audio-handoff` | Current host devices, route, manual kit, and checklist | Best first command before a hardware session. |
 | `evidence-kit` | Manual listener-ear recording kit/dropbox | Creates/checks the folder for the three release WAVs. |
+| `stage-recordings-check` | Check recorder WAV exports | Validates the three take files without copying them. |
 | `stage-recordings` | Stage recorder WAV exports | Copies/validates the three takes into the dropbox using exact release filenames. |
 | `recording-status` | Listener-ear WAV readiness | Use after adding the three manual recordings. |
 | `reference-playback-dry-run` | Validate manual reference playback routing | Requires source/headphone output env vars; plays no audio. |
@@ -191,6 +192,7 @@ If recorder files have different names, stage them into the dropbox first:
 $env:LANGUAGE_SOURCE_OPEN_EAR_RECORDING = "C:\Path\source-open.wav"
 $env:LANGUAGE_SOURCE_ISOLATED_EAR_RECORDING = "C:\Path\source-isolated.wav"
 $env:LANGUAGE_TRANSLATED_HEADPHONE_RECORDING = "C:\Path\translated-headphone.wav"
+python scripts/run_test_category.py stage-recordings-check
 python scripts/run_test_category.py stage-recordings
 python scripts/run_test_category.py release-evidence
 ```
