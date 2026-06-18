@@ -450,6 +450,27 @@ STEPS: dict[str, Step] = {
             "LANGUAGE_TRANSLATED_HEADPHONE_RECORDING",
         ),
     ),
+    "stage-listener-ear-recordings-check": Step(
+        name="stage-listener-ear-recordings-check",
+        description="validate recorder WAV exports without writing the raw listener-ear dropbox",
+        local_args=(
+            "{python}",
+            "scripts/stage_listener_ear_recordings.py",
+            "--source-open-ear-recording",
+            "{env:LANGUAGE_SOURCE_OPEN_EAR_RECORDING:LANGUAGE_SOURCE_OPEN_EAR_RECORDING}",
+            "--source-isolated-ear-recording",
+            "{env:LANGUAGE_SOURCE_ISOLATED_EAR_RECORDING:LANGUAGE_SOURCE_ISOLATED_EAR_RECORDING}",
+            "--translated-headphone-recording",
+            "{env:LANGUAGE_TRANSLATED_HEADPHONE_RECORDING:LANGUAGE_TRANSLATED_HEADPHONE_RECORDING}",
+            "--allow-downmix",
+            "--dry-run",
+        ),
+        required_env=(
+            "LANGUAGE_SOURCE_OPEN_EAR_RECORDING",
+            "LANGUAGE_SOURCE_ISOLATED_EAR_RECORDING",
+            "LANGUAGE_TRANSLATED_HEADPHONE_RECORDING",
+        ),
+    ),
     "headphone-isolation-playback-plan": Step(
         name="headphone-isolation-playback-plan",
         description="dry-run the three-take manual reference playback plan without playing audio",
@@ -724,9 +745,24 @@ CATEGORIES: dict[str, Category] = {
         success_hints=(
             "Status handoff: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.md",
             "Required WAV map: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/raw-listener-ear-recordings/listener-ear-recording-dropbox.md",
+            "Recorder export validation: python scripts/run_test_category.py stage-recordings-check",
             "Recorder export staging: python scripts/run_test_category.py stage-recordings",
         ),
         manual_status_report="artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.json",
+    ),
+    "stage-recordings-check": Category(
+        name="stage-recordings-check",
+        description="Validate external recorder WAV exports without writing the raw listener-ear dropbox.",
+        steps=("stage-listener-ear-recordings-check",),
+        notes=(
+            "Requires LANGUAGE_SOURCE_OPEN_EAR_RECORDING, LANGUAGE_SOURCE_ISOLATED_EAR_RECORDING, and LANGUAGE_TRANSLATED_HEADPHONE_RECORDING.",
+            "Does not record audio, copy files, score evidence, or mark release proof.",
+            "Use before stage-recordings when you want to check recorder files safely.",
+        ),
+        success_hints=(
+            "Next: python scripts/run_test_category.py stage-recordings",
+            "Then run python scripts/run_test_category.py release-evidence",
+        ),
     ),
     "stage-recordings": Category(
         name="stage-recordings",
@@ -1329,6 +1365,8 @@ def self_test() -> int:
         raise AssertionError("release-evidence-score must require concrete hardware labels")
     if STEPS["stage-listener-ear-recordings"].required_env != stage_required_env:
         raise AssertionError("stage-recordings must require three explicit recorder export paths")
+    if STEPS["stage-listener-ear-recordings-check"].required_env != stage_required_env:
+        raise AssertionError("stage-recordings-check must require three explicit recorder export paths")
     score_command, _ = command_for_step(STEPS["headphone-isolation-collect-and-score-evidence"], "powershell")
     rendered_score_command = " ".join(score_command)
     for placeholder in score_required_env:
@@ -1341,6 +1379,13 @@ def self_test() -> int:
             raise AssertionError(f"stage-recordings dry-run command must show {placeholder}")
     if "--allow-downmix" not in rendered_stage_command:
         raise AssertionError("stage-recordings should downmix stereo recorder WAV exports")
+    stage_check_command, _ = command_for_step(STEPS["stage-listener-ear-recordings-check"], "powershell")
+    rendered_stage_check_command = " ".join(stage_check_command)
+    if "--dry-run" not in rendered_stage_check_command:
+        raise AssertionError("stage-recordings-check must validate without writing")
+    for placeholder in stage_required_env:
+        if placeholder not in rendered_stage_check_command:
+            raise AssertionError(f"stage-recordings-check dry-run command must show {placeholder}")
     for playback_step in (
         STEPS["headphone-isolation-playback-plan"],
         STEPS["headphone-isolation-playback-session"],

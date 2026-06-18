@@ -38,6 +38,7 @@ REQUIRED_COMMANDS = {
     "release-status",
     "route-triage",
     "smoke-local",
+    "stage-recordings-check",
     "stage-recordings",
 }
 REQUIRED_PATTERNS = {
@@ -58,6 +59,7 @@ REQUIRED_PATTERNS = {
     "staged recorder exports": re.compile(
         r"recorder exports have different filenames.*"
         r"LANGUAGE_\*_RECORDING.*"
+        r"python scripts/run_test_category\.py stage-recordings-check.*"
         r"python scripts/run_test_category\.py stage-recordings",
         re.DOTALL,
     ),
