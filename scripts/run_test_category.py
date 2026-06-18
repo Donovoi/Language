@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
@@ -972,6 +973,7 @@ def manual_status_summary_lines(report_path: str) -> list[str]:
     lines = [f"Status: {status}", f"Raw WAV dropbox: {MANUAL_RECORDING_DROPBOX}"]
 
     missing_keys: set[str] = set()
+    invalid: list[str] = []
     for check in report.get("checks", []):
         check = as_dict(check)
         if check.get("name") != "manual_recording_wavs_ready":
@@ -980,6 +982,15 @@ def manual_status_summary_lines(report_path: str) -> list[str]:
             details = as_dict(details)
             if not bool(details.get("exists")):
                 missing_keys.add(str(name))
+            elif not bool(details.get("passed")):
+                issues = [
+                    str(issue).strip()
+                    for issue in details.get("issues", [])
+                    if str(issue).strip()
+                ]
+                issue_text = ", ".join(issues) if issues else "failed WAV checks"
+                display_name = MANUAL_RECORDING_FILENAMES.get(str(name), str(name))
+                invalid.append(f"{display_name} ({issue_text})")
     missing = [
         MANUAL_RECORDING_FILENAMES[key]
         for key in MANUAL_RECORDING_FILENAMES
@@ -987,6 +998,8 @@ def manual_status_summary_lines(report_path: str) -> list[str]:
     ]
     if missing:
         lines.append(f"Missing WAVs: {', '.join(missing)}")
+    if invalid:
+        lines.append(f"Rejected WAVs: {'; '.join(invalid)}")
 
     sample_rate = requirements.get("sample_rate_hz")
     min_duration = requirements.get("min_duration_s")
@@ -1201,6 +1214,51 @@ def self_test() -> int:
         for expected in ("Raw WAV dropbox:", "Next:"):
             if expected not in summary_text:
                 raise AssertionError(f"recording-status summary must include {expected!r}")
+    invalid_status = {
+        "checks": [
+            {
+                "name": "manual_recording_wavs_ready",
+                "passed": False,
+                "value": {
+                    "source_open_ear_recording": {
+                        "exists": True,
+                        "passed": False,
+                        "issues": ["sample_rate_hz 44100 != 48000", "channels 2 != 1"],
+                    },
+                    "source_isolated_ear_recording": {
+                        "exists": False,
+                        "passed": False,
+                        "issues": ["missing"],
+                    },
+                    "translated_headphone_recording": {
+                        "exists": True,
+                        "passed": True,
+                        "issues": [],
+                    },
+                },
+            }
+        ],
+        "recording_requirements": {
+            "format": "mono 16-bit PCM WAV",
+            "min_duration_s": 1.85,
+            "sample_rate_hz": 48000,
+        },
+        "summary": {
+            "manual_recordings_ready_for_score_input": False,
+            "manual_score_ready": False,
+            "placeholder_label_count": 0,
+        },
+    }
+    with tempfile.TemporaryDirectory(prefix="language-category-self-test-") as temp_dir:
+        invalid_status_path = Path(temp_dir) / "manual-status-invalid.json"
+        invalid_status_path.write_text(json.dumps(invalid_status), encoding="utf-8")
+        invalid_summary = "\n".join(manual_status_summary_lines(str(invalid_status_path)))
+    for expected in (
+        "Missing WAVs: source-isolated-ear-recording.wav",
+        "Rejected WAVs: source-open-ear-recording.wav (sample_rate_hz 44100 != 48000, channels 2 != 1)",
+    ):
+        if expected not in invalid_summary:
+            raise AssertionError(f"manual status summary must include invalid WAV detail: {expected}")
     if CATEGORIES["reference-playback"].steps != ("headphone-isolation-playback-session",):
         raise AssertionError("reference-playback must only run the explicit playback session")
     reference_hints = "\n".join(CATEGORIES["reference-playback"].success_hints)
