@@ -7,6 +7,8 @@ That makes token discipline part of the engineering workflow. There are two sepa
 - Product API tokens used later by Language itself.
 
 Treat the first one as the default concern in agent handoffs.
+If an operator says OpenAI or Codex token usage is close to the limit during development, assume
+conversation-token pressure first unless they explicitly mean product runtime/API tokens.
 
 ## Defaults For Agents
 
@@ -19,8 +21,12 @@ Treat the first one as the default concern in agent handoffs.
 - Use the quiet category-runner default so full logs land in `artifacts/test-categories/`.
 - Summarize pass/fail status and artifact paths instead of pasting complete JSON reports or logs into
   chat.
+- Keep push summaries bounded to changed files, validations, release-progress percentages, and the
+  next blocker.
 - Store large generated evidence under `artifacts/` and reference paths.
 - Use targeted `rg`, `Select-String`, or JSON projections instead of dumping whole files.
+- Avoid subagents for routine implementation; use them for independent research, implementation, or
+  detractor review only when the summarized result should cost less context than doing it serially.
 - Keep README edits concise; put matrices, runbooks, and decision logs under `docs/`.
 
 ## Category Runner
