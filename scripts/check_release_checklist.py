@@ -38,6 +38,7 @@ REQUIRED_COMMANDS = {
     "release-status",
     "route-triage",
     "smoke-local",
+    "stage-recordings",
 }
 REQUIRED_PATTERNS = {
     "listener-ear WAV list": re.compile(
@@ -52,6 +53,12 @@ REQUIRED_PATTERNS = {
         r"LANGUAGE_HEADPHONE_DEVICE_LABEL.*"
         r"LANGUAGE_ISOLATION_FIXTURE_LABEL.*"
         r"LANGUAGE_MEASUREMENT_MICROPHONE_LABEL",
+        re.DOTALL,
+    ),
+    "staged recorder exports": re.compile(
+        r"recorder exports have different filenames.*"
+        r"LANGUAGE_\*_RECORDING.*"
+        r"python scripts/run_test_category\.py stage-recordings",
         re.DOTALL,
     ),
     "fresh route-probe warning": re.compile(

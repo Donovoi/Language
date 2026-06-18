@@ -427,7 +427,16 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
             "   - `source-isolated-ear-recording.wav`: same source speaker route and volume, headphone/earpiece sealed over the recorder mic.",
             "   - `translated-headphone-recording.wav`: headphone/earpiece remains sealed and plays the translated reference.",
             "",
-            "5. Put the WAVs in the raw dropbox, then rerun:",
+            "5. Put the WAVs in the raw dropbox, or stage differently named recorder exports:",
+            "",
+            "   ```powershell",
+            "   $env:LANGUAGE_SOURCE_OPEN_EAR_RECORDING = \"C:\\Path\\source-open.wav\"",
+            "   $env:LANGUAGE_SOURCE_ISOLATED_EAR_RECORDING = \"C:\\Path\\source-isolated.wav\"",
+            "   $env:LANGUAGE_TRANSLATED_HEADPHONE_RECORDING = \"C:\\Path\\translated-headphone.wav\"",
+            "   python scripts/run_test_category.py stage-recordings",
+            "   ```",
+            "",
+            "   Then rerun:",
             "",
             "   ```powershell",
             "   python scripts/run_test_category.py release-evidence",
@@ -536,6 +545,7 @@ def _compact_next_actions(report: dict[str, Any]) -> list[str]:
     if dropbox_path and missing:
         missing_text = ", ".join(_recording_display_name(item) for item in missing)
         actions.append(f"Record/export missing WAVs into {_repo_relative(dropbox_path)}: {missing_text}")
+        actions.append("If recorder exports have different filenames, set the three LANGUAGE_*_RECORDING paths and run: python scripts/run_test_category.py stage-recordings")
         actions.append("Rerun: python scripts/run_test_category.py release-evidence")
         actions.append("When WAVs are ready and labels are set, run: python scripts/run_test_category.py release-evidence-score")
     else:
@@ -780,6 +790,7 @@ def self_test() -> int:
         "$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = \"12\"",
         "$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = \"10\"",
         "python scripts/run_test_category.py release-evidence",
+        "python scripts/run_test_category.py stage-recordings",
         "python scripts/run_test_category.py release-evidence-score",
         "--full-commands",
         "Host audio preflight:",
@@ -853,6 +864,10 @@ def self_test() -> int:
         "python scripts/run_test_category.py reference-playback-dry-run",
         "python scripts/run_test_category.py recording-session-dry-run",
         "python scripts/run_test_category.py reference-playback",
+        "$env:LANGUAGE_SOURCE_OPEN_EAR_RECORDING = \"C:\\Path\\source-open.wav\"",
+        "$env:LANGUAGE_SOURCE_ISOLATED_EAR_RECORDING = \"C:\\Path\\source-isolated.wav\"",
+        "$env:LANGUAGE_TRANSLATED_HEADPHONE_RECORDING = \"C:\\Path\\translated-headphone.wav\"",
+        "python scripts/run_test_category.py stage-recordings",
         "headphone=Headphones (index=10, Windows WDM-KS)",
         "Output 1 (SoundWire Speaker)",
         "python scripts/run_test_category.py release-evidence-score",
