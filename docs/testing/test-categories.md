@@ -44,6 +44,7 @@ Use `--dry-run` to inspect the command plan. By default, full output goes to
 | `guided-capture` | Strict host-guided listener-ear capture and scoring through PortAudio. | Requires explicit `LANGUAGE_*` device IDs, concrete labels, and a physically confirmed selected-route preflight report. |
 | `physical-audio-handoff` | Refresh host device listings and route triage, prepare/check the manual kit, and write the physical-audio checklist. | Audio playback/recording, scoring, or release proof. |
 | `evidence-kit` | Manual listener-ear recording kit, readiness check, and raw WAV dropbox. | Audio playback/recording. Put the three exported WAVs in the dropbox, then rerun. |
+| `stage-recordings` | Validate/copy external recorder WAV exports into the raw listener-ear dropbox. | Playback, recording, scoring, or release proof. Requires three explicit source file env vars. |
 | `recording-status` | Readiness check for the three manual listener-ear WAVs. | Playback, recording, scoring, or release proof. |
 | `reference-playback-dry-run` | Validate the manual reference playback plan without playing audio. | Requires explicit source/headphone output IDs. |
 | `recording-session-dry-run` | Prepare the listener-ear kit, validate playback routing without audio, and print release status. | Requires explicit source/headphone output IDs; does not play or record audio. |
@@ -108,6 +109,8 @@ host play/record audio. It fails before touching devices unless the required `LA
 label environment variables are set.
 Use `release-evidence` when you want the listener-ear kit prepared, current WAV dropbox imported if
 complete, readiness checked, and the compact status printed in one pass.
+Use `stage-recordings` when the three recorder WAV exports have different filenames and need to be
+validated/copied into the exact raw dropbox names before `release-evidence`.
 Use `release-evidence-score` after the WAVs are present and these environment variables hold concrete
 labels: `LANGUAGE_HEADPHONE_DEVICE_LABEL`, `LANGUAGE_ISOLATION_FIXTURE_LABEL`, and
 `LANGUAGE_MEASUREMENT_MICROPHONE_LABEL`.
