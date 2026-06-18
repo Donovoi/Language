@@ -19,11 +19,17 @@ cannot run in the current environment, say exactly which target failed and why.
 
 Keep agent runs token-light by default.
 
+- Treat user concern about token usage as Codex/OpenAI conversation-token pressure unless the task
+  explicitly names product runtime/API tokens.
 - Prefer `python scripts/run_test_category.py <category>` for long validation; the runner writes full
   logs to `artifacts/test-categories/` by default.
 - Use `--dry-run` before unfamiliar categories and `--continue-on-failure` for broad sweeps.
 - Reference full logs and JSON reports by path under `artifacts/` instead of pasting them into chat.
 - Use targeted searches, JSON projections, and bounded tails instead of dumping whole files.
+- Keep progress updates and push summaries bounded to status, changed files, validation, progress
+  percentages, and the next blocker.
+- Use subagents only for independent research, implementation, or detractor review that saves enough
+  wall time to justify the extra summarized context.
 - Keep the README concise; move command matrices and lab runbooks into `docs/`.
 - Treat Headroom or similar compression tools as optional infrastructure until they are pinned and
   evaluated in a disposable environment.

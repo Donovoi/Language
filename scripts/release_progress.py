@@ -105,6 +105,9 @@ def _token_discipline_status() -> tuple[int, str]:
             "Codex/OpenAI conversation tokens used while developing the product.",
             "Product API tokens used later by Language itself.",
             "Treat the first one as the default concern in agent handoffs.",
+            "assume",
+            "conversation-token pressure first",
+            "Keep push summaries bounded to changed files, validations, release-progress",
             "Use it, if adopted, as development-agent context compression",
             "Until that eval exists, the supported repo-level token control is the category runner",
         ),
@@ -113,8 +116,10 @@ def _token_discipline_status() -> tuple[int, str]:
         "AGENTS.md",
         (
             "Keep agent runs token-light by default.",
+            "Treat user concern about token usage as Codex/OpenAI conversation-token pressure",
             "logs to `artifacts/test-categories/` by default.",
             "Reference full logs and JSON reports by path under `artifacts/`",
+            "Keep progress updates and push summaries bounded",
             "Treat Headroom or similar compression tools as optional infrastructure",
         ),
     )

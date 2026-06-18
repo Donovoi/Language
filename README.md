@@ -254,6 +254,8 @@ python3 scripts/run_test_category.py all --continue-on-failure
 The runner stores full logs under `artifacts/test-categories/` and prints only summaries plus bounded
 failure tails. Optional context-compression tools such as Headroom can be evaluated later, but they
 should sit outside the release evidence path unless explicitly adopted and pinned.
+When a development thread is close to the token limit, use `release-status` and `release-progress`
+for compact handoff instead of pasting full reports or logs.
 
 See `docs/development/token-budget.md`.
 
