@@ -84,6 +84,15 @@ def _manual_evidence_lines(report: dict[str, Any]) -> list[str]:
         next_step = str(manual.get("next_step", "")).strip()
         if next_step:
             lines.append(f"Manual next step: {next_step}")
+        requirements = _as_dict(manual.get("recording_requirements"))
+        requirement_parts = [
+            str(requirements.get("format", "")).strip(),
+            f"{requirements.get('sample_rate_hz')} Hz" if requirements.get("sample_rate_hz") else "",
+            f">= {requirements.get('min_duration_s')}s" if requirements.get("min_duration_s") else "",
+        ]
+        requirement_text = ", ".join(part for part in requirement_parts if part)
+        if requirement_text:
+            lines.append(f"Required WAV shape: {requirement_text}")
     if collection:
         path = str(collection.get("manifest_path", "")).strip()
         if path:
@@ -684,6 +693,11 @@ def self_test() -> int:
             "headphone_manual_status": {
                 "status": "NOT-READY",
                 "next_step": "Capture WAVs.",
+                "recording_requirements": {
+                    "format": "mono 16-bit PCM WAV",
+                    "min_duration_s": 1.85,
+                    "sample_rate_hz": 48000,
+                },
             },
             "headphone_preflight_status": {
                 "status": "NEEDS-PHYSICAL-INPUT-CONFIRMATION",
@@ -755,6 +769,7 @@ def self_test() -> int:
         "Release gates: 1/2 passed",
         "playback_source_suppression_evidence",
         "Missing recordings: source-open-ear-recording.wav",
+        "Required WAV shape: mono 16-bit PCM WAV, 48000 Hz, >= 1.85s",
         "Next actions:",
         "Playback helper for an external listener-ear recorder (not release proof):",
         "Start the external listener-ear recorder first and keep mic/source/headphone placement fixed before running `reference-playback`.",
