@@ -42,6 +42,9 @@ PLACEHOLDER_REQUIRED_ENV_VALUES = {
     "LANGUAGE_MEASUREMENT_MICROPHONE_LABEL",
     "LANGUAGE_MEASUREMENT_INPUT_DEVICE",
     "LANGUAGE_SOURCE_OUTPUT_DEVICE",
+    "LANGUAGE_SOURCE_ISOLATED_EAR_RECORDING",
+    "LANGUAGE_SOURCE_OPEN_EAR_RECORDING",
+    "LANGUAGE_TRANSLATED_HEADPHONE_RECORDING",
     "LISTENER_EAR_INPUT",
     "REPLACE_WITH_EARCUP_AND_MIC_POSITION",
     "REPLACE_WITH_HEADPHONE_MODEL",
@@ -138,6 +141,11 @@ STEPS: dict[str, Step] = {
         name="headphone-route-triage-handoff-self-test",
         description="headphone route-triage handoff contract self-test",
         local_args=("{python}", "scripts/headphone_route_triage_handoff.py", "--self-test"),
+    ),
+    "stage-listener-ear-recordings-self-test": Step(
+        name="stage-listener-ear-recordings-self-test",
+        description="listener-ear recorder export staging helper self-test",
+        local_args=("{python}", "scripts/stage_listener_ear_recordings.py", "--self-test"),
     ),
     "headphone-local-preflight": Step(
         name="headphone-local-preflight",
@@ -422,6 +430,26 @@ STEPS: dict[str, Step] = {
         target_args=("--score-warning-only",),
         make_env={"HEADPHONE_ISOLATION_CHECK_MANUAL_ARGS": "--score-warning-only"},
     ),
+    "stage-listener-ear-recordings": Step(
+        name="stage-listener-ear-recordings",
+        description="validate and copy recorder WAV exports into the raw listener-ear dropbox",
+        local_args=(
+            "{python}",
+            "scripts/stage_listener_ear_recordings.py",
+            "--source-open-ear-recording",
+            "{env:LANGUAGE_SOURCE_OPEN_EAR_RECORDING:LANGUAGE_SOURCE_OPEN_EAR_RECORDING}",
+            "--source-isolated-ear-recording",
+            "{env:LANGUAGE_SOURCE_ISOLATED_EAR_RECORDING:LANGUAGE_SOURCE_ISOLATED_EAR_RECORDING}",
+            "--translated-headphone-recording",
+            "{env:LANGUAGE_TRANSLATED_HEADPHONE_RECORDING:LANGUAGE_TRANSLATED_HEADPHONE_RECORDING}",
+            "--allow-downmix",
+        ),
+        required_env=(
+            "LANGUAGE_SOURCE_OPEN_EAR_RECORDING",
+            "LANGUAGE_SOURCE_ISOLATED_EAR_RECORDING",
+            "LANGUAGE_TRANSLATED_HEADPHONE_RECORDING",
+        ),
+    ),
     "headphone-isolation-playback-plan": Step(
         name="headphone-isolation-playback-plan",
         description="dry-run the three-take manual reference playback plan without playing audio",
@@ -525,6 +553,7 @@ CATEGORIES: dict[str, Category] = {
             "gateway-auth-smoke-self-test",
             "audio-contract-runner-self-test",
             "headphone-route-triage-handoff-self-test",
+            "stage-listener-ear-recordings-self-test",
             "live-microphone-capture-contract",
             "headphone-isolation-contract",
             "real-room-playback-contract",
@@ -542,6 +571,7 @@ CATEGORIES: dict[str, Category] = {
             "gateway-auth-smoke-self-test",
             "audio-contract-runner-self-test",
             "headphone-route-triage-handoff-self-test",
+            "stage-listener-ear-recordings-self-test",
             "live-microphone-capture-contract",
             "headphone-isolation-contract",
             "real-room-playback-contract",
@@ -696,6 +726,20 @@ CATEGORIES: dict[str, Category] = {
             "Required WAV map: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/raw-listener-ear-recordings/listener-ear-recording-dropbox.md",
         ),
         manual_status_report="artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.json",
+    ),
+    "stage-recordings": Category(
+        name="stage-recordings",
+        description="Validate/copy external recorder WAV exports into the raw listener-ear dropbox.",
+        steps=("stage-listener-ear-recordings",),
+        notes=(
+            "Requires LANGUAGE_SOURCE_OPEN_EAR_RECORDING, LANGUAGE_SOURCE_ISOLATED_EAR_RECORDING, and LANGUAGE_TRANSLATED_HEADPHONE_RECORDING.",
+            "Does not record audio, score evidence, or mark release proof.",
+            "Accepts mono 16-bit PCM WAV at the kit sample rate; --allow-downmix is used for stereo WAV exports.",
+        ),
+        success_hints=(
+            "Next: python scripts/run_test_category.py release-evidence",
+            "Then set concrete labels and run python scripts/run_test_category.py release-evidence-score",
+        ),
     ),
     "reference-playback-dry-run": Category(
         name="reference-playback-dry-run",
@@ -1181,6 +1225,7 @@ def self_test() -> int:
         "reference-playback",
         "release",
         "optional-models",
+        "stage-recordings",
         "voice-candidates",
     ):
         if excluded in CATEGORIES["all"].includes:
@@ -1269,13 +1314,27 @@ def self_test() -> int:
         "LANGUAGE_ISOLATION_FIXTURE_LABEL",
         "LANGUAGE_MEASUREMENT_MICROPHONE_LABEL",
     )
+    stage_required_env = (
+        "LANGUAGE_SOURCE_OPEN_EAR_RECORDING",
+        "LANGUAGE_SOURCE_ISOLATED_EAR_RECORDING",
+        "LANGUAGE_TRANSLATED_HEADPHONE_RECORDING",
+    )
     if STEPS["headphone-isolation-collect-and-score-evidence"].required_env != score_required_env:
         raise AssertionError("release-evidence-score must require concrete hardware labels")
+    if STEPS["stage-listener-ear-recordings"].required_env != stage_required_env:
+        raise AssertionError("stage-recordings must require three explicit recorder export paths")
     score_command, _ = command_for_step(STEPS["headphone-isolation-collect-and-score-evidence"], "powershell")
     rendered_score_command = " ".join(score_command)
     for placeholder in score_required_env:
         if placeholder not in rendered_score_command:
             raise AssertionError(f"release-evidence-score dry-run command must show {placeholder}")
+    stage_command, _ = command_for_step(STEPS["stage-listener-ear-recordings"], "powershell")
+    rendered_stage_command = " ".join(stage_command)
+    for placeholder in stage_required_env:
+        if placeholder not in rendered_stage_command:
+            raise AssertionError(f"stage-recordings dry-run command must show {placeholder}")
+    if "--allow-downmix" not in rendered_stage_command:
+        raise AssertionError("stage-recordings should downmix stereo recorder WAV exports")
     for playback_step in (
         STEPS["headphone-isolation-playback-plan"],
         STEPS["headphone-isolation-playback-session"],
