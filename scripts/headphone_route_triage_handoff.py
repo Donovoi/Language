@@ -42,6 +42,14 @@ def _preflight_benchmark(report: dict[str, Any]) -> dict[str, Any]:
     return _as_dict(benchmarks.get("headphone_earpiece_preflight"))
 
 
+def _recommended_commands(report: dict[str, Any]) -> dict[str, Any]:
+    return _as_dict(_preflight_benchmark(report).get("recommended_commands"))
+
+
+def _without_python_override(command: str) -> str:
+    return command.replace(" -Python $env:LANGUAGE_PYTHON", "")
+
+
 def _first_candidate(report: dict[str, Any]) -> dict[str, Any]:
     benchmark = _preflight_benchmark(report)
     for candidate in _as_list(benchmark.get("candidate_route_triples")):
@@ -54,13 +62,9 @@ def build_route_probe_command(report: dict[str, Any]) -> str:
     summary = _as_dict(report.get("summary"))
     candidate = _first_candidate(report)
     if not candidate:
-        command = str(
-            _as_dict(_preflight_benchmark(report).get("recommended_commands")).get(
-                "route_probe_triage_only", ""
-            )
-        ).strip()
+        command = str(_recommended_commands(report).get("route_probe_triage_only", "")).strip()
         if command:
-            return command.replace(" -Python $env:LANGUAGE_PYTHON", "")
+            return _without_python_override(command)
         raise ValueError("preflight report does not include a route triage candidate")
 
     sample_rate_hz = int(summary.get("sample_rate_hz", 48000) or 48000)
@@ -78,6 +82,61 @@ def build_route_probe_command(report: dict[str, Any]) -> str:
         "--playback-gain-db -18 "
         "--score-warning-only"
     )
+
+
+def build_physical_confirmation_command(report: dict[str, Any]) -> str:
+    command = str(_recommended_commands(report).get("confirm_physical_input_preflight", "")).strip()
+    if command:
+        return _without_python_override(command)
+
+    summary = _as_dict(report.get("summary"))
+    candidate = _first_candidate(report)
+    if not candidate:
+        return ""
+    sample_rate_hz = int(summary.get("sample_rate_hz", 48000) or 48000)
+    input_channels = int(summary.get("input_channels", 1) or 1)
+    output_channels = int(summary.get("output_channels", 2) or 2)
+    route = (
+        f"{int(candidate['input_device'])}:"
+        f"{int(candidate['source_output_device'])}:"
+        f"{int(candidate['headphone_output_device'])}"
+    )
+    return (
+        "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 "
+        "-Action preflight "
+        f"--sample-rate-hz {sample_rate_hz} "
+        f"--input-channels {input_channels} "
+        f"--output-channels {output_channels} "
+        f"--selected-route {route} "
+        "--confirm-physical-listener-ear-input"
+    )
+
+
+def physical_capture_handoff(report: dict[str, Any], candidate: dict[str, Any]) -> list[str]:
+    summary = _as_dict(report.get("summary"))
+    if summary.get("recommended_path") != "guided_capture_possible_after_physical_input_confirmation":
+        return []
+    command = build_physical_confirmation_command(report)
+    if not command or not candidate:
+        return []
+    input_device = str(candidate.get("input_device", "")).strip()
+    source_device = str(candidate.get("source_output_device", "")).strip()
+    headphone_device = str(candidate.get("headphone_output_device", "")).strip()
+    if not input_device.isdigit() or not source_device.isdigit() or not headphone_device.isdigit():
+        return []
+    return [
+        "",
+        "Physical listener-ear confirmation (only after the mic is at the earcup/listener-ear point):",
+        command,
+        "",
+        "Guided capture env for this confirmed route:",
+        f'$env:LANGUAGE_MEASUREMENT_INPUT_DEVICE = "{input_device}"',
+        f'$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = "{source_device}"',
+        f'$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = "{headphone_device}"',
+        "Set concrete LANGUAGE_HEADPHONE_DEVICE_LABEL, LANGUAGE_ISOLATION_FIXTURE_LABEL, and LANGUAGE_MEASUREMENT_MICROPHONE_LABEL.",
+        "python scripts/run_test_category.py guided-capture --dry-run",
+        "python scripts/run_test_category.py guided-capture",
+    ]
 
 
 def reference_playback_handoff(candidate: dict[str, Any]) -> list[str]:
@@ -129,6 +188,7 @@ def render_handoff(report: dict[str, Any], report_path: Path) -> str:
             command,
         ]
     )
+    lines.extend(physical_capture_handoff(report, candidate))
     lines.extend(reference_playback_handoff(candidate))
     return "\n".join(lines)
 
@@ -138,15 +198,23 @@ def self_test() -> int:
         "release_proof": False,
         "summary": {
             "candidate_route_triple_count": 1,
-            "capture_ready_route_triple_count": 0,
+            "capture_ready_route_triple_count": 1,
             "input_channels": 1,
             "likely_external_input_count": 0,
             "output_channels": 2,
-            "recommended_path": "route_probe_triage_only_manual_listener_ear_capture_required",
+            "recommended_path": "guided_capture_possible_after_physical_input_confirmation",
             "sample_rate_hz": 48000,
         },
         "benchmarks": {
             "headphone_earpiece_preflight": {
+                "recommended_commands": {
+                    "confirm_physical_input_preflight": (
+                        "pwsh -NoProfile -File scripts/headphone_isolation_local.ps1 "
+                        "-Action preflight -Python $env:LANGUAGE_PYTHON --sample-rate-hz 48000 "
+                        "--input-channels 1 --output-channels 2 --selected-route 7:8:9 "
+                        "--confirm-physical-listener-ear-input"
+                    )
+                },
                 "candidate_route_triples": [
                     {
                         "headphone_name": "Headphones ()",
@@ -171,6 +239,12 @@ def self_test() -> int:
         "--score-warning-only",
         "route triage only",
         "short -18 dB test signal",
+        "Physical listener-ear confirmation",
+        "--selected-route 7:8:9",
+        "--confirm-physical-listener-ear-input",
+        "$env:LANGUAGE_MEASUREMENT_INPUT_DEVICE = \"7\"",
+        "Set concrete LANGUAGE_HEADPHONE_DEVICE_LABEL",
+        "python scripts/run_test_category.py guided-capture --dry-run",
         "$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = \"8\"",
         "$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = \"9\"",
         "python scripts/run_test_category.py recording-session-dry-run",
