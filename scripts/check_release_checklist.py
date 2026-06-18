@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKLIST = ROOT / "docs/development/release-checklist.md"
+DISPOSABLE_ENV_DOC = ROOT / "docs/development/disposable-test-environments.md"
 RUNNER = ROOT / "scripts/run_test_category.py"
 CATEGORY_COMMAND_RE = re.compile(
     r"`python(?:3)?\s+scripts/run_test_category\.py\s+([A-Za-z0-9_-]+)(?:\s+[^`]*)?`"
@@ -69,6 +70,13 @@ REQUIRED_PATTERNS = {
 DISALLOWED_TEXT = (
     "make live-microphone-capture-check",
 )
+DISALLOWED_DOC_TEXT = {
+    DISPOSABLE_ENV_DOC: (
+        "placeholder REPLACE_WITH_HEADPHONE_MODEL",
+        "placeholder REPLACE_WITH_EARCUP_AND_MIC_POSITION",
+        "placeholder REPLACE_WITH_MIC_MODEL_AND_POSITION",
+    ),
+}
 
 
 def load_runner_categories() -> set[str]:
@@ -138,6 +146,11 @@ def validate() -> None:
     for disallowed in DISALLOWED_TEXT:
         if disallowed in text:
             raise AssertionError(f"release checklist still contains stale command: {disallowed}")
+    for path, disallowed_items in DISALLOWED_DOC_TEXT.items():
+        doc_text = path.read_text(encoding="utf-8")
+        for disallowed in disallowed_items:
+            if disallowed in doc_text:
+                raise AssertionError(f"{path.relative_to(ROOT)} still contains invalid placeholder label: {disallowed}")
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
