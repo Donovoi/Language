@@ -724,6 +724,7 @@ CATEGORIES: dict[str, Category] = {
         success_hints=(
             "Status handoff: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.md",
             "Required WAV map: artifacts/audio_eval/runs/headphone-earpiece-manual-kit/raw-listener-ear-recordings/listener-ear-recording-dropbox.md",
+            "Recorder export staging: python scripts/run_test_category.py stage-recordings",
         ),
         manual_status_report="artifacts/audio_eval/runs/headphone-earpiece-manual-kit/manual-recording-status.json",
     ),
@@ -1067,7 +1068,10 @@ def manual_status_summary_lines(report_path: str) -> list[str]:
             "LANGUAGE_ISOLATION_FIXTURE_LABEL, LANGUAGE_MEASUREMENT_MICROPHONE_LABEL"
         )
     if status == "NOT-READY":
-        lines.append("Next: add missing WAVs, then run python scripts/run_test_category.py release-evidence")
+        lines.append(
+            "Next: add missing WAVs or run python scripts/run_test_category.py stage-recordings, "
+            "then run python scripts/run_test_category.py release-evidence"
+        )
     elif status == "FILES-READY-LABELS-PENDING":
         lines.append("Next: set concrete labels, then run python scripts/run_test_category.py release-evidence-score")
     else:
@@ -1251,6 +1255,8 @@ def self_test() -> int:
         raise AssertionError("physical-audio-handoff must include the route probe handoff in quiet mode")
     if not CATEGORIES["recording-status"].success_hints:
         raise AssertionError("recording-status must print where the manual status handoff was written")
+    if "stage-recordings" not in "\n".join(CATEGORIES["recording-status"].success_hints):
+        raise AssertionError("recording-status must point differently named recorder exports at stage-recordings")
     if not CATEGORIES["recording-status"].manual_status_report:
         raise AssertionError("recording-status must print a concise manual recording summary")
     recording_status_report = ROOT / CATEGORIES["recording-status"].manual_status_report
