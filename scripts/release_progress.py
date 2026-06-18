@@ -295,6 +295,15 @@ def _audio_percent(report: dict[str, Any]) -> tuple[int, str]:
         return 100, "audio release gate passed"
 
     handoff = _as_dict(report.get("operator_handoff"))
+    manual = _as_dict(handoff.get("headphone_manual_status"))
+    manual_summary = _as_dict(manual.get("summary"))
+    placeholder_label_count = int(manual_summary.get("placeholder_label_count", 0) or 0)
+    label_gap = (
+        "labels still needed: LANGUAGE_HEADPHONE_DEVICE_LABEL, "
+        "LANGUAGE_ISOLATION_FIXTURE_LABEL, LANGUAGE_MEASUREMENT_MICROPHONE_LABEL"
+        if placeholder_label_count
+        else ""
+    )
     collection = _as_dict(handoff.get("headphone_collection_plan_status"))
     dropbox = _as_dict(collection.get("raw_recording_dropbox"))
     state = _as_dict(dropbox.get("state"))
@@ -307,7 +316,12 @@ def _audio_percent(report: dict[str, Any]) -> tuple[int, str]:
         if dropbox_path and not dropbox_candidate.is_absolute():
             dropbox_candidate = ROOT / dropbox_candidate
         path_text = f" in {_repo_relative(dropbox_candidate)}" if dropbox_path else ""
-        return 90, f"{gate_count - failure_count}/{gate_count} gates; missing WAVs{path_text}: {missing_text}"
+        evidence = f"{gate_count - failure_count}/{gate_count} gates; missing WAVs{path_text}: {missing_text}"
+        if label_gap:
+            evidence = f"{evidence}; {label_gap}"
+        return 90, evidence
+    if label_gap and score_category_ready:
+        return 90, f"{gate_count - failure_count}/{gate_count} gates; {label_gap}"
     if failure_count:
         return 85, f"{gate_count - failure_count}/{gate_count} gates; release blocker remains"
     return 80, "audio gate evidence is incomplete"
@@ -448,6 +462,11 @@ def self_test() -> int:
             "release_blocking_failure_count": 1,
         },
         "operator_handoff": {
+            "headphone_manual_status": {
+                "summary": {
+                    "placeholder_label_count": 3,
+                },
+            },
             "headphone_collection_plan_status": {
                 "raw_recording_dropbox": {
                     "path": "artifacts/audio_eval/runs/manual/raw-listener-ear-recordings",
@@ -468,6 +487,9 @@ def self_test() -> int:
         "Playback/source suppression evidence",
         "source-open-ear-recording.wav",
         "artifacts\\audio_eval\\runs\\manual\\raw-listener-ear-recordings",
+        "LANGUAGE_HEADPHONE_DEVICE_LABEL",
+        "LANGUAGE_ISOLATION_FIXTURE_LABEL",
+        "LANGUAGE_MEASUREMENT_MICROPHONE_LABEL",
         "conversation-token guide, agent handoff rules, and quiet runner wiring are present",
         "Total release goal:",
         "release gate remains authoritative",
