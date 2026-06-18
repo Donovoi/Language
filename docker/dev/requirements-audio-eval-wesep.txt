@@ -8,4 +8,4 @@ kaldiio==2.18.0
 PyYAML==6.0.2
 requests==2.32.5
 silero-vad==5.1.2
-tqdm==4.64.0
+tqdm==4.66.3
