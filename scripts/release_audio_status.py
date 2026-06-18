@@ -365,6 +365,7 @@ def render_operator_checklist(report: dict[str, Any]) -> str:
             lines.extend(
                 [
                     "- Playback helper for an external listener-ear recorder (not release proof):",
+                    "- Start the external listener-ear recorder first and keep mic/source/headphone placement fixed before running `reference-playback`.",
                     "",
                     "  ```powershell",
                     *[f"  {line}" for line in preflight_playback_env_lines],
@@ -541,6 +542,7 @@ def _playback_helper_status_lines(report: dict[str, Any]) -> list[str]:
         return []
     return [
         "Playback helper for an external listener-ear recorder (not release proof):",
+        "Start the external listener-ear recorder first and keep mic/source/headphone placement fixed before running `reference-playback`.",
         "```powershell",
         *commands,
         "```",
@@ -755,6 +757,7 @@ def self_test() -> int:
         "Missing recordings: source-open-ear-recording.wav",
         "Next actions:",
         "Playback helper for an external listener-ear recorder (not release proof):",
+        "Start the external listener-ear recorder first and keep mic/source/headphone placement fixed before running `reference-playback`.",
         "Evidence scoring label helper (replace placeholders before running):",
         "$env:LANGUAGE_HEADPHONE_DEVICE_LABEL = \"REPLACE_WITH_HEADPHONE_MODEL\"",
         "$env:LANGUAGE_ISOLATION_FIXTURE_LABEL = \"REPLACE_WITH_EARCUP_AND_MIC_POSITION\"",
@@ -831,6 +834,7 @@ def self_test() -> int:
         "Fresh preflight candidate:",
         "$env:LANGUAGE_SOURCE_OUTPUT_DEVICE = \"12\"",
         "$env:LANGUAGE_HEADPHONE_OUTPUT_DEVICE = \"10\"",
+        "Start the external listener-ear recorder first and keep mic/source/headphone placement fixed before running `reference-playback`.",
         "python scripts/run_test_category.py reference-playback-dry-run",
         "python scripts/run_test_category.py recording-session-dry-run",
         "python scripts/run_test_category.py reference-playback",
