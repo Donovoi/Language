@@ -1,7 +1,7 @@
 # Optional heavy dependencies for WeSep enrollment-conditioned TSE experiments.
 # Do not install this in the base audio-eval image.
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.11.0+cpu
+torch==2.12.1+cpu
 torchaudio==2.11.0+cpu
 torchcodec==0.11.0+cpu
 kaldiio==2.18.0
