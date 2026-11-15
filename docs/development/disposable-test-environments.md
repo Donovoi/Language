@@ -77,6 +77,40 @@ are under `artifacts/android-smoke/`. The smoke covers mode changes, lock/unlock
 triggered streamed captions, and reset; failure to reach the gateway fails rather than accepting
 the fallback UI. None of these results replace listener-ear recordings or other audio evidence.
 
+## Android microphone and playback check
+
+The Android console's microphone button opens a separate local check. Enable permission, tap
+**Record 3 seconds**, then **Play clip**. Recording never starts on permission grant alone.
+The clip stays in memory, is never sent to the gateway, and is discarded when leaving the
+screen or switching apps. Playback respects the current media volume and output route.
+
+The VM smoke also runs `microphone_smoke_test.dart`: permission denial, native capture/playback,
+invalid durations, concurrent capture rejection, repeated cancellation, clearing and native
+Activity background cancellation. Its virtual input may contain only zeroes; that is contract
+coverage, not physical audio evidence.
+
+For a connected, unlocked phone in the foreground:
+
+```bash
+make android-audio-smoke ANDROID_DEVICE=<adb-serial> FLUTTER="$(command -v flutter)" GATEWAY_PYTHON="$(command -v python)"
+# Or invoke scripts/smoke_android_audio.py with --device, --adb and --flutter.
+```
+
+This explicitly records three seconds of room sound and replays the clip. The runner temporarily
+revokes/grants microphone permission, backgrounds the app to exercise native cancellation, stops
+the test app, and restores its previous permission state. It installs an integration-test APK;
+reinstall a normal `flutter build apk --debug` APK afterwards for interactive use. No audio
+files are retained. Aggregate metrics and full test logs are under `artifacts/android-audio-smoke/`.
+Physical mode rejects emulators and requires an active input route, non-silenced signal, and
+output frame progress. Use `--virtual` only for emulator contract checks.
+
+Room noise is an uncontrolled stimulus. Passing signal and playback-frame checks does not prove
+speech intelligibility, acoustic output fidelity, translation or original-voice suppression.
+For quality evaluation, play an identifiable external phrase/tone, compare the captured waveform,
+and independently listen to the output. These smoke reports always set release evidence false.
+See decision record `docs/research/decisions/0005-android-microphone-check.md` for the research
+and detractor rationale. No new runtime packages are required beyond the Android VM toolchain.
+
 ## Audio Eval Docker Profile
 
 The audio evaluation environment is intentionally separate from the core image. It carries Python

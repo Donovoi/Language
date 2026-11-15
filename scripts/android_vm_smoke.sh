@@ -52,6 +52,7 @@ for ((attempt=0; attempt<180; attempt++)); do
     if [[ "$("$ADB" -s "$DEVICE" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == 1 ]]; then
         "$ADB" -s "$DEVICE" shell input keyevent 82
         "$PYTHON" "$ROOT/scripts/smoke_android.py" --device "$DEVICE" --adb "$ADB"
+        "$PYTHON" "$ROOT/scripts/smoke_android_audio.py" --device "$DEVICE" --adb "$ADB" --virtual
         exit $?
     fi
     sleep 2
