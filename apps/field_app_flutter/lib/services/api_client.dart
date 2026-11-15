@@ -23,8 +23,8 @@ abstract class SessionApi {
 
 class ApiClient implements SessionApi {
   ApiClient({String? baseUrl, String? authToken})
-      : _baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultBaseUrl()),
-        _authToken = _normalizeAuthToken(authToken ?? _configuredAuthToken);
+    : _baseUrl = _normalizeBaseUrl(baseUrl ?? _defaultBaseUrl()),
+      _authToken = _normalizeAuthToken(authToken ?? _configuredAuthToken);
 
   final String _baseUrl;
   final String? _authToken;
@@ -43,9 +43,8 @@ class ApiClient implements SessionApi {
       query['mode'] = mode.apiValue;
     }
     final response = await _readJson(
-      Uri.parse(
-        '$_baseUrl/v1/session',
-      ).replace(queryParameters: query.isEmpty ? null : query),
+      Uri.parse('$_baseUrl/v1/session')
+          .replace(queryParameters: query.isEmpty ? null : query),
     );
     return SessionStateModel.fromJson(response);
   }
@@ -53,9 +52,8 @@ class ApiClient implements SessionApi {
   @override
   Future<SessionStateModel> setSessionMode(SessionMode mode) async {
     final response = await _readJson(
-      Uri.parse('$_baseUrl/v1/session/mode').replace(
-        queryParameters: <String, String>{'mode': mode.apiValue},
-      ),
+      Uri.parse('$_baseUrl/v1/session/mode')
+          .replace(queryParameters: <String, String>{'mode': mode.apiValue}),
       method: 'PUT',
     );
     return SessionStateModel.fromJson(response);
@@ -64,16 +62,20 @@ class ApiClient implements SessionApi {
   @override
   Future<SessionStateModel> resetSession(SessionMode mode) async {
     final response = await _readJson(
-      Uri.parse('$_baseUrl/v1/session/reset').replace(
-        queryParameters: <String, String>{'mode': mode.apiValue},
-      ),
+      Uri.parse('$_baseUrl/v1/session/reset')
+          .replace(queryParameters: <String, String>{'mode': mode.apiValue}),
       method: 'POST',
     );
-    return SessionStateModel.fromJson(response['session'] as Map<String, dynamic>);
+    return SessionStateModel.fromJson(
+      response['session'] as Map<String, dynamic>,
+    );
   }
 
   @override
-  Future<SessionStateModel> setSpeakerLock(String speakerId, bool isLocked) async {
+  Future<SessionStateModel> setSpeakerLock(
+    String speakerId,
+    bool isLocked,
+  ) async {
     final encodedSpeakerId = Uri.encodeComponent(speakerId);
     final response = await _readJson(
       Uri.parse('$_baseUrl/v1/speakers/$encodedSpeakerId/lock'),
@@ -85,11 +87,12 @@ class ApiClient implements SessionApi {
   @override
   Future<SessionStateModel> fetchMockScene(SessionMode mode) async {
     final response = await _readJson(
-      Uri.parse('$_baseUrl/v1/mock/scene').replace(
-        queryParameters: <String, String>{'mode': mode.apiValue},
-      ),
+      Uri.parse('$_baseUrl/v1/mock/scene')
+          .replace(queryParameters: <String, String>{'mode': mode.apiValue}),
     );
-    return SessionStateModel.fromJson(response['session'] as Map<String, dynamic>);
+    return SessionStateModel.fromJson(
+      response['session'] as Map<String, dynamic>,
+    );
   }
 
   @override
@@ -117,16 +120,42 @@ class ApiClient implements SessionApi {
   }
 
   @override
-  Stream<SessionStreamEvent> watchSessionEvents({SessionMode? mode}) async* {
+  Stream<SessionStreamEvent> watchSessionEvents({SessionMode? mode}) {
+    final client = HttpClient();
+    StreamSubscription<SessionStreamEvent>? subscription;
+    late final StreamController<SessionStreamEvent> controller;
+    controller = StreamController<SessionStreamEvent>(
+      onListen: () {
+        subscription = _readSessionEvents(client, mode: mode).listen(
+          controller.add,
+          onError: controller.addError,
+          onDone: controller.close,
+        );
+      },
+      onPause: () => subscription?.pause(),
+      onResume: () => subscription?.resume(),
+      onCancel: () async {
+        // An async* generator waiting for the next SSE line cannot reach its
+        // finally block until the socket wakes. Close the transport first so
+        // mode changes, refresh, and disposal never wait on a quiet gateway.
+        client.close(force: true);
+        await subscription?.cancel();
+      },
+    );
+    return controller.stream;
+  }
+
+  Stream<SessionStreamEvent> _readSessionEvents(
+    HttpClient client, {
+    SessionMode? mode,
+  }) async* {
     final query = <String, String>{};
     if (mode != null) {
       query['mode'] = mode.apiValue;
     }
 
-    final client = HttpClient();
-    final uri = Uri.parse('$_baseUrl/v1/events/stream').replace(
-      queryParameters: query.isEmpty ? null : query,
-    );
+    final uri = Uri.parse('$_baseUrl/v1/events/stream')
+        .replace(queryParameters: query.isEmpty ? null : query);
 
     try {
       final request = await client.getUrl(uri);
@@ -139,9 +168,8 @@ class ApiClient implements SessionApi {
       }
 
       final buffer = StringBuffer();
-      await for (final line in response
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())) {
+      await for (final line
+          in response.transform(utf8.decoder).transform(const LineSplitter())) {
         if (line.isEmpty) {
           if (buffer.isNotEmpty) {
             yield SessionStreamEvent.fromJson(
@@ -181,7 +209,10 @@ class ApiClient implements SessionApi {
       final response = await request.close();
       final payload = await response.transform(utf8.decoder).join();
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HttpException('Request failed with status ${response.statusCode}', uri: uri);
+        throw HttpException(
+          'Request failed with status ${response.statusCode}',
+          uri: uri,
+        );
       }
       return jsonDecode(payload) as Map<String, dynamic>;
     } finally {

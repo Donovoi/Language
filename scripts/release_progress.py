@@ -486,7 +486,7 @@ def self_test() -> int:
         "Release progress estimate:",
         "Playback/source suppression evidence",
         "source-open-ear-recording.wav",
-        "artifacts\\audio_eval\\runs\\manual\\raw-listener-ear-recordings",
+        str(Path("artifacts/audio_eval/runs/manual/raw-listener-ear-recordings")),
         "LANGUAGE_HEADPHONE_DEVICE_LABEL",
         "LANGUAGE_ISOLATION_FIXTURE_LABEL",
         "LANGUAGE_MEASUREMENT_MICROPHONE_LABEL",

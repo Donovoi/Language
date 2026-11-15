@@ -17,6 +17,7 @@ jobs:
       - uses: actions/checkout@v6.0.2
       - uses: subosito/flutter-action@v2.23.0
         with:
+          flutter-version: '3.50.0'
           channel: stable
       - name: Generate platform runners
         run: cd apps/field_app_flutter && flutter create . --platforms=android,ios,macos,windows && rm -f test/widget_test.dart
@@ -26,3 +27,38 @@ jobs:
         run: cd apps/field_app_flutter && flutter analyze
       - name: Run Flutter tests
         run: cd apps/field_app_flutter && flutter test
+
+  android-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v6.0.2
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2.23.0
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+          cache: true
+      - name: Prepare gateway and Android SDK
+        run: |
+          python -m pip install -e 'services/gateway[dev]'
+          sudo chmod a+rw /dev/kvm
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platform-tools' 'emulator' 'platforms;android-36' 'build-tools;36.0.0'
+      - name: Run disposable Android VM smoke
+        run: bash scripts/android_vm_smoke.sh
+      - name: Verify release APK network permission
+        run: |
+          cd apps/field_app_flutter
+          flutter build apk --release --target-platform android-x64
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest permissions build/app/outputs/flutter-apk/app-release.apk | grep -Fx android.permission.INTERNET
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-smoke-logs
+          path: artifacts/android-smoke/

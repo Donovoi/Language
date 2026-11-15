@@ -12,6 +12,13 @@ Repository prep for the first internal beta release candidate based on the curre
 
 #### Added
 
+- Disposable Android VM smoke coverage for authenticated gateway access, mode changes, speaker locks,
+  streamed captions, and reset, with a compiled release APK internet-permission check in CI.
+- Live-update cancellation now closes the HTTP transport before waiting for the stream to stop,
+  preventing mode changes, refresh, and speaker locking from hanging on an idle gateway.
+- Flutter 3.50 / Dart 3.14 compatibility through standalone Material widgets and the Android
+  AGP 9.3.1 / Gradle 9.5.0 toolchain with built-in Kotlin. Android release builds now declare
+  internet access; local HTTP is enabled only in debug builds.
 - Internal beta smoke runbook in `docs/development/internal-beta-smoke-runbook.md` covering the current supported verification path: local gateway plus Android release app plus host-triggered live ingest.
 - Release manifest/checksum output in `.github/workflows/release.yml` so internal candidate runs can be tracked by artifact set, commit SHA, and workflow run.
 - Generated shared-contract bindings for the gateway and Flutter, plus the Rust `crates/session_proto` transport crate for the proto-backed session/speaker subset.
