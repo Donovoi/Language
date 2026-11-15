@@ -10,29 +10,36 @@ import 'package:integration_test/integration_test.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('gateway connection, controls, and streamed captions',
-      (tester) async {
+  testWidgets('gateway connection, controls, and streamed captions', (
+    tester,
+  ) async {
     const endpoint = String.fromEnvironment('FIELD_APP_API_BASE_URL');
-    expect(endpoint, isNotEmpty,
-        reason: 'Use the isolated Android smoke runner.');
+    expect(
+      endpoint,
+      isNotEmpty,
+      reason: 'Use the isolated Android smoke runner.',
+    );
     final api = ApiClient();
     final repository = MockRepository(api: api);
     addTearDown(repository.dispose);
 
     await api.resetSession(SessionMode.focus);
-    await tester
-        .pumpWidget(MaterialApp(home: SessionScreen(repository: repository)));
+    await tester.pumpWidget(
+      MaterialApp(home: SessionScreen(repository: repository)),
+    );
     await waitFor(
-        tester, () => !repository.isLoading && repository.isStreaming);
+      tester,
+      () => !repository.isLoading && repository.isStreaming,
+    );
     expect(repository.errorMessage, isNull);
     expect(find.text('Live updates connected'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(ChoiceChip, 'Crowd'));
     await waitFor(
-        tester,
-        () =>
-            !repository.isLoading &&
-            repository.session.mode == SessionMode.crowd);
+      tester,
+      () =>
+          !repository.isLoading && repository.session.mode == SessionMode.crowd,
+    );
     expect((await api.fetchSession()).mode, SessionMode.crowd);
     expect(find.text('Crowd mode'), findsOneWidget);
 
@@ -41,26 +48,28 @@ void main() {
     await tester.ensureVisible(lock);
     await tester.tap(lock);
     await waitFor(
-        tester,
-        () =>
-            !repository.isLoading &&
-            repository.session.speakers
-                .firstWhere((item) => item.speakerId == speaker.speakerId)
-                .isLocked);
+      tester,
+      () =>
+          !repository.isLoading &&
+          repository.session.speakers
+              .firstWhere((item) => item.speakerId == speaker.speakerId)
+              .isLocked,
+    );
     expect(
-        (await api.fetchSession())
-            .speakers
-            .firstWhere((item) => item.speakerId == speaker.speakerId)
-            .isLocked,
-        isTrue);
+      (await api.fetchSession()).speakers
+          .firstWhere((item) => item.speakerId == speaker.speakerId)
+          .isLocked,
+      isTrue,
+    );
     await tester.tap(find.byTooltip('Unlock speaker ${speaker.displayName}'));
     await waitFor(
-        tester,
-        () =>
-            !repository.isLoading &&
-            !repository.session.speakers
-                .firstWhere((item) => item.speakerId == speaker.speakerId)
-                .isLocked);
+      tester,
+      () =>
+          !repository.isLoading &&
+          !repository.session.speakers
+              .firstWhere((item) => item.speakerId == speaker.speakerId)
+              .isLocked,
+    );
 
     // Start from another client, so the console can only learn about new captions
     // over SSE. A local fallback or an optimistic "connected" badge cannot pass.
@@ -70,21 +79,41 @@ void main() {
     await api.startMockLiveIngest(mode: SessionMode.crowd, intervalMs: 200);
     try {
       await waitFor(
-          tester,
-          () => repository.session.speakers.any((item) =>
+        tester,
+        () => repository.session.speakers.any(
+          (item) =>
               item.translatedCaption != null &&
-              !captions.contains(item.translatedCaption)));
+              !captions.contains(item.translatedCaption),
+        ),
+      );
       expect(repository.errorMessage, isNull);
       expect(repository.isStreaming, isTrue);
     } finally {
       await api.stopMockLiveIngest();
     }
 
+    // Establish a changed state so a no-op Reset action cannot pass this test.
+    await api.setSpeakerLock(speaker.speakerId, true);
+    await waitFor(
+      tester,
+      () => repository.session.speakers
+          .firstWhere((item) => item.speakerId == speaker.speakerId)
+          .isLocked,
+    );
+    expect(
+      (await api.fetchSession()).speakers
+          .firstWhere((item) => item.speakerId == speaker.speakerId)
+          .isLocked,
+      isTrue,
+    );
+
     await tester.tap(find.byTooltip('Reset session'));
     await waitFor(tester, () => !repository.isLoading);
     expect(repository.errorMessage, isNull);
-    expect((await api.fetchSession()).speakers.every((item) => !item.isLocked),
-        isTrue);
+    expect(
+      (await api.fetchSession()).speakers.every((item) => !item.isLocked),
+      isTrue,
+    );
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
