@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The field console needs the gateway in release builds as well. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="field_app_flutter"
         android:name="${applicationName}"

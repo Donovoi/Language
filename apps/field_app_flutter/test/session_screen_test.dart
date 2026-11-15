@@ -5,7 +5,7 @@ import 'package:field_app_flutter/models/session_state.dart';
 import 'package:field_app_flutter/models/session_stream_event.dart';
 import 'package:field_app_flutter/models/speaker.dart';
 import 'package:field_app_flutter/services/mock_repository.dart';
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'test_support/fake_session_api.dart';

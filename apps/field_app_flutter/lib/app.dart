@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 import 'features/session/session_screen.dart';
 import 'services/mock_repository.dart';

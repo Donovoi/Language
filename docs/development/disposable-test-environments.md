@@ -36,6 +36,47 @@ gateway virtual environment live in Docker volumes so repeated runs are fast. `m
 removes the container and those volumes. `make dev-env-purge` also removes the local
 `language-core-dev:local` image.
 
+## Android VM smoke
+
+The Android UI has a separate disposable guest so local audio devices and the normal gateway
+database are not needed. `scripts/android_vm_smoke.sh` creates a temporary API 35 x86_64 AVD,
+boots it headlessly with KVM, runs the app against an isolated gateway, and destroys the guest
+on exit. The gateway uses the Python prioritizer mirror and disabled translation provider;
+this checks mobile integration, not Rust parity or real translation quality.
+
+Prerequisites on Linux (including WSL 2 with working nested virtualization):
+
+- Flutter 3.50.0, JDK 17, Python 3.12 and `pip install -e 'services/gateway[dev]'`
+- Android command-line tools, platform-tools, emulator, Android platform 36 and build-tools 36.0.0
+- `ANDROID_HOME` pointing to the SDK and read/write access to `/dev/kvm`
+- SDK licenses accepted with `sdkmanager --licenses` where required
+
+```bash
+make android-vm-smoke FLUTTER="$(command -v flutter)" GATEWAY_PYTHON="$(command -v python)"
+```
+
+The script downloads `system-images;android-35;google_apis;x86_64` if missing. SDK and Gradle caches
+remain reusable; the AVD, isolated SQLite database, gateway process, and allocated ADB reverse
+tunnel are removed after the run. Set `LANGUAGE_EMULATOR_PORT` to an unused even console port
+if the default 5580 is occupied. No shared ADB server is stopped.
+
+To use an already booted emulator or authorized phone instead:
+
+```bash
+make android-smoke ANDROID_DEVICE=emulator-5580 FLUTTER="$(command -v flutter)" GATEWAY_PYTHON="$(command -v python)"
+```
+
+`adb devices -l` must list the selected serial as `device`. An `unauthorized` phone needs USB
+debugging enabled and its RSA prompt accepted. Windows USB devices are not automatically visible
+to WSL: attach the device to WSL or run `scripts/smoke_android.py` with Windows Python, Flutter,
+and ADB. No physical device is needed for the VM checks.
+
+The Flutter CI Android job runs this script in a disposable GitHub-hosted VM, checks the compiled
+release APK for `android.permission.INTERNET`, and uploads logs. Local logs and the pass/fail JSON
+are under `artifacts/android-smoke/`. The smoke covers mode changes, lock/unlock, externally
+triggered streamed captions, and reset; failure to reach the gateway fails rather than accepting
+the fallback UI. None of these results replace listener-ear recordings or other audio evidence.
+
 ## Audio Eval Docker Profile
 
 The audio evaluation environment is intentionally separate from the core image. It carries Python

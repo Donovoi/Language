@@ -1,5 +1,14 @@
 # Agent Instructions
 
+## Delivery Workflow
+
+- Run at least one detractor review round before merging. Address actionable findings and record
+  the strongest objection and its resolution or remaining limitation in the PR.
+- Complete the relevant verification and validation, then push and merge the PR. The user has
+  authorized this workflow; do not stop at a draft or ask for merge permission again.
+- If review findings or required checks remain unresolved, fix them before merging and report any
+  concrete blocker. Keep physical-audio release evidence separate from app and fixture test results.
+
 ## Disposable Environments
 
 For any change that needs a new runtime, provider, service, model, SDK, system package, or external

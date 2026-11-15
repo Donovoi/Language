@@ -5,6 +5,8 @@
 VERSION ?= $(shell awk '/^version:/{split($$2, parts, "[+]"); print parts[1]; exit}' apps/field_app_flutter/pubspec.yaml)
 FLUTTER ?= $(HOME)/.local/bin/flutter
 FLUTTER_RUN_ARGS ?=
+ANDROID_DEVICE ?=
+
 GATEWAY_PYTHON ?= services/gateway/.venv/bin/python
 GATEWAY_HOST ?= 127.0.0.1
 GATEWAY_PORT ?= 8000
@@ -162,6 +164,13 @@ python-check: gateway-venv
 
 flutter-check:
 	cd apps/field_app_flutter && $(FLUTTER) create . --platforms=android,ios,macos,windows && rm -f test/widget_test.dart && $(FLUTTER) pub get && $(FLUTTER) analyze && $(FLUTTER) test
+
+.PHONY: android-smoke android-vm-smoke
+android-smoke:
+	FLUTTER="$(FLUTTER)" $(GATEWAY_PYTHON) scripts/smoke_android.py --device "$(ANDROID_DEVICE)"
+
+android-vm-smoke:
+	FLUTTER="$(FLUTTER)" PYTHON="$(GATEWAY_PYTHON)" bash scripts/android_vm_smoke.sh
 
 dev-env-build:
 	DEV_IMAGE=$(DEV_IMAGE) $(DOCKER_COMPOSE) -f $(DEV_COMPOSE_FILE) build core
