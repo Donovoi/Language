@@ -12,6 +12,9 @@ Repository prep for the first internal beta release candidate based on the curre
 
 #### Added
 
+- Android microphone check with bounded local PCM capture, digital level readings and explicit
+  playback. Permission, foreground lifecycle, cancellation and clearing are exercised in the VM
+  and a separate connected-phone smoke; recordings stay in memory and are not release evidence.
 - Disposable Android VM smoke coverage for authenticated gateway access, mode changes, speaker locks,
   streamed captions, and reset, with a compiled release APK internet-permission check in CI.
 - Live-update cancellation now closes the HTTP transport before waiting for the stream to stop,

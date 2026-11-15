@@ -52,13 +52,16 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'platform-tools' 'emulator' 'platforms;android-36' 'build-tools;36.0.0'
       - name: Run disposable Android VM smoke
         run: bash scripts/android_vm_smoke.sh
-      - name: Verify release APK network permission
+      - name: Verify release APK permissions
         run: |
           cd apps/field_app_flutter
           flutter build apk --release --target-platform android-x64
           "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest permissions build/app/outputs/flutter-apk/app-release.apk | grep -Fx android.permission.INTERNET
+          "$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest permissions build/app/outputs/flutter-apk/app-release.apk | grep -Fx android.permission.RECORD_AUDIO
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: android-smoke-logs
-          path: artifacts/android-smoke/
+          path: |
+            artifacts/android-smoke/
+            artifacts/android-audio-smoke/

@@ -1,7 +1,9 @@
+import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../../models/session_state.dart';
 import '../../services/mock_repository.dart';
+import '../audio/microphone_check_screen.dart';
 import 'speaker_lane.dart';
 
 class SessionScreen extends StatefulWidget {
@@ -40,6 +42,16 @@ class _SessionScreenState extends State<SessionScreen> {
           appBar: AppBar(
             title: const Text('Language Field Console'),
             actions: <Widget>[
+              if (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
+                IconButton(
+                  onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => const MicrophoneCheckScreen(),
+                    ),
+                  ),
+                  icon: const Icon(Icons.mic_outlined),
+                  tooltip: 'Microphone check',
+                ),
               IconButton(
                 onPressed: widget.repository.isLoading
                     ? null
@@ -60,13 +72,16 @@ class _SessionScreenState extends State<SessionScreen> {
                     : 'Start live ingest demo',
               ),
               IconButton(
-                onPressed: widget.repository.isLoading ? null : widget.repository.reset,
+                onPressed: widget.repository.isLoading
+                    ? null
+                    : widget.repository.reset,
                 icon: const Icon(Icons.restart_alt),
                 tooltip: 'Reset session',
               ),
               IconButton(
-                onPressed:
-                    widget.repository.isLoading ? null : widget.repository.refresh,
+                onPressed: widget.repository.isLoading
+                    ? null
+                    : widget.repository.refresh,
                 icon: const Icon(Icons.refresh),
                 tooltip: 'Refresh session',
               ),
@@ -85,9 +100,8 @@ class _SessionScreenState extends State<SessionScreen> {
                   const SizedBox(height: 8),
                   Text(
                     '${session.mode.label} mode',
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+                    style: Theme.of(context).textTheme.headlineSmall
+                        ?.copyWith(fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 12),
                   Container(
@@ -97,14 +111,9 @@ class _SessionScreenState extends State<SessionScreen> {
                     ),
                     decoration: BoxDecoration(
                       color: widget.repository.isStreaming
-                          ? Theme.of(context)
-                              .colorScheme
-                              .primary
-                              .withAlpha(24)
-                          : Theme.of(context)
-                              .colorScheme
-                              .outlineVariant
-                              .withAlpha(32),
+                          ? Theme.of(context).colorScheme.primary.withAlpha(24)
+                          : Theme.of(context).colorScheme.outlineVariant
+                                .withAlpha(32),
                       borderRadius: BorderRadius.circular(999),
                     ),
                     child: Text(
@@ -112,11 +121,11 @@ class _SessionScreenState extends State<SessionScreen> {
                           ? 'Live updates connected'
                           : 'Live updates offline',
                       style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                            color: widget.repository.isStreaming
-                                ? Theme.of(context).colorScheme.primary
-                                : Theme.of(context).colorScheme.onSurfaceVariant,
-                            fontWeight: FontWeight.w700,
-                          ),
+                        color: widget.repository.isStreaming
+                            ? Theme.of(context).colorScheme.primary
+                            : Theme.of(context).colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 16),
@@ -137,13 +146,14 @@ class _SessionScreenState extends State<SessionScreen> {
                         )
                         .toList(growable: false),
                   ),
-                  if (widget.repository.errorMessage case final message?) ...<Widget>[
+                  if (widget.repository.errorMessage
+                      case final message?) ...<Widget>[
                     const SizedBox(height: 12),
                     Text(
                       message,
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            color: Theme.of(context).colorScheme.error,
-                          ),
+                        color: Theme.of(context).colorScheme.error,
+                      ),
                     ),
                   ],
                   const SizedBox(height: 20),
@@ -151,9 +161,8 @@ class _SessionScreenState extends State<SessionScreen> {
                     children: <Widget>[
                       Text(
                         'Speaker lanes',
-                        style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                              fontWeight: FontWeight.w700,
-                            ),
+                        style: Theme.of(context).textTheme.titleLarge
+                            ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(width: 12),
                       if (widget.repository.isLoading)
@@ -181,18 +190,14 @@ class _SessionScreenState extends State<SessionScreen> {
                                 const SizedBox(height: 12),
                                 Text(
                                   'No speaker lanes available yet.',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .titleMedium
+                                  style: Theme.of(context).textTheme.titleMedium
                                       ?.copyWith(fontWeight: FontWeight.w700),
                                   textAlign: TextAlign.center,
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
                                   'Refresh the session or switch modes to load a scene.',
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .bodyMedium
+                                  style: Theme.of(context).textTheme.bodyMedium
                                       ?.copyWith(
                                         color: Theme.of(context)
                                             .colorScheme

@@ -165,7 +165,10 @@ python-check: gateway-venv
 flutter-check:
 	cd apps/field_app_flutter && $(FLUTTER) create . --platforms=android,ios,macos,windows && rm -f test/widget_test.dart && $(FLUTTER) pub get && $(FLUTTER) analyze && $(FLUTTER) test
 
-.PHONY: android-smoke android-vm-smoke
+.PHONY: android-smoke android-vm-smoke android-audio-smoke
+android-audio-smoke:
+	$(GATEWAY_PYTHON) scripts/smoke_android_audio.py --device "$(ANDROID_DEVICE)" --flutter "$(FLUTTER)"
+
 android-smoke:
 	FLUTTER="$(FLUTTER)" $(GATEWAY_PYTHON) scripts/smoke_android.py --device "$(ANDROID_DEVICE)"
 
